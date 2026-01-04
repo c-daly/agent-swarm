@@ -1,0 +1,21 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "fearsidhe-plugins",
+  "description": "Personal plugins for Claude Code",
+  "owner": {
+    "name": "fearsidhe"
+  },
+  "plugins": [
+    {
+      "name": "agent-swarm",
+      "description": "Enforcement system for agent-based workflows. Manages phase enforcement, script routing for batch MCP operations, and autopilot approval.",
+      "version": "1.0.0",
+      "author": {
+        "name": "fearsidhe"
+      },
+      "source": ".",
+      "category": "productivity",
+      "homepage": "https://github.com/c-daly/agent-swarm"
+    }
+  ]
+}
