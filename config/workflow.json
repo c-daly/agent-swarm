@@ -1,0 +1,67 @@
+{
+  "orchestrator": {
+    "model": "opus",
+    "description": "Main coordinator - only component using expensive model"
+  },
+
+  "autopilot": {
+    "enabled": false,
+    "suppress_non_workflow_prompts": true,
+    "auto_approve_tools": true
+  },
+
+  "checkpoints": {
+    "intake": true,
+    "research": false,
+    "explore": false,
+    "design": true,
+    "implement": false,
+    "review": true,
+    "debug": false,
+    "git": true
+  },
+
+  "phases": {
+    "intake": {
+      "description": "Understand request, classify complexity",
+      "checkpoint": true,
+      "agents": []
+    },
+    "research": {
+      "description": "Deep research for complex/unfamiliar domains",
+      "checkpoint": false,
+      "agents": ["researcher"]
+    },
+    "explore": {
+      "description": "Codebase exploration for normal complexity",
+      "checkpoint": false,
+      "agents": ["explorer"]
+    },
+    "design": {
+      "description": "Architecture and implementation planning",
+      "checkpoint": true,
+      "agents": ["architect"]
+    },
+    "implement": {
+      "description": "Code implementation via subagents",
+      "checkpoint": false,
+      "agents": ["implementer"],
+      "enforce_subagents": true
+    },
+    "review": {
+      "description": "Code review and quality check",
+      "checkpoint": true,
+      "agents": ["reviewer"]
+    },
+    "debug": {
+      "description": "Debugging and fixing issues",
+      "checkpoint": false,
+      "agents": ["debugger"]
+    },
+    "git": {
+      "description": "Version control operations",
+      "checkpoint": true,
+      "agents": ["git-agent"]
+    }
+  }
+}
