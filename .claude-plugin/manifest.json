@@ -19,6 +19,16 @@
             "timeout": 3
           }
         ]
+      },
+      {
+        "matcher": "Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ./hooks/inject-subagent-briefing.sh",
+            "timeout": 5
+          }
+        ]
       }
     ]
   }
