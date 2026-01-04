@@ -12,11 +12,47 @@ Enforces:
 
 import sys
 import json
+from datetime import datetime
 from pathlib import Path
 
 # Configuration
 STATE_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/session.json"
 CONFIG_FILE = Path.home() / ".claude/plugins/agent-swarm/config/workflow.json"
+LOG_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/activity.log"
+STATS_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/stats.json"
+
+def log_event(event_type: str, details: str):
+    """Append event to activity log."""
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    with open(LOG_FILE, "a") as f:
+        f.write(f"[{timestamp}] {event_type}: {details}\n")
+
+def update_stats(allowed: bool, reason: str = None, tool_name: str = None):
+    """Update usage statistics."""
+    stats = {}
+    if STATS_FILE.exists():
+        try:
+            stats = json.loads(STATS_FILE.read_text())
+        except:
+            pass
+
+    if allowed:
+        stats["tools_allowed"] = stats.get("tools_allowed", 0) + 1
+    else:
+        stats["tools_blocked"] = stats.get("tools_blocked", 0) + 1
+        if reason:
+            blocks = stats.get("blocks_by_reason", {})
+            # Extract first word as category
+            category = reason.split("]")[0].replace("[", "") if "]" in reason else "other"
+            blocks[category] = blocks.get(category, 0) + 1
+            stats["blocks_by_reason"] = blocks
+
+    if tool_name == "Task":
+        stats["subagents_spawned"] = stats.get("subagents_spawned", 0) + 1
+
+    STATS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATS_FILE.write_text(json.dumps(stats, indent=2))
 
 # Tool categories
 WRITE_TOOLS = {"Edit", "Write", "NotebookEdit"}
@@ -294,10 +330,16 @@ def main():
 
     for result in checks:
         if result:
+            # Log the block
+            msg = result.get("hookSpecificOutput", {}).get("message", "blocked")
+            log_event("BLOCKED", f"{tool_name}: {msg[:50]}")
+            update_stats(allowed=False, reason=msg, tool_name=tool_name)
             print(json.dumps(result))
             return
 
     # Default: allow
+    log_event("ALLOWED", tool_name)
+    update_stats(allowed=True, tool_name=tool_name)
     print(json.dumps(allow()))
 
 if __name__ == "__main__":
