@@ -171,6 +171,64 @@ def check_scope_discipline(tool_name: str, tool_input: dict, state: dict) -> dic
 
     return None
 
+def check_smart_tool_usage(tool_name: str, tool_input: dict, state: dict) -> dict | None:
+    """Block dumb methods when smarter alternatives exist."""
+
+    # WebSearch for library docs → use Context7
+    if tool_name == "WebSearch":
+        query = tool_input.get("query", "").lower()
+        doc_indicators = ["docs", "documentation", "api", "how to", "example",
+                          "tutorial", "guide", "reference", "usage"]
+
+        # Common libraries that are definitely in Context7
+        known_libs = ["react", "next", "vue", "angular", "svelte", "express",
+                      "fastapi", "django", "flask", "prisma", "drizzle",
+                      "tailwind", "typescript", "node", "deno", "bun"]
+
+        if any(ind in query for ind in doc_indicators):
+            if any(lib in query for lib in known_libs):
+                return block(
+                    f"[SMART TOOLS] Use Context7 instead of WebSearch for docs:\n"
+                    f"  1. mcp__context7__resolve-library-id\n"
+                    f"  2. mcp__context7__query-docs\n"
+                    f"Context7 has curated, up-to-date docs. WebSearch wastes tokens on noise."
+                )
+
+    # Read for code understanding → use Serena
+    if tool_name == "Read":
+        file_path = tool_input.get("file_path", "")
+        # Code file extensions
+        code_exts = [".py", ".ts", ".js", ".tsx", ".jsx", ".go", ".rs", ".java", ".rb"]
+
+        if any(file_path.endswith(ext) for ext in code_exts):
+            # Check if this looks like exploration vs targeted read
+            phase = state.get("phase", "")
+            read_count = state.get("read_count", 0)
+
+            # First read is usually OK, but suggest Serena after that
+            if read_count >= 2:
+                return block(
+                    f"[SMART TOOLS] Use Serena instead of Read for code understanding:\n"
+                    f"  mcp__plugin_serena_serena__find_symbol - locate definitions\n"
+                    f"  mcp__plugin_serena_serena__get_definition - get signature + docs\n"
+                    f"  mcp__plugin_serena_serena__find_references - find usages\n"
+                    f"Serena extracts structure. Read dumps entire files into context."
+                )
+
+    # Bash for git → suggest gh_wrapper for queries
+    if tool_name == "Bash":
+        cmd = tool_input.get("command", "")
+        if cmd.startswith("gh ") and not any(x in cmd for x in ["create", "merge", "close", "edit"]):
+            # Query commands, not mutating commands
+            if any(x in cmd for x in ["list", "view", "status", "search"]):
+                return block(
+                    f"[SMART TOOLS] Use gh_wrapper.py for summarized output:\n"
+                    f"  python3 ~/.claude/plugins/agent-swarm/scripts/gh_wrapper.py {cmd[3:]}\n"
+                    f"Raw gh output floods context. Wrapper extracts key info only."
+                )
+
+    return None
+
 def check_git_safety(tool_name: str, tool_input: dict, state: dict) -> dict | None:
     """Prevent dangerous git operations."""
     if tool_name != "Bash":
@@ -228,6 +286,7 @@ def main():
     # Run all enforcement checks
     checks = [
         check_phase_restrictions(tool_name, state),
+        check_smart_tool_usage(tool_name, tool_input, state),
         check_token_efficiency(tool_name, state),
         check_scope_discipline(tool_name, tool_input, state),
         check_git_safety(tool_name, tool_input, state),
