@@ -13,7 +13,7 @@
       "author": {
         "name": "fearsidhe"
       },
-      "source": ".",
+      "source": "./",
       "category": "productivity",
       "homepage": "https://github.com/c-daly/agent-swarm"
     }
