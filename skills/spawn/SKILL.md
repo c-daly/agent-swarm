@@ -27,8 +27,8 @@ Use the Task tool with these parameters:
 
 ## Agent Selection
 
-| Need | Agent | Model | subagent_type |
-|------|-------|-------|---------------|
+| Need | Agent | Default Model | subagent_type |
+|------|-------|---------------|---------------|
 | Find code/files | explorer | haiku | Explore |
 | Web/doc research | researcher | haiku | general-purpose |
 | Plan implementation | architect | sonnet | Plan |
@@ -36,6 +36,38 @@ Use the Task tool with these parameters:
 | Review changes | reviewer | sonnet | general-purpose |
 | Fix bugs | debugger | sonnet | general-purpose |
 | Git operations | git-agent | haiku | general-purpose |
+
+## Self-Model-Selection
+
+Agents can downgrade their model when task is simpler than expected:
+
+```
+[In subagent prompt, agent can say:]
+"This is straightforward - spawning with haiku instead of sonnet"
+```
+
+**Model selection criteria:**
+
+| Complexity | Indicators | Model |
+|------------|------------|-------|
+| trivial | Single pattern search, one file change, simple command | haiku |
+| simple | Clear logic, existing pattern to follow, <50 lines | haiku or sonnet |
+| medium | Some reasoning needed, multiple considerations | sonnet |
+| complex | Architectural decisions, novel patterns, tricky edge cases | sonnet |
+| very complex | Cross-cutting concerns, security implications | opus (rare, ask orchestrator) |
+
+**Rules:**
+- Can always downgrade (sonnet → haiku)
+- Never upgrade without asking orchestrator
+- Default to cheaper when unsure
+- If haiku struggles, retry with sonnet (not automatic, must be explicit)
+
+**Example:**
+```
+Orchestrator spawns implementer (default: sonnet) to add a button.
+Implementer sees: "Just adding one onClick handler to existing component."
+Implementer says: "Trivial task, using haiku" and spawns sub-agent with haiku.
+```
 
 ## Prompt Structure
 
@@ -89,6 +121,31 @@ I'll spawn three subagents in parallel:
 [Three Task tool calls in same message]
 ```
 
+## Recursive Spawning
+
+Subagents CAN spawn more subagents when:
+- Task is too large for one agent
+- Multiple independent subtasks discovered
+- Parallelization would help
+
+**Example: Explorer finds large codebase**
+```
+Explorer finds 50 auth-related files. Instead of returning all:
+1. Spawn 5 sub-explorers, each handling 10 files
+2. Each sub-explorer returns summarized findings
+3. Main explorer aggregates into final report
+```
+
+**Model inheritance:**
+- Subagent uses same or cheaper model
+- Never spawn opus from haiku
+- haiku → haiku (OK)
+- sonnet → haiku (OK, for simple subtasks)
+- sonnet → sonnet (OK, for complex subtasks)
+
+**Depth limit:** Max 3 levels deep to prevent runaway spawning
+- Orchestrator (opus) → Agent (sonnet/haiku) → Sub-agent → Sub-sub-agent
+
 ## Anti-Patterns
 
 **DON'T:**
@@ -96,12 +153,14 @@ I'll spawn three subagents in parallel:
 - Use opus model for subagents (reserved for orchestrator)
 - Give vague prompts like "look around"
 - Spawn subagent to do what you could do in 2 tool calls
+- Spawn more than 5 parallel subagents (coordination overhead)
 
 **DO:**
 - Batch related work into one subagent
 - Specify exact output format
 - Use cheapest model that can do the job
 - Set clear scope boundaries
+- Let agents spawn sub-agents for large tasks
 
 ## Subagent Context
 
