@@ -1,0 +1,25 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "agent-swarm",
+  "version": "1.0.0",
+  "description": "Enforcement system for agent-based workflows. Manages phase enforcement, script routing for batch MCP operations, and autopilot approval.",
+  "author": {
+    "name": "fearsidhe"
+  },
+  "homepage": "https://github.com/fearsidhe/agent-swarm",
+  "category": "productivity",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ./hooks/combined-enforcement.py",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

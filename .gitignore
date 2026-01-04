@@ -1,0 +1,9 @@
+# State files (local to each installation)
+.state/
+
+# Local settings
+.claude/settings.local.json
+
+# Cache
+__pycache__/
+*.pyc
