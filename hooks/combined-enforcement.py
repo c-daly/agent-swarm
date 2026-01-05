@@ -58,6 +58,22 @@ def update_stats(allowed: bool, reason: str = None, tool_name: str = None):
 WRITE_TOOLS = {"Edit", "Write", "NotebookEdit"}
 SEARCH_TOOLS = {"Glob", "Grep"}  # Read has its own counter
 RESEARCH_TOOLS = {"WebSearch", "WebFetch"}
+
+# Model enforcement for subagent spawning
+AGENT_MODEL_MAP = {
+    # Built-in agent types
+    "Explore": "haiku",
+    "Plan": "sonnet",
+    "general-purpose": "sonnet",
+    # agent-swarm specific agents
+    "agent-swarm:explorer": "haiku",
+    "agent-swarm:researcher": "haiku",
+    "agent-swarm:git-agent": "haiku",
+    "agent-swarm:architect": "sonnet",
+    "agent-swarm:implementer": "sonnet",
+    "agent-swarm:reviewer": "sonnet",
+    "agent-swarm:debugger": "sonnet",
+}
 SUBAGENT_TOOLS = {"Task"}
 GIT_TOOLS = {"Bash"}  # git commands via bash
 
@@ -359,6 +375,44 @@ def check_git_safety(tool_name: str, tool_input: dict, state: dict) -> dict | No
 
     return None
 
+
+
+def check_subagent_model(tool_name: str, tool_input: dict, state: dict) -> dict | None:
+    """Enforce correct model usage when spawning subagents."""
+    if tool_name != "Task":
+        return None
+    
+    subagent_type = tool_input.get("subagent_type", "")
+    specified_model = tool_input.get("model", "")
+    
+    # Skip if not an agent type we track
+    if subagent_type not in AGENT_MODEL_MAP:
+        return None
+    
+    expected_model = AGENT_MODEL_MAP[subagent_type]
+    
+    # If no model specified, warn and suggest
+    if not specified_model:
+        return block(
+            f"[MODEL] Task missing 'model' parameter.\n"
+            f"  For {subagent_type}, use: model: \"{expected_model}\""
+        )
+    
+    # If wrong model, block with correction
+    if specified_model != expected_model:
+        # Allow downgrade (sonnet agent using haiku for simple task)
+        if expected_model == "sonnet" and specified_model == "haiku":
+            return None  # Downgrade is OK
+        
+        # Block upgrade or wrong model
+        return block(
+            f"[MODEL] Wrong model for {subagent_type}.\n"
+            f"  Expected: {expected_model}, got: {specified_model}\n"
+            f"  Downgrades OK (sonnet->haiku), upgrades blocked."
+        )
+    
+    return None
+
 def main():
     # Read input from stdin
     try:
@@ -387,6 +441,7 @@ def main():
         check_token_efficiency(tool_name, tool_input, state),
         check_scope_discipline(tool_name, tool_input, state),
         check_git_safety(tool_name, tool_input, state),
+        check_subagent_model(tool_name, tool_input, state),
     ]
 
     for result in checks:
