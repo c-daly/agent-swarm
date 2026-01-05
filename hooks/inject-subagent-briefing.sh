@@ -14,10 +14,10 @@ if [ -n "$PROMPT" ]; then
 
     if [ -n "$BRIEFING" ]; then
         # Output continue signal (allow the tool, briefing is injected via CLAUDE.md)
-        echo '{"hookSpecificOutput": {"permissionDecision": "allow"}}'
+        echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}'
     else
-        echo '{"hookSpecificOutput": {"permissionDecision": "allow"}}'
+        echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}'
     fi
 else
-    echo '{"hookSpecificOutput": {"permissionDecision": "allow"}}'
+    echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}'
 fi

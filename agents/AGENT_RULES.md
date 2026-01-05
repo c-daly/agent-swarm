@@ -77,3 +77,56 @@ Every token costs money and context. Before outputting anything, ask:
 
 **BAD**: "The function handleSubmit takes a form event and processes..."
 **GOOD**: "handleSubmit(FormEvent) → validates, calls API, updates state"
+
+---
+
+## CRITICAL: Debugging Anti-Patterns
+
+These mistakes WASTE HOURS. Do not repeat them.
+
+### 1. NEVER GUESS - USE AUTHORITATIVE SOURCES
+```
+# WRONG: Use a guide agent, read random files, try things
+# RIGHT:
+mcp__context7__resolve-library-id → query-docs
+WebFetch to official GitHub raw docs
+```
+If you don't know the answer, LOOK IT UP before changing anything.
+
+### 2. NEVER EDIT WITHOUT KNOWING WHERE CODE LOADS FROM
+```bash
+# Check ACTUAL load path
+cat ~/.claude/plugins/installed_plugins.json | grep installPath
+```
+Editing the wrong directory does nothing. Plugins load from CACHE, not source.
+
+### 3. NEVER SAY "RESTART" WHILE STILL WORKING
+Finish ALL changes → Verify everything → THEN one restart instruction.
+User restarts with incomplete fixes = wasted cycle.
+
+### 4. NEVER FLIP-FLOP ON FIXES
+Research ONCE → Apply ONCE → If fails, problem is elsewhere.
+Changing A→B→A→B means you don't understand the system.
+
+### 5. CHECK PERMISSIONS EARLY
+```bash
+ls -la <file>          # Check permissions
+diff <working> <broken> # Compare to working example
+```
+Files existing ≠ files readable. 600 vs 644 matters.
+
+### 6. USE --debug IMMEDIATELY
+```bash
+claude --debug "plugin"
+```
+Read actual errors. Don't guess.
+
+### 7. COMPARE TO WORKING EXAMPLES
+```bash
+ls -la ~/.claude/plugins/cache/claude-plugins-official/<working>/
+```
+Find differences. Don't debug in isolation.
+
+### 8. STOP AFTER 3 FAILED ATTEMPTS
+Same category of fix failing 3x = wrong diagnosis.
+Step back. Use --debug. Ask user what was already tried.

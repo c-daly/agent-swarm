@@ -182,7 +182,8 @@ def format_inventory(include_mcp=True, include_skills=True, include_agents=True,
                         if include_agents:
                             agents = find_agents(plugin_path)
                             if agents:
-                                lines.append(f"  Agents: {', '.join(f\"{a['name']}({a['model']})\" for a in agents)}")
+                                agent_strs = [f"{a['name']}({a['model']})" for a in agents]
+                                lines.append(f"  Agents: {', '.join(agent_strs)}")
 
                         if include_scripts:
                             scripts = find_scripts(plugin_path)

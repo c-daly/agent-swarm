@@ -1,0 +1,8 @@
+{
+  "name": "agent-swarm",
+  "version": "1.0.0",
+  "description": "Enforcement system for agent-based workflows",
+  "author": {
+    "name": "fearsidhe"
+  }
+}

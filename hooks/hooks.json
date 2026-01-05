@@ -1,0 +1,27 @@
+{
+  "description": "Agent-swarm enforcement hooks",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/combined-enforcement.py",
+            "timeout": 3
+          }
+        ]
+      },
+      {
+        "matcher": "Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/inject-subagent-briefing.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

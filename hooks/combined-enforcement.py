@@ -56,7 +56,7 @@ def update_stats(allowed: bool, reason: str = None, tool_name: str = None):
 
 # Tool categories
 WRITE_TOOLS = {"Edit", "Write", "NotebookEdit"}
-SEARCH_TOOLS = {"Glob", "Grep", "Read"}
+SEARCH_TOOLS = {"Glob", "Grep"}  # Read has its own counter
 RESEARCH_TOOLS = {"WebSearch", "WebFetch"}
 SUBAGENT_TOOLS = {"Task"}
 GIT_TOOLS = {"Bash"}  # git commands via bash
@@ -78,8 +78,29 @@ PHASE_ALLOWED_TOOLS = {
 ALWAYS_ALLOWED = {"TodoWrite", "AskUserQuestion"}
 
 # Thresholds
-MAX_DIRECT_SEARCHES = 3  # After this, must use scripts
-MAX_FILE_READS = 5  # After this, must use subagent
+MAX_DIRECT_SEARCHES = 2  # After this, must use scripts
+MAX_FILE_READS = 2  # After this, must use subagent
+
+# MCP tools allowed without script (low-cost single operations)
+MCP_DIRECT_ALLOWED = {
+    "mcp__plugin_serena_serena__find_symbol",
+    "mcp__plugin_serena_serena__get_definition",
+    "mcp__plugin_serena_serena__get_symbols_overview",
+    "mcp__context7__resolve-library-id",
+    "mcp__context7__query-docs",
+    "mcp__memory__read_memory",
+    "mcp__memory__search_nodes",
+    "mcp__filesystem__read_text_file",
+}
+
+# MCP tools that require script (high-cost/batch operations)
+MCP_SCRIPT_REQUIRED = {
+    "mcp__plugin_serena_serena__list_dir",  # recursive can be huge
+    "mcp__plugin_serena_serena__search_for_pattern",
+    "mcp__plugin_serena_serena__find_referencing_symbols",
+    "mcp__filesystem__directory_tree",
+    "mcp__filesystem__search_files",
+}
 
 def load_json(path: Path) -> dict:
     """Load JSON file safely."""
@@ -97,17 +118,18 @@ def save_state(state: dict) -> None:
 
 def allow(reason: str = None) -> dict:
     """Return allow decision."""
-    result = {"hookSpecificOutput": {"permissionDecision": "allow"}}
+    result = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}
     if reason:
-        result["hookSpecificOutput"]["message"] = reason
+        result["hookSpecificOutput"]["permissionDecisionReason"] = reason
     return result
 
 def block(reason: str) -> dict:
     """Return block decision."""
     return {
         "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
-            "message": reason
+            "permissionDecisionReason": reason
         }
     }
 
@@ -132,18 +154,17 @@ def check_phase_restrictions(tool_name: str, state: dict) -> dict | None:
     # Check phase restrictions
     allowed_tools = PHASE_ALLOWED_TOOLS.get(phase, set())
 
-    # During implement phase, write tools require subagent context
+    # During implement phase, write tools require subagent
     if phase == "implement" and tool_name in WRITE_TOOLS:
-        if not state.get("in_subagent", False):
-            return block(
-                f"[PHASE: {phase}] {tool_name} blocked. "
-                f"During implement phase, use Task tool to spawn a subagent. "
-                f"Direct edits bypass review and context management."
-            )
+        return block(
+            f"[PHASE: {phase}] {tool_name} blocked. "
+            f"Use Task tool to spawn implementer subagent. "
+            f"Direct edits bypass review and context management."
+        )
 
-    # Strict phase enforcement (if enabled in config)
+    # Strict phase enforcement (default True, can disable in config)
     config = load_json(CONFIG_FILE)
-    if config.get("strict_phase_enforcement", False):
+    if config.get("strict_phase_enforcement", True):
         if tool_name not in allowed_tools and tool_name not in ALWAYS_ALLOWED:
             return block(
                 f"[PHASE: {phase}] {tool_name} not allowed in this phase. "
@@ -152,7 +173,7 @@ def check_phase_restrictions(tool_name: str, state: dict) -> dict | None:
 
     return None
 
-def check_token_efficiency(tool_name: str, state: dict) -> dict | None:
+def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dict | None:
     """Enforce token-saving measures."""
 
     # Track search tool usage
@@ -204,6 +225,45 @@ def check_scope_discipline(tool_name: str, tool_input: dict, state: dict) -> dic
                 f"[SCOPE] Subagent prompt too vague. "
                 f"Provide clear, specific instructions for the subagent."
             )
+
+    return None
+
+def check_mcp_script_requirement(tool_name: str, tool_input: dict, state: dict) -> dict | None:
+    """Enforce script usage for high-cost MCP operations."""
+
+    # Check if this is an MCP tool
+    if not tool_name.startswith("mcp__"):
+        return None
+
+    # Allow low-cost operations directly
+    if tool_name in MCP_DIRECT_ALLOWED:
+        return None
+
+    # Block high-cost operations - require script
+    if tool_name in MCP_SCRIPT_REQUIRED:
+        return block(
+            f"[MCP SCRIPT] {tool_name} requires batch script.\n"
+            f"This operation can return large results. Use:\n"
+            f"```python\n"
+            f"from mcp_bridge import call_mcp\n"
+            f"result = call_mcp('{tool_name}', {tool_input})\n"
+            f"# Process and summarize result\n"
+            f"```"
+        )
+
+    # Track repeated MCP calls of same type
+    mcp_counts = state.get("mcp_counts", {})
+    count = mcp_counts.get(tool_name, 0) + 1
+    mcp_counts[tool_name] = count
+    state["mcp_counts"] = mcp_counts
+    save_state(state)
+
+    # Block after 2nd call of same MCP tool
+    if count > 2:
+        return block(
+            f"[MCP SCRIPT] {tool_name} called {count} times.\n"
+            f"Batch repeated calls into a script."
+        )
 
     return None
 
@@ -322,8 +382,9 @@ def main():
     # Run all enforcement checks
     checks = [
         check_phase_restrictions(tool_name, state),
+        check_mcp_script_requirement(tool_name, tool_input, state),
         check_smart_tool_usage(tool_name, tool_input, state),
-        check_token_efficiency(tool_name, state),
+        check_token_efficiency(tool_name, tool_input, state),
         check_scope_discipline(tool_name, tool_input, state),
         check_git_safety(tool_name, tool_input, state),
     ]
