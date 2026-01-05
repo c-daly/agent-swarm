@@ -166,8 +166,7 @@ def generate_html_chart(title, chart_type, data, labels, output_file, options=No
                     title: {{
                         display: false
                     }}
-                }},
-                {json.dumps(options.get('scales', {})) if 'scales' in options else ''}
+                }}{(',' + 'scales:' + json.dumps(options.get('scales', {}))) if 'scales' in options else ''}
             }}
         }});
     </script>
@@ -339,33 +338,39 @@ def chart_blocks():
     return path
 
 def chart_subagents():
-    """Chart subagent token usage by type."""
+    """Chart subagent spawn count by type."""
     if not SUBAGENT_METRICS.exists():
         print("⚠️  No subagent metrics found")
-        print("   Run: python3 track_subagent.py <agent_id> <type>")
+        print("   Subagent tracking is automatic via post-tool-tracking.py hook")
+        print("   Spawn some agents and they'll be tracked automatically")
         return None
 
     metrics = json.loads(SUBAGENT_METRICS.read_text())
-    by_type = metrics.get("summary", {}).get("by_type", {})
 
-    if not by_type:
+    if not metrics:
         print("⚠️  No subagent data found")
         return None
 
-    labels = []
-    values = []
+    # Count agents by type
+    by_type = {}
+    for agent_id, data in metrics.items():
+        agent_type = data.get("agent_type", "unknown")
+        by_type[agent_type] = by_type.get(agent_type, 0) + 1
 
-    for agent_type, stats in sorted(by_type.items()):
-        labels.append(agent_type)
-        values.append(stats.get("avg_tokens", 0))
+    if not by_type:
+        print("⚠️  No subagent type data found")
+        return None
+
+    labels = list(by_type.keys())
+    values = list(by_type.values())
 
     data = {
-        "label": "Avg Tokens per Agent",
+        "label": "Subagents Spawned",
         "values": values
     }
 
     path = generate_html_chart(
-        "Subagent Token Usage (Average)",
+        "Subagent Spawns by Type",
         "bar",
         data,
         labels,
