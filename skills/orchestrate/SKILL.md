@@ -206,19 +206,40 @@ EOF
 - Use `git-agent` (haiku model)
 - Stage, commit, push
 - **Checkpoint if enabled**: Confirm before push
+- **Auto-snapshot after completion**:
+  ```bash
+  python3 ~/.claude/plugins/agent-swarm/scripts/charts.py snapshot
+  ```
+  This automatically captures metrics for historical tracking and trend analysis.
 
 ## Subagent Spawning
 
-When spawning subagents, specify model:
+When spawning subagents, specify model AND token budget:
+
+```python
+# Token budgets by agent type (prevent runaways)
+AGENT_TOKEN_BUDGETS = {
+    "agent-swarm:explorer": 50000,      # Quick exploration
+    "agent-swarm:researcher": 150000,   # Deep research allowed
+    "agent-swarm:architect": 120000,    # Design needs space
+    "agent-swarm:implementer": 100000,  # Focused implementation
+    "agent-swarm:reviewer": 80000,      # Review existing code
+    "agent-swarm:debugger": 150000,     # Debugging can be complex
+    "agent-swarm:git-agent": 30000      # Simple git operations
+}
+```
 
 ```json
 {
   "description": "Explore auth system",
   "prompt": "Find all authentication-related files...",
-  "subagent_type": "Explore",
-  "model": "haiku"
+  "subagent_type": "agent-swarm:explorer",
+  "model": "haiku",
+  "token_budget": 50000
 }
 ```
+
+**CRITICAL:** Always include `token_budget` parameter to prevent runaway agents
 
 Models by agent:
 - researcher, explorer, git-agent: **haiku** (cheap, parallelizable)

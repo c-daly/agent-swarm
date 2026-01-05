@@ -1,0 +1,648 @@
+#!/usr/bin/env python3
+"""
+Generate visual charts from agent-swarm metrics.
+
+Usage:
+    python3 charts.py efficiency          # Efficiency score over time
+    python3 charts.py script-adoption     # Script adoption trend
+    python3 charts.py tool-usage          # Tool usage breakdown
+    python3 charts.py blocks              # Block reasons pie chart
+    python3 charts.py subagents           # Subagent token usage
+    python3 charts.py dashboard           # All charts in one HTML page
+
+Output: HTML files with interactive charts (opens in browser)
+"""
+
+import json
+import sys
+from pathlib import Path
+from datetime import datetime
+from collections import defaultdict
+
+STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
+CHARTS_DIR = STATE_DIR / "charts"
+HISTORY_FILE = STATE_DIR / "metrics_history.json"
+ACTIVITY_LOG = STATE_DIR / "activity.log"
+SUBAGENT_METRICS = STATE_DIR / "subagent_metrics.json"
+
+def ensure_charts_dir():
+    """Create charts directory if needed."""
+    CHARTS_DIR.mkdir(parents=True, exist_ok=True)
+
+def load_history():
+    """Load historical metrics."""
+    if HISTORY_FILE.exists():
+        return json.loads(HISTORY_FILE.read_text())
+    return {"snapshots": []}
+
+def save_snapshot(metrics_data):
+    """Save current metrics to history."""
+    history = load_history()
+
+    snapshot = {
+        "timestamp": datetime.now().isoformat(),
+        "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "metrics": metrics_data
+    }
+
+    history["snapshots"].append(snapshot)
+
+    # Keep last 100 snapshots
+    if len(history["snapshots"]) > 100:
+        history["snapshots"] = history["snapshots"][-100:]
+
+    HISTORY_FILE.write_text(json.dumps(history, indent=2))
+    print(f"✅ Snapshot saved ({len(history['snapshots'])} total)")
+
+def generate_html_chart(title, chart_type, data, labels, output_file, options=None):
+    """Generate standalone HTML with Chart.js."""
+
+    if options is None:
+        options = {}
+
+    # Prepare data for Chart.js
+    if chart_type == "line":
+        datasets = [{
+            "label": data.get("label", "Value"),
+            "data": data.get("values", []),
+            "borderColor": "rgb(75, 192, 192)",
+            "backgroundColor": "rgba(75, 192, 192, 0.2)",
+            "tension": 0.1
+        }]
+    elif chart_type == "bar":
+        datasets = [{
+            "label": data.get("label", "Value"),
+            "data": data.get("values", []),
+            "backgroundColor": [
+                "rgba(255, 99, 132, 0.5)",
+                "rgba(54, 162, 235, 0.5)",
+                "rgba(255, 206, 86, 0.5)",
+                "rgba(75, 192, 192, 0.5)",
+                "rgba(153, 102, 255, 0.5)",
+                "rgba(255, 159, 64, 0.5)"
+            ][:len(data.get("values", []))]
+        }]
+    elif chart_type == "pie":
+        datasets = [{
+            "data": data.get("values", []),
+            "backgroundColor": [
+                "rgba(255, 99, 132, 0.8)",
+                "rgba(54, 162, 235, 0.8)",
+                "rgba(255, 206, 86, 0.8)",
+                "rgba(75, 192, 192, 0.8)",
+                "rgba(153, 102, 255, 0.8)",
+                "rgba(255, 159, 64, 0.8)",
+                "rgba(201, 203, 207, 0.8)"
+            ][:len(data.get("values", []))]
+        }]
+
+    chart_data = {
+        "labels": labels,
+        "datasets": datasets
+    }
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>{title}</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            padding: 40px;
+            background: #f5f5f5;
+        }}
+        .container {{
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }}
+        h1 {{
+            color: #333;
+            margin-bottom: 10px;
+        }}
+        .timestamp {{
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 30px;
+        }}
+        canvas {{
+            max-height: 500px;
+        }}
+        .back-link {{
+            display: inline-block;
+            margin-top: 20px;
+            color: #0066cc;
+            text-decoration: none;
+        }}
+        .back-link:hover {{
+            text-decoration: underline;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>{title}</h1>
+        <div class="timestamp">Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
+        <canvas id="chart"></canvas>
+        <a href="dashboard.html" class="back-link">← Back to Dashboard</a>
+    </div>
+
+    <script>
+        const ctx = document.getElementById('chart').getContext('2d');
+        const chart = new Chart(ctx, {{
+            type: '{chart_type}',
+            data: {json.dumps(chart_data)},
+            options: {{
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {{
+                    legend: {{
+                        position: 'top',
+                    }},
+                    title: {{
+                        display: false
+                    }}
+                }},
+                {json.dumps(options.get('scales', {})) if 'scales' in options else ''}
+            }}
+        }});
+    </script>
+</body>
+</html>"""
+
+    output_path = CHARTS_DIR / output_file
+    output_path.write_text(html)
+    return output_path
+
+def chart_efficiency_trend():
+    """Chart efficiency score over time."""
+    history = load_history()
+
+    if len(history["snapshots"]) < 2:
+        print("⚠️  Need at least 2 snapshots for trend chart")
+        print("   Run: python3 metrics.py report  (to capture current state)")
+        return None
+
+    dates = []
+    scores = []
+
+    for snapshot in history["snapshots"]:
+        dates.append(snapshot["date"])
+        scores.append(snapshot["metrics"].get("efficiency_score", 0))
+
+    data = {
+        "label": "Efficiency Score",
+        "values": scores
+    }
+
+    options = {
+        "scales": {
+            "y": {
+                "beginAtZero": True,
+                "max": 100
+            }
+        }
+    }
+
+    path = generate_html_chart(
+        "Efficiency Score Trend",
+        "line",
+        data,
+        dates,
+        "efficiency_trend.html",
+        options
+    )
+
+    print(f"✅ Chart generated: {path}")
+    return path
+
+def chart_script_adoption():
+    """Chart script adoption over time."""
+    history = load_history()
+
+    if len(history["snapshots"]) < 2:
+        print("⚠️  Need at least 2 snapshots for trend chart")
+        return None
+
+    dates = []
+    adoption_rates = []
+
+    for snapshot in history["snapshots"]:
+        dates.append(snapshot["date"])
+        metrics = snapshot["metrics"]
+
+        script_calls = metrics.get("script_calls", 0)
+        direct_reads = metrics.get("tools_by_type", {}).get("Read", 0)
+        total = script_calls + direct_reads
+
+        if total > 0:
+            rate = (script_calls / total) * 100
+        else:
+            rate = 0
+
+        adoption_rates.append(rate)
+
+    data = {
+        "label": "Script Adoption %",
+        "values": adoption_rates
+    }
+
+    options = {
+        "scales": {
+            "y": {
+                "beginAtZero": True,
+                "max": 100
+            }
+        }
+    }
+
+    path = generate_html_chart(
+        "Script Adoption Trend",
+        "line",
+        data,
+        dates,
+        "script_adoption.html",
+        options
+    )
+
+    print(f"✅ Chart generated: {path}")
+    return path
+
+def chart_tool_usage():
+    """Chart current tool usage breakdown."""
+    # Get latest metrics
+    from metrics import analyze_activity_log
+    metrics = analyze_activity_log()
+
+    tools = metrics.get("tools_by_type", {})
+
+    if not tools:
+        print("⚠️  No tool usage data found")
+        return None
+
+    # Sort by usage
+    sorted_tools = sorted(tools.items(), key=lambda x: -x[1])[:10]
+
+    labels = [tool for tool, _ in sorted_tools]
+    values = [count for _, count in sorted_tools]
+
+    data = {
+        "label": "Tool Calls",
+        "values": values
+    }
+
+    path = generate_html_chart(
+        "Tool Usage Breakdown",
+        "bar",
+        data,
+        labels,
+        "tool_usage.html"
+    )
+
+    print(f"✅ Chart generated: {path}")
+    return path
+
+def chart_blocks():
+    """Chart block reasons pie chart."""
+    from metrics import analyze_activity_log
+    metrics = analyze_activity_log()
+
+    blocks = metrics.get("blocks_by_reason", {})
+
+    if not blocks:
+        print("⚠️  No block data found")
+        return None
+
+    # Top 6 reasons
+    sorted_blocks = sorted(blocks.items(), key=lambda x: -x[1])[:6]
+
+    labels = [reason for reason, _ in sorted_blocks]
+    values = [count for _, count in sorted_blocks]
+
+    data = {
+        "values": values
+    }
+
+    path = generate_html_chart(
+        "Block Reasons Distribution",
+        "pie",
+        data,
+        labels,
+        "blocks.html"
+    )
+
+    print(f"✅ Chart generated: {path}")
+    return path
+
+def chart_subagents():
+    """Chart subagent token usage by type."""
+    if not SUBAGENT_METRICS.exists():
+        print("⚠️  No subagent metrics found")
+        print("   Run: python3 track_subagent.py <agent_id> <type>")
+        return None
+
+    metrics = json.loads(SUBAGENT_METRICS.read_text())
+    by_type = metrics.get("summary", {}).get("by_type", {})
+
+    if not by_type:
+        print("⚠️  No subagent data found")
+        return None
+
+    labels = []
+    values = []
+
+    for agent_type, stats in sorted(by_type.items()):
+        labels.append(agent_type)
+        values.append(stats.get("avg_tokens", 0))
+
+    data = {
+        "label": "Avg Tokens per Agent",
+        "values": values
+    }
+
+    path = generate_html_chart(
+        "Subagent Token Usage (Average)",
+        "bar",
+        data,
+        labels,
+        "subagents.html"
+    )
+
+    print(f"✅ Chart generated: {path}")
+    return path
+
+def chart_token_trend():
+    """Chart token usage trend over time."""
+    history = load_history()
+    snapshots = history.get("snapshots", [])
+
+    if len(snapshots) < 2:
+        print("⚠️  Need at least 2 snapshots for trend. Run: charts.py snapshot")
+        return None
+
+    labels = []
+    token_values = []
+    cost_values = []
+
+    for snapshot in snapshots:
+        labels.append(snapshot.get("date", "Unknown"))
+        metrics = snapshot.get("metrics", {})
+
+        # Calculate estimated tokens
+        total_tokens = 0
+        for tool, count in metrics.get("tools_by_type", {}).items():
+            estimate = {
+                "Bash": 500, "Read": 2000, "Edit": 1500,
+                "Write": 1000, "Task": 5000, "Grep": 1000,
+                "Glob": 500
+            }.get(tool, 500)
+            total_tokens += estimate * count
+
+        token_values.append(total_tokens)
+        cost_values.append(total_tokens * 0.000003)
+
+    # Token trend chart
+    data = {
+        "label": "Estimated Tokens",
+        "values": token_values
+    }
+
+    path = generate_html_chart(
+        "Token Usage Trend",
+        "line",
+        data,
+        labels,
+        "token_trend.html"
+    )
+
+    print(f"✅ Chart generated: {path}")
+    return path
+
+def generate_dashboard():
+    """Generate a dashboard with all charts."""
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>Agent-Swarm Dashboard</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            padding: 40px;
+            background: #f5f5f5;
+            margin: 0;
+        }}
+        .container {{
+            max-width: 1400px;
+            margin: 0 auto;
+        }}
+        h1 {{
+            color: #333;
+            margin-bottom: 10px;
+        }}
+        .timestamp {{
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 30px;
+        }}
+        .grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }}
+        .chart-card {{
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }}
+        .chart-card h2 {{
+            margin-top: 0;
+            font-size: 18px;
+            color: #333;
+        }}
+        .chart-link {{
+            display: inline-block;
+            margin-top: 10px;
+            padding: 8px 16px;
+            background: #0066cc;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            font-size: 14px;
+        }}
+        .chart-link:hover {{
+            background: #0052a3;
+        }}
+        iframe {{
+            width: 100%;
+            height: 300px;
+            border: none;
+        }}
+        .refresh {{
+            background: #28a745;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }}
+        .refresh:hover {{
+            background: #218838;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 Agent-Swarm Performance Dashboard</h1>
+        <div class="timestamp">
+            Last updated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+            <button class="refresh" onclick="location.reload()">🔄 Refresh</button>
+        </div>
+
+        <div class="grid">
+            <div class="chart-card">
+                <h2>📊 Efficiency Trend</h2>
+                <p>Overall efficiency score over time</p>
+                <a href="efficiency_trend.html" class="chart-link">View Full Chart →</a>
+            </div>
+
+            <div class="chart-card">
+                <h2>📜 Script Adoption</h2>
+                <p>Script usage vs direct reads trend</p>
+                <a href="script_adoption.html" class="chart-link">View Full Chart →</a>
+            </div>
+
+            <div class="chart-card">
+                <h2>🔧 Tool Usage</h2>
+                <p>Which tools are used most</p>
+                <a href="tool_usage.html" class="chart-link">View Full Chart →</a>
+            </div>
+
+            <div class="chart-card">
+                <h2>🚫 Block Reasons</h2>
+                <p>What's being blocked and why</p>
+                <a href="blocks.html" class="chart-link">View Full Chart →</a>
+            </div>
+
+            <div class="chart-card">
+                <h2>🤖 Subagent Tokens</h2>
+                <p>Token usage by agent type</p>
+                <a href="subagents.html" class="chart-link">View Full Chart →</a>
+            </div>
+        </div>
+
+        <div style="margin-top: 40px; padding: 20px; background: white; border-radius: 8px;">
+            <h2>📈 Quick Commands</h2>
+            <pre style="background: #f8f9fa; padding: 15px; border-radius: 4px; overflow-x: auto;">
+# Capture current metrics
+python3 ~/.claude/plugins/agent-swarm/scripts/charts.py snapshot
+
+# Regenerate all charts
+python3 ~/.claude/plugins/agent-swarm/scripts/charts.py dashboard
+
+# Individual charts
+python3 ~/.claude/plugins/agent-swarm/scripts/charts.py efficiency
+python3 ~/.claude/plugins/agent-swarm/scripts/charts.py script-adoption
+python3 ~/.claude/plugins/agent-swarm/scripts/charts.py tool-usage
+            </pre>
+        </div>
+    </div>
+</body>
+</html>"""
+
+    dashboard_path = CHARTS_DIR / "dashboard.html"
+    dashboard_path.write_text(html)
+
+    print(f"\n✅ Dashboard generated: {dashboard_path}")
+    print(f"\n🌐 Open in browser:")
+    print(f"   file://{dashboard_path.absolute()}")
+
+    return dashboard_path
+
+def capture_snapshot():
+    """Capture current metrics as snapshot."""
+    from metrics import analyze_activity_log
+
+    metrics = analyze_activity_log()
+
+    # Calculate efficiency score
+    from metrics import calculate_efficiency_score
+    efficiency = calculate_efficiency_score(metrics)
+    metrics["efficiency_score"] = efficiency
+
+    save_snapshot(metrics)
+
+def main():
+    ensure_charts_dir()
+
+    if len(sys.argv) < 2:
+        print("Usage: charts.py <command>")
+        print("\nCommands:")
+        print("  snapshot          - Capture current metrics")
+        print("  efficiency        - Efficiency trend chart")
+        print("  script-adoption   - Script adoption chart")
+        print("  tool-usage        - Tool usage breakdown")
+        print("  blocks            - Block reasons chart")
+        print("  subagents         - Subagent token usage")
+        print("  dashboard         - Generate all charts")
+        print("  all               - Snapshot + generate all")
+        return
+
+    cmd = sys.argv[1]
+
+    if cmd == "snapshot":
+        capture_snapshot()
+
+    elif cmd == "efficiency":
+        chart_efficiency_trend()
+
+    elif cmd == "script-adoption":
+        chart_script_adoption()
+
+    elif cmd == "tool-usage":
+        chart_tool_usage()
+
+    elif cmd == "blocks":
+        chart_blocks()
+
+    elif cmd == "subagents":
+        chart_subagents()
+
+    elif cmd == "token-trend":
+        chart_token_trend()
+
+    elif cmd == "dashboard":
+        # Generate all charts
+        print("Generating charts...")
+        chart_efficiency_trend()
+        chart_script_adoption()
+        chart_token_trend()
+        chart_tool_usage()
+        chart_blocks()
+        chart_subagents()
+        generate_dashboard()
+
+    elif cmd == "all":
+        print("📸 Capturing snapshot...")
+        capture_snapshot()
+        print("\n📊 Generating charts...")
+        chart_efficiency_trend()
+        chart_script_adoption()
+        chart_token_trend()
+        chart_tool_usage()
+        chart_blocks()
+        chart_subagents()
+        generate_dashboard()
+
+    else:
+        print(f"Unknown command: {cmd}")
+
+if __name__ == "__main__":
+    main()
