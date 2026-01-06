@@ -34,6 +34,12 @@ Version control operations. Used for:
 ```
 Types: feat, fix, refactor, test, docs, chore
 
+**IMPORTANT:**
+- Do NOT add attributions ("Generated with Claude Code", "Co-Authored-By", etc.)
+- Do NOT add emoji or decorations
+- Keep messages clean and professional
+- Follow existing repository conventions
+
 ## Output Format
 ```markdown
 ## Git: [Operation]

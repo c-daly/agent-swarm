@@ -103,6 +103,7 @@ MCP_DIRECT_ALLOWED = {
     "mcp__plugin_serena_serena__find_symbol",
     "mcp__plugin_serena_serena__get_definition",
     "mcp__plugin_serena_serena__get_symbols_overview",
+    "mcp__plugin_serena_serena__search_for_pattern",  # Smart tool for code understanding
     "mcp__context7__resolve-library-id",
     "mcp__context7__query-docs",
     "mcp__memory__read_memory",
@@ -156,7 +157,7 @@ def check_autopilot(state: dict) -> dict | None:
         return allow("[AUTOPILOT] Auto-approved")
     return None
 
-def check_phase_restrictions(tool_name: str, state: dict) -> dict | None:
+def check_phase_restrictions(tool_name: str, state: dict, tool_input: dict = None) -> dict | None:
     """Enforce phase-specific tool restrictions."""
     phase = state.get("phase", "")
 
@@ -167,6 +168,33 @@ def check_phase_restrictions(tool_name: str, state: dict) -> dict | None:
     # Always allowed tools
     if tool_name in ALWAYS_ALLOWED:
         return None
+
+    # Special case: Bash in intake phase (Python execution only)
+    if phase == "intake" and tool_name == "Bash" and tool_input:
+        command = tool_input.get("command", "").strip()
+
+        # Allow Python execution patterns
+        python_patterns = [
+            command.startswith("python3 -c"),
+            command.startswith("python3 <<"),
+            "cat >" in command and ".py" in command,  # Creating temp Python script
+            command.startswith("python3 /tmp/") and ".py" in command,  # Running temp script
+            command.startswith("rm /tmp/") and ".py" in command,  # Cleanup
+        ]
+
+        if any(python_patterns):
+            return None  # Allow Python-related Bash
+
+        # Block all other Bash commands in intake
+        return block(
+            f"[PHASE: intake] Bash restricted to Python execution only.\n"
+            f"Allowed patterns:\n"
+            f"  - python3 -c \"...\"\n"
+            f"  - cat > /tmp/script.py << 'EOF'\n"
+            f"  - python3 /tmp/script.py\n"
+            f"  - rm /tmp/*.py\n"
+            f"For other operations, use allowed tools: Read, Glob, Grep, AskUserQuestion"
+        )
 
     # Check phase restrictions
     allowed_tools = PHASE_ALLOWED_TOOLS.get(phase, set())
@@ -192,6 +220,30 @@ def check_phase_restrictions(tool_name: str, state: dict) -> dict | None:
 
 def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dict | None:
     """Enforce token-saving measures."""
+    from datetime import datetime, timedelta
+
+    # Detect new conversation and reset counters
+    # If more than 30 minutes since last tool use, consider it a new conversation
+    last_tool_time = state.get("last_tool_time")
+    current_time = datetime.now().isoformat()
+
+    if last_tool_time:
+        try:
+            last_time = datetime.fromisoformat(last_tool_time)
+            time_since_last = datetime.now() - last_time
+
+            # Reset counters if been idle for 30+ minutes (new conversation)
+            if time_since_last > timedelta(minutes=30):
+                state["search_count"] = 0
+                state["read_count"] = 0
+                state["files_read"] = []
+                log_event("COUNTER_RESET", "New conversation detected, counters reset")
+        except (ValueError, TypeError):
+            pass  # Invalid timestamp, ignore
+
+    # Update last tool time
+    state["last_tool_time"] = current_time
+    save_state(state)
 
     # Track search tool usage
     if tool_name in SEARCH_TOOLS:
@@ -506,7 +558,7 @@ def main():
 
     # Run all enforcement checks
     checks = [
-        check_phase_restrictions(tool_name, state),
+        check_phase_restrictions(tool_name, state, tool_input),
         check_mcp_script_requirement(tool_name, tool_input, state),
         check_smart_tool_usage(tool_name, tool_input, state),
         check_token_efficiency(tool_name, tool_input, state),

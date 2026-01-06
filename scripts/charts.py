@@ -337,8 +337,8 @@ def chart_blocks():
     print(f"✅ Chart generated: {path}")
     return path
 
-def chart_subagents():
-    """Chart subagent token usage by type."""
+def chart_subagents(session_filter=None):
+    """Chart subagent token usage by type (or by individual agent if session filtered)."""
     if not SUBAGENT_METRICS.exists():
         print("⚠️  No subagent metrics found")
         print("   Subagent tracking is automatic via post-tool-tracking.py hook")
@@ -356,29 +356,69 @@ def chart_subagents():
         "explorer": 25000,
         "implementer": 100000,
         "reviewer": 40000,
+        "architect": 120000,
+        "debugger": 150000,
+        "researcher": 150000,
+        "git-agent": 30000,
         "default": 50000
     }
 
-    # Calculate total tokens by type
-    by_type = {}
-    for agent_id, data in metrics.items():
-        agent_type = data.get("agent_type", "unknown")
+    # Filter by session if requested
+    if session_filter:
+        # Filter metrics to only agents from specific session
+        # (Assuming session info will be added to metrics in future)
+        filtered_metrics = {k: v for k, v in metrics.items()
+                          if v.get("session") == session_filter}
+        if not filtered_metrics:
+            print(f"⚠️  No agents found for session: {session_filter}")
+            return None
+        metrics = filtered_metrics
+        show_individual = True
+        title = f"Subagent Tokens - Session {session_filter}"
+    else:
+        show_individual = False
+        title = "Subagent Token Usage by Type"
 
-        # Estimate tokens for this agent
-        tokens = TOKEN_ESTIMATES.get("default", 50000)
-        for key in TOKEN_ESTIMATES:
-            if key in agent_type.lower():
-                tokens = TOKEN_ESTIMATES[key]
-                break
+    if show_individual:
+        # Show individual agents (for session view)
+        results = {}
+        for agent_id, data in metrics.items():
+            agent_type = data.get("agent_type", "unknown")
+            tokens = TOKEN_ESTIMATES.get("default", 50000)
+            for key in TOKEN_ESTIMATES:
+                if key in agent_type.lower():
+                    tokens = TOKEN_ESTIMATES[key]
+                    break
 
-        by_type[agent_type] = by_type.get(agent_type, 0) + tokens
+            type_name = agent_type.split(':')[-1] if ':' in agent_type else agent_type
+            label = f"{type_name} ({agent_id[:7]})"
+            results[label] = tokens
+    else:
+        # Group by agent type (default view)
+        by_type = {}
+        for agent_id, data in metrics.items():
+            agent_type = data.get("agent_type", "unknown")
 
-    if not by_type:
-        print("⚠️  No subagent type data found")
+            # Extract type name (remove prefix if present)
+            type_name = agent_type.split(':')[-1] if ':' in agent_type else agent_type
+
+            # Estimate tokens for this agent
+            tokens = TOKEN_ESTIMATES.get("default", 50000)
+            for key in TOKEN_ESTIMATES:
+                if key in agent_type.lower():
+                    tokens = TOKEN_ESTIMATES[key]
+                    break
+
+            by_type[type_name] = by_type.get(type_name, 0) + tokens
+
+        results = by_type
+
+    if not results:
+        print("⚠️  No subagent data to chart")
         return None
 
-    labels = list(by_type.keys())
-    values = list(by_type.values())
+    labels = list(results.keys())
+    values = list(results.values())
 
     data = {
         "label": "Estimated Tokens",
@@ -386,7 +426,7 @@ def chart_subagents():
     }
 
     path = generate_html_chart(
-        "Subagent Token Usage by Type",
+        title,
         "bar",
         data,
         labels,
