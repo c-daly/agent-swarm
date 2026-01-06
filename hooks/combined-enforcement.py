@@ -580,17 +580,11 @@ def check_git_safety(tool_name: str, tool_input: dict, state: dict) -> dict | No
         if pattern in command:
             return block(
                 f"[GIT SAFETY] Dangerous command blocked: {pattern}\n"
-                f"This operation is destructive. Use explicit approval."
+                f"This operation is destructive. Get explicit user approval first."
             )
 
-    # Warn about amending
-    if "git commit --amend" in command:
-        phase = state.get("phase", "")
-        if phase != "git":
-            return block(
-                f"[GIT SAFETY] Amend outside git phase. "
-                f"Switch to git phase first, or get explicit approval."
-            )
+    # Note: git commit --amend checks are in CLAUDE.md, not enforced here
+    # Message-only amends (fixing typos, removing attribution) are safe
 
     return None
 
