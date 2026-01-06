@@ -70,6 +70,43 @@ def track_subagent(agent_id, agent_type):
 
     save_metrics(metrics)
 
+def check_new_plugins():
+    """Check for and auto-document new plugins (every 10 tool uses)."""
+    import subprocess
+    from pathlib import Path
+
+    # Track check count
+    state_file = Path.home() / ".claude/plugins/agent-swarm/.state/plugin_check_count.txt"
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        count = int(state_file.read_text()) if state_file.exists() else 0
+    except:
+        count = 0
+
+    count += 1
+
+    # Check every 10 tools
+    if count % 10 == 0:
+        try:
+            doc_script = Path(__file__).parent.parent / "scripts/document_plugins.py"
+            result = subprocess.run(
+                ["python3", str(doc_script)],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+
+            # If new plugins were documented, return message
+            if "new plugin" in result.stdout.lower():
+                state_file.write_text("0")  # Reset counter
+                return result.stdout
+        except:
+            pass
+
+    state_file.write_text(str(count))
+    return None
+
 def main():
     """Post-task hook main."""
     try:
@@ -83,24 +120,32 @@ def main():
     tool_name = input_data.get("tool_name", "")
     tool_output = input_data.get("tool_output", {})
 
-    # Only track Task tool completions
-    if tool_name != "Task":
-        print(json.dumps({"hookSpecificOutput": {}}))
-        return
+    # Track Task tool completions
+    if tool_name == "Task":
+        # Extract agent info from output
+        output_str = json.dumps(tool_output)
+        agent_id, agent_type = extract_agent_info(output_str)
 
-    # Extract agent info from output
-    output_str = json.dumps(tool_output)
-    agent_id, agent_type = extract_agent_info(output_str)
+        if agent_id and agent_type:
+            try:
+                track_subagent(agent_id, agent_type)
+            except Exception as e:
+                # Don't fail the hook if tracking fails
+                pass
 
-    if agent_id and agent_type:
-        try:
-            track_subagent(agent_id, agent_type)
-        except Exception as e:
-            # Don't fail the hook if tracking fails
-            pass
+    # Check for new plugins periodically
+    plugin_msg = None
+    try:
+        plugin_msg = check_new_plugins()
+    except:
+        pass
 
-    # Always allow (this is post-task, just for logging)
-    print(json.dumps({"hookSpecificOutput": {}}))
+    # Return message if new plugins found
+    output = {"hookSpecificOutput": {}}
+    if plugin_msg:
+        output["hookSpecificOutput"]["message"] = f"📦 {plugin_msg}"
+
+    print(json.dumps(output))
 
 if __name__ == "__main__":
     main()

@@ -449,22 +449,32 @@ def chart_token_trend():
     token_values = []
     cost_values = []
 
+    # Calculate deltas to show per-session usage instead of cumulative
+    prev_tools = {}
+
     for snapshot in snapshots:
         labels.append(snapshot.get("date", "Unknown"))
         metrics = snapshot.get("metrics", {})
+        current_tools = metrics.get("tools_by_type", {})
 
-        # Calculate estimated tokens
-        total_tokens = 0
-        for tool, count in metrics.get("tools_by_type", {}).items():
+        # Calculate tokens for this session only (delta from previous)
+        session_tokens = 0
+        for tool, count in current_tools.items():
+            prev_count = prev_tools.get(tool, 0)
+            delta = count - prev_count
+
             estimate = {
                 "Bash": 500, "Read": 2000, "Edit": 1500,
                 "Write": 1000, "Task": 5000, "Grep": 1000,
                 "Glob": 500
             }.get(tool, 500)
-            total_tokens += estimate * count
+            session_tokens += estimate * delta
 
-        token_values.append(total_tokens)
-        cost_values.append(total_tokens * 0.000003)
+        token_values.append(max(0, session_tokens))  # Ensure non-negative
+        cost_values.append(session_tokens * 0.000003)
+
+        # Update prev_tools for next iteration
+        prev_tools = current_tools.copy()
 
     # Token trend chart
     data = {
