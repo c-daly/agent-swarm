@@ -661,6 +661,66 @@ def check_episodic_memory_suggestion(tool_name: str, tool_input: dict, state: di
 
     return None
 
+def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, messages: list) -> dict | None:
+    """Enforce CLAUDE.md workflow compliance."""
+    
+    # Parse messages to detect classification and workflow invocation
+    classification_pattern = r'\[(TRIVIAL|SIMPLE|COMPLEX|RESEARCH|CONVERSATION)\]'
+    
+    for msg in messages:
+        if msg.get("role") == "assistant":
+            content = msg.get("content", "")
+            
+            # Check for classification
+            import re
+            match = re.search(classification_pattern, content)
+            if match and not state.get("classification_given"):
+                state["classification_given"] = True
+                state["classification_type"] = match.group(1)
+                save_state(state)
+            
+            # Check for workflow invocation
+            if '"skill": "agent-swarm:orchestrate"' in content or 'Skill(skill="agent-swarm:orchestrate")' in content:
+                state["workflow_invoked"] = True
+                save_state(state)
+            
+            # Check for episodic memory search
+            if 'episodic-memory' in content and 'search' in content:
+                state["episodic_search_done"] = True
+                save_state(state)
+    
+    # Enforce rules for code-editing tools
+    code_tools = ["Edit", "Write", "mcp__plugin_serena_serena__replace_symbol_body", 
+                  "mcp__plugin_serena_serena__insert_after_symbol", 
+                  "mcp__plugin_serena_serena__insert_before_symbol"]
+    
+    if tool_name in code_tools:
+        # Rule 1: Must give classification first
+        if not state.get("classification_given"):
+            return block(
+                "[PROCESS VIOLATION] Classification required before editing code.\n"
+                "Output classification as first line: [TRIVIAL|SIMPLE|COMPLEX|RESEARCH|CONVERSATION]\n\n"
+                "Classification criteria:\n"
+                "- TRIVIAL: One-liner fix\n"
+                "- SIMPLE: Single file, <50 lines, clear requirements\n"
+                "- COMPLEX: Multiple files OR architectural decisions OR unclear scope\n"
+                "- RESEARCH: Exploring/reading, no code changes\n"
+                "- CONVERSATION: Discussion only"
+            )
+        
+        # Rule 2: COMPLEX tasks must invoke workflow
+        if state.get("classification_type") == "COMPLEX" and not state.get("workflow_invoked"):
+            return block(
+                "[PROCESS VIOLATION] [COMPLEX] tasks require workflow:orchestrate.\n"
+                "From CLAUDE.md: 'Invoke workflow:orchestrate BEFORE any work'\n\n"
+                "Do NOT skip because you 'already know what to do'\n"
+                "Do NOT rationalize your way out of this\n\n"
+                "Use: Skill(skill='agent-swarm:orchestrate', args='<task description>')"
+            )
+    
+    return None
+
+
 def main():
     # Read input from stdin
     try:
@@ -671,6 +731,7 @@ def main():
 
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input", {})
+    messages = input_data.get("messages", [])
 
     # Load session state
     state = load_json(STATE_FILE)
@@ -683,6 +744,7 @@ def main():
 
     # Run all enforcement checks
     checks = [
+        check_workflow_compliance(tool_name, tool_input, state, messages),
         check_phase_restrictions(tool_name, state, tool_input),
         check_checkpoint_approval(tool_name, tool_input, state),
         check_mcp_script_requirement(tool_name, tool_input, state),

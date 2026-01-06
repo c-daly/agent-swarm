@@ -14,7 +14,7 @@ import subprocess
 from pathlib import Path
 
 def reset_enforcement_counters():
-    """Reset enforcement counters for new conversation."""
+    """Reset enforcement counters and workflow tracking for new conversation."""
     state_file = Path(__file__).parent.parent / ".state" / "enforcement_state.json"
 
     try:
@@ -22,10 +22,17 @@ def reset_enforcement_counters():
             with open(state_file) as f:
                 state = json.load(f)
 
-            # Reset counters only (preserve phase and other state)
+            # Reset token efficiency counters
             state["search_count"] = 0
             state["read_count"] = 0
             state["files_read"] = []
+
+            # Initialize workflow compliance tracking
+            state["classification_given"] = False
+            state["classification_type"] = None
+            state["workflow_invoked"] = False
+            state["episodic_search_suggested"] = True  # SessionStart always suggests it
+            state["episodic_search_done"] = False
 
             with open(state_file, 'w') as f:
                 json.dump(state, f, indent=2)
