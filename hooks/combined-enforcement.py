@@ -280,6 +280,7 @@ def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dic
                 state["read_count"] = 0
                 state["files_read"] = []
                 log_event("COUNTER_RESET", "New conversation detected, counters reset")
+                save_state(state)  # Persist reset immediately
         except (ValueError, TypeError):
             pass  # Invalid timestamp, ignore
 

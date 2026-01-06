@@ -1,15 +1,40 @@
 #!/usr/bin/env python3
 """
-Session Start Hook - Auto-search episodic memory
+Session Start Hook - Auto-search episodic memory & reset counters
 
 Automatically searches episodic memory at the start of each session
 to recover relevant context from past conversations.
+
+Also resets enforcement counters for the new conversation.
 """
 
 import json
 import sys
 import subprocess
 from pathlib import Path
+
+def reset_enforcement_counters():
+    """Reset enforcement counters for new conversation."""
+    state_file = Path(__file__).parent.parent / ".state" / "enforcement_state.json"
+
+    try:
+        if state_file.exists():
+            with open(state_file) as f:
+                state = json.load(f)
+
+            # Reset counters only (preserve phase and other state)
+            state["search_count"] = 0
+            state["read_count"] = 0
+            state["files_read"] = []
+
+            with open(state_file, 'w') as f:
+                json.dump(state, f, indent=2)
+
+            return True
+    except Exception:
+        pass  # Fail silently, not critical
+
+    return False
 
 def search_episodic_memory(query_terms):
     """Search episodic memory for relevant past conversations."""
@@ -36,6 +61,9 @@ def search_episodic_memory(query_terms):
 
 def main():
     """Session start hook entry point."""
+
+    # Reset enforcement counters for new conversation
+    reset_enforcement_counters()
 
     # Read session data from stdin
     try:
