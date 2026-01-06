@@ -1,0 +1,14 @@
+{
+  "name": "agent-swarm",
+  "version": "1.0.0",
+  "description": "Enforcement system for agent-based workflows",
+  "author": {
+    "name": "fearsidhe"
+  },
+  "hooks": {
+    "preToolUse": {
+      "script": "../hooks/combined-enforcement.py",
+      "description": "Enforces phase restrictions, token efficiency, and parallel execution patterns"
+    }
+  }
+}
