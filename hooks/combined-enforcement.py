@@ -631,6 +631,41 @@ def check_subagent_model(tool_name: str, tool_input: dict, state: dict) -> dict 
     
     return None
 
+def check_episodic_memory_suggestion(tool_name: str, tool_input: dict, state: dict):
+    """Suggest episodic memory search for research/exploration tasks"""
+
+    # Only suggest once per session
+    if state.get("memory_search_suggested"):
+        return None
+
+    # Suggest for Task tool with exploration/research keywords
+    if tool_name == "Task":
+        subagent_type = tool_input.get("subagent_type", "")
+        prompt = tool_input.get("prompt", "").lower()
+
+        # Check if this is a research/exploration task
+        research_keywords = ["explore", "investigate", "understand", "how does", "find out", "research"]
+        is_research = (subagent_type in ["Explore", "explorer", "research", "researcher"] or
+                      any(keyword in prompt for keyword in research_keywords))
+
+        if is_research:
+            # Mark as suggested
+            state["memory_search_suggested"] = True
+            save_json(STATE_FILE, state)
+
+            # Return suggestion (not blocking, just informative)
+            return {
+                "hookSpecificOutput": {
+                    "permissionDecision": "allow",
+                    "message": "[MEMORY] Consider searching episodic memory first:\n"
+                    "  Skill: episodic-memory:search-conversations\n"
+                    "  OR use: mcp__plugin_episodic-memory_episodic-memory__search(query='<keywords>', limit=5)\n"
+                    "  This can recover relevant context from past sessions."
+                }
+            }
+
+    return None
+
 def main():
     # Read input from stdin
     try:
@@ -661,6 +696,7 @@ def main():
         check_scope_discipline(tool_name, tool_input, state),
         check_git_safety(tool_name, tool_input, state),
         check_subagent_model(tool_name, tool_input, state),
+        check_episodic_memory_suggestion(tool_name, tool_input, state),
     ]
 
     for result in checks:

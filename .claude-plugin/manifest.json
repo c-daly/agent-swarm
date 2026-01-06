@@ -5,6 +5,10 @@
   "author": {
     "name": "fearsidhe"
   },
+  "skills": [
+    "orchestrate",
+    "spawn"
+  ],
   "hooks": {
     "preToolUse": {
       "script": "../hooks/combined-enforcement.py",

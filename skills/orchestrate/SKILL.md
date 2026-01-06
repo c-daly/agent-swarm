@@ -213,7 +213,12 @@ EOF
 
 ### INTAKE
 - Classify: trivial/simple/complex
-- Gather requirements
+- **Search episodic memory**: Query past conversations for relevant context
+  ```bash
+  # Use episodic-memory:search-conversations skill or direct tool
+  mcp__plugin_episodic-memory_episodic-memory__search(query="<task keywords>", limit=5)
+  ```
+- Gather requirements (incorporate memory findings)
 - **Checkpoint if enabled**: Present understanding, get approval
 
 ### RESEARCH (complex/unfamiliar only)
