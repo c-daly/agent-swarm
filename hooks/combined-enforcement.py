@@ -55,7 +55,73 @@ def update_stats(allowed: bool, reason: str = None, tool_name: str = None):
     STATS_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATS_FILE.write_text(json.dumps(stats, indent=2))
 
-# Tool categories
+# Tool categories for grouping semantically equivalent tools
+TOOL_CATEGORIES = {
+    "file_read": {
+        "Read",
+        "mcp__filesystem__read_text_file",
+        "mcp__filesystem__read_media_file",
+        "mcp__plugin_serena_serena__read_file",
+    },
+    "file_write": {
+        "Edit",
+        "Write",
+        "NotebookEdit",
+        "mcp__filesystem__write_file",
+        "mcp__filesystem__edit_file",
+        "mcp__plugin_serena_serena__create_text_file",
+        "mcp__plugin_serena_serena__replace_content",
+    },
+    "file_search": {
+        "Glob",
+        "Grep",
+        "mcp__filesystem__search_files",
+        "mcp__filesystem__list_directory",
+        "mcp__filesystem__directory_tree",
+        "mcp__plugin_serena_serena__find_file",
+        "mcp__plugin_serena_serena__search_for_pattern",
+    },
+    "code_query": {
+        "mcp__plugin_serena_serena__find_symbol",
+        "mcp__plugin_serena_serena__get_symbols_overview",
+        "mcp__plugin_serena_serena__find_referencing_symbols",
+    },
+    "code_edit": {
+        "mcp__plugin_serena_serena__replace_symbol_body",
+        "mcp__plugin_serena_serena__insert_after_symbol",
+        "mcp__plugin_serena_serena__insert_before_symbol",
+        "mcp__plugin_serena_serena__rename_symbol",
+    },
+    "web_research": {
+        "WebSearch",
+        "WebFetch",
+        "mcp__context7__resolve-library-id",
+        "mcp__context7__query-docs",
+    },
+    "memory": {
+        "mcp__memory__read_graph",
+        "mcp__memory__search_nodes",
+        "mcp__memory__open_nodes",
+        "mcp__plugin_serena_serena__read_memory",
+        "mcp__plugin_serena_serena__list_memories",
+    },
+    "episodic_memory": {
+        "mcp__plugin_episodic-memory_episodic-memory__search",
+        "mcp__plugin_episodic-memory_episodic-memory__read",
+    },
+    "subagent": {
+        "Task",
+    },
+    "user_interaction": {
+        "AskUserQuestion",
+        "TodoWrite",
+    },
+    "shell": {
+        "Bash",
+    },
+}
+
+# Legacy tool groups (keep for backward compatibility)
 WRITE_TOOLS = {"Edit", "Write", "NotebookEdit"}
 SEARCH_TOOLS = {"Glob", "Grep"}  # Read has its own counter
 RESEARCH_TOOLS = {"WebSearch", "WebFetch"}
@@ -78,7 +144,20 @@ AGENT_MODEL_MAP = {
 SUBAGENT_TOOLS = {"Task"}
 GIT_TOOLS = {"Bash"}  # git commands via bash
 
-# Phase restrictions
+# Phase restrictions using category names
+PHASE_ALLOWED_CATEGORIES = {
+    "intake": {"file_read", "file_search", "code_query", "user_interaction", "episodic_memory"},
+    "research": {"web_research", "file_read", "subagent", "user_interaction"},
+    "explore": {"file_search", "file_read", "code_query", "subagent", "user_interaction"},
+    "design": {"file_read", "file_search", "code_query", "subagent", "user_interaction"},
+    "implement": {"subagent", "file_read", "user_interaction"},  # Write only via subagent
+    "review": {"file_read", "file_search", "shell", "subagent", "user_interaction"},
+    "debug": {"file_read", "file_search", "file_write", "code_edit", "shell", "subagent", "user_interaction"},
+    "git": {"shell", "file_read", "user_interaction"},
+    "": set(),  # No phase = no restrictions
+}
+
+# Legacy phase restrictions (keep for backward compatibility with specific tool checks)
 PHASE_ALLOWED_TOOLS = {
     "intake": {"Read", "Glob", "Grep", "AskUserQuestion"},
     "research": {"WebSearch", "WebFetch", "Read", "Task"},
@@ -151,9 +230,18 @@ def block(reason: str) -> dict:
         }
     }
 
+
+def get_tool_category(tool_name: str) -> str | None:
+    """Get the category of a tool, returns None if not categorized."""
+    for category, tools in TOOL_CATEGORIES.items():
+        if tool_name in tools:
+            return category
+    return None
+
 def check_autopilot(state: dict) -> dict | None:
     """Autopilot mode bypasses all enforcement."""
-    if state.get("autopilot_override", False):
+    autopilot = state.get("autopilot", {})
+    if autopilot.get("enabled", False):
         return allow("[AUTOPILOT] Auto-approved")
     return None
 
@@ -235,10 +323,18 @@ def check_phase_restrictions(tool_name: str, state: dict, tool_input: dict = Non
     # Strict phase enforcement (default True, can disable in config)
     config = load_json(CONFIG_FILE)
     if config.get("strict_phase_enforcement", True):
-        if tool_name not in allowed_tools and tool_name not in ALWAYS_ALLOWED:
+        # Check both specific tool name AND tool category
+        tool_category = get_tool_category(tool_name)
+        allowed_categories = PHASE_ALLOWED_CATEGORIES.get(phase, set())
+
+        # Allow if tool name matches OR category matches
+        if (tool_name not in allowed_tools and
+            tool_name not in ALWAYS_ALLOWED and
+            tool_category not in allowed_categories):
             return block(
-                f"[PHASE: {phase}] {tool_name} not allowed in this phase. "
-                f"Allowed: {', '.join(allowed_tools)}"
+                f"[PHASE: {phase}] {tool_name} not allowed in this phase.\n"
+                f"Allowed tools: {', '.join(sorted(allowed_tools))}\n"
+                f"Allowed categories: {', '.join(sorted(allowed_categories))}"
             )
 
     return None
@@ -336,6 +432,22 @@ def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dic
                 f"Spawn an Explorer subagent to aggregate findings, "
                 f"or use a script to read and summarize."
             )
+
+
+    # Track test execution for Layer 2 of git approval
+    if tool_name == "Bash":
+        cmd = tool_input.get("command", "")
+        test_patterns = [
+            r'\bpytest\b',
+            r'python\s+-m\s+pytest',
+            r'npm\s+(?:run\s+)?test',
+            r'cargo\s+test',
+            r'go\s+test',
+            r'make\s+test',
+        ]
+        if any(re.search(pattern, cmd) for pattern in test_patterns):
+            state["tests_executed"] = True
+            save_state(state)
 
     return None
 
@@ -590,6 +702,107 @@ def check_git_safety(tool_name: str, tool_input: dict, state: dict) -> dict | No
 
 
 
+
+
+def check_git_approval_layers(tool_name: str, tool_input: dict, state: dict, messages: list) -> dict | None:
+    """
+    3-layer git safety system to prevent agents from committing/pushing without proper validation.
+    
+    Layer 1: User approval detection - scan messages for approval keywords
+    Layer 2: Test execution requirement - track test runs, block commits without tests
+    Layer 3: [VERIFY] signal - require quality check signal before commits
+    """
+    if tool_name \!= "Bash":
+        return None
+    
+    command = tool_input.get("command", "")
+    
+    # Detect git commit or push
+    is_commit = re.search(r'\bgit\s+commit\b', command)
+    is_push = re.search(r'\bgit\s+push\b', command)
+    
+    if not (is_commit or is_push):
+        return None
+    
+    # LAYER 1: User Approval Detection
+    # Scan recent user messages for approval keywords
+    approval_keywords = [
+        "approve", "approved", "go ahead", "proceed", "yes",
+        "commit it", "push it", "create commit", "make the commit",
+        "create the commit", "do it", "please commit", "please push"
+    ]
+    
+    user_approved = state.get("user_approved_commit", False)
+    
+    if not user_approved:
+        # Scan last 20 messages for user approval
+        recent_messages = messages[-20:] if len(messages) > 20 else messages
+        for msg in reversed(recent_messages):
+            if msg.get("role") == "user":
+                msg_content = msg.get("content", "").lower()
+                if any(keyword in msg_content for keyword in approval_keywords):
+                    state["user_approved_commit"] = True
+                    save_state(state)
+                    user_approved = True
+                    break
+    
+    if not user_approved:
+        return block(
+            "[GIT APPROVAL] User approval required before commit/push\n\n"
+            "No approval detected in conversation. User must explicitly approve.\n\n"
+            "Approval phrases:\n"
+            "  - \"go ahead and commit\"\n"
+            "  - \"approved\"\n"
+            "  - \"yes, commit it\"\n"
+            "  - \"proceed\"\n\n"
+            "Once approved, you can proceed with git operations."
+        )
+    
+    # LAYER 2 & 3: Only apply to commits, not pushes
+    if not is_commit:
+        return None
+    
+    # LAYER 2: Test Execution Requirement
+    tests_executed = state.get("tests_executed", False)
+    
+    if not tests_executed:
+        return block(
+            "[GIT APPROVAL] Tests must be executed before commit\n\n"
+            "No test execution detected this session.\n\n"
+            "Run tests first:\n"
+            "  - pytest\n"
+            "  - npm test\n"
+            "  - cargo test\n"
+            "  - go test\n"
+            "  - make test\n\n"
+            "This prevents committing untested code."
+        )
+    
+    # LAYER 3: [VERIFY] Signal Detection
+    verify_signal = state.get("verify_signal_given", False)
+    
+    if not verify_signal:
+        # Scan assistant messages for [VERIFY] pattern
+        for msg in reversed(messages):
+            if msg.get("role") == "assistant":
+                msg_content = msg.get("content", "")
+                # Look for [VERIFY] tests: ✓ | types: ✓ | lint: ✓
+                if re.search(r'\[VERIFY\].*tests:.*✓.*types:.*✓.*lint:.*✓', msg_content):
+                    state["verify_signal_given"] = True
+                    save_state(state)
+                    verify_signal = True
+                    break
+    
+    if not verify_signal:
+        return block(
+            "[GIT APPROVAL] [VERIFY] signal required before commit\n\n"
+            "Quality checks not verified. Output [VERIFY] signal first:\n\n"
+            "[VERIFY] tests: ✓ | types: ✓ | lint: ✓\n\n"
+            "This confirms all quality checks passed before committing."
+        )
+    
+    return None
+
 def check_subagent_model(tool_name: str, tool_input: dict, state: dict) -> dict | None:
     """Enforce correct model usage when spawning subagents."""
     if tool_name != "Task":
@@ -674,11 +887,21 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
             # Check for classification
             import re
             match = re.search(classification_pattern, content)
-            if match and not state.get("classification_given"):
-                state["classification_given"] = True
-                state["classification_type"] = match.group(1)
-                save_state(state)
-            
+            if match:
+                new_classification = match.group(1)
+                # Allow classification to update (user can change from RESEARCH to TRIVIAL, etc.)
+                if state.get("classification_type") != new_classification:
+                    # Classification changed - reset workflow tracking
+                    state["classification_given"] = True
+                    state["classification_type"] = new_classification
+                    state["workflow_invoked"] = False  # May not need workflow for new task type
+                    save_state(state)
+                elif not state.get("classification_given"):
+                    # First classification
+                    state["classification_given"] = True
+                    state["classification_type"] = new_classification
+                    save_state(state)
+#             
             # Check for workflow invocation
             if '"skill": "agent-swarm:orchestrate"' in content or 'Skill(skill="agent-swarm:orchestrate")' in content:
                 state["workflow_invoked"] = True
@@ -752,6 +975,7 @@ def main():
         check_token_efficiency(tool_name, tool_input, state),
         check_scope_discipline(tool_name, tool_input, state),
         check_git_safety(tool_name, tool_input, state),
+        check_git_approval_layers(tool_name, tool_input, state, messages),  # 3-layer approval
         check_subagent_model(tool_name, tool_input, state),
         check_episodic_memory_suggestion(tool_name, tool_input, state),
     ]
