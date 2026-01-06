@@ -335,14 +335,25 @@ def check_smart_tool_usage(tool_name: str, tool_input: dict, state: dict) -> dic
         # CRITICAL: Detect Bash abuse patterns (cat/grep/find)
         # These should NEVER be done via Bash - proper tools exist
 
-        # cat abuse → use Read
-        if re.search(r'\bcat\s+[^\|><&;]+$', cmd):
-            return block(
-                f"[BASH ABUSE] Don't use 'cat' - use Read tool instead\n"
-                f"❌ Bash: {cmd[:60]}\n"
-                f"✅ Read: {{'file_path': '<path>'}}\n"
-                f"Bash cat wastes tokens and bypasses tracking."
-            )
+        # cat abuse → use Read or Write tools
+        # Block cat UNLESS it's receiving piped input (e.g., grep | cat)
+        if 'cat' in cmd and not re.search(r'\|\s*cat\s*(?:[|;]|$)', cmd):
+            # Cat reading files
+            if re.search(r'\bcat\s+[^\|<>]', cmd):
+                return block(
+                    f"[BASH ABUSE] Don't use 'cat' for reading - use Read tool instead\n"
+                    f"❌ Bash: {cmd[:60]}\n"
+                    f"✅ Read: {{'file_path': '<path>'}}\n"
+                    f"Bash cat wastes tokens and bypasses tracking."
+                )
+            # Cat with heredocs (writing)
+            if re.search(r'\bcat\s*[>]+.*<<|\bcat\s*<<', cmd):
+                return block(
+                    f"[BASH ABUSE] Don't use 'cat' for writing - use Write tool instead\n"
+                    f"❌ Bash: {cmd[:60]}\n"
+                    f"✅ Write: {{'file_path': '<path>', 'content': '...'}}\n"
+                    f"Bash cat wastes tokens and bypasses tracking."
+                )
 
         # grep/rg abuse → use Grep (powered by ripgrep)
         if re.search(r'\b(grep|rg|egrep|fgrep)\s+', cmd):
