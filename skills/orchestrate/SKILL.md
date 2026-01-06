@@ -5,60 +5,18 @@ description: Main workflow orchestrator for complex tasks. Coordinates phase tra
 
 # Workflow Orchestrator
 
+
+**State Management:** This skill uses `scripts/state.py` CLI for all state operations.
+- Phase transitions: `python3 scripts/state.py transition <phase>`
+- Checkpoint config: `python3 scripts/state.py checkpoint <phase> <on|off>`
+- Autopilot mode: `python3 scripts/state.py autopilot <on|off|toggle>`
+
 ## Configuration
 
 Load from `~/.claude/plugins/agent-swarm/config/workflow.json`:
 
-```python
-import json
-from pathlib import Path
-config = json.loads((Path.home() / ".claude/plugins/agent-swarm/config/workflow.json").read_text())
-```
-
-**Key settings:**
-- `checkpoints.<phase>`: true/false - whether to pause for approval
-- `autopilot.enabled`: bypass all prompts
-- `phases.<phase>.enforce_subagents`: require Task tool for writes
-
-## Phase Flow
-
-```
-intake → [checkpoint?] → research/explore → design → [checkpoint?]
-→ implement → review → [checkpoint?] → debug (if needed) → git → [checkpoint?] → done
-```
-
-## Orchestrator Commands
-
-### Initialize Session
 ```bash
-python3 << 'EOF'
-import json
-from pathlib import Path
-
-config_path = Path.home() / ".claude/plugins/agent-swarm/config/workflow.json"
-state_path = Path.home() / ".claude/plugins/agent-swarm/.state/session.json"
-
-config = json.loads(config_path.read_text()) if config_path.exists() else {}
-
-state = {
-    "phase": "intake",
-    "autopilot_override": config.get("autopilot", {}).get("enabled", False),
-    "in_subagent": False,
-    "search_count": 0,
-    "read_count": 0,
-    "task_summary": "",
-    "checkpoints": config.get("checkpoints", {})
-}
-state_path.parent.mkdir(parents=True, exist_ok=True)
-state_path.write_text(json.dumps(state, indent=2))
-print(f"[ORCHESTRATOR] Initialized")
-print(f"  Phase: intake")
-print(f"  Autopilot: {state['autopilot_override']}")
-print(f"  Checkpoints: {[k for k,v in state['checkpoints'].items() if v]}")
-EOF
-
-# Run capability inventory
-python3 ~/.claude/plugins/agent-swarm/scripts/inventory.py all
+python3 scripts/state.py transition <phase>
 ```
 
 ### Discover Available Tools
