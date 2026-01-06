@@ -338,7 +338,7 @@ def chart_blocks():
     return path
 
 def chart_subagents():
-    """Chart subagent spawn count by type."""
+    """Chart subagent token usage by type."""
     if not SUBAGENT_METRICS.exists():
         print("⚠️  No subagent metrics found")
         print("   Subagent tracking is automatic via post-tool-tracking.py hook")
@@ -351,11 +351,27 @@ def chart_subagents():
         print("⚠️  No subagent data found")
         return None
 
-    # Count agents by type
+    # Token estimates per agent type (from metrics.py)
+    TOKEN_ESTIMATES = {
+        "explorer": 25000,
+        "implementer": 100000,
+        "reviewer": 40000,
+        "default": 50000
+    }
+
+    # Calculate total tokens by type
     by_type = {}
     for agent_id, data in metrics.items():
         agent_type = data.get("agent_type", "unknown")
-        by_type[agent_type] = by_type.get(agent_type, 0) + 1
+
+        # Estimate tokens for this agent
+        tokens = TOKEN_ESTIMATES.get("default", 50000)
+        for key in TOKEN_ESTIMATES:
+            if key in agent_type.lower():
+                tokens = TOKEN_ESTIMATES[key]
+                break
+
+        by_type[agent_type] = by_type.get(agent_type, 0) + tokens
 
     if not by_type:
         print("⚠️  No subagent type data found")
@@ -365,12 +381,12 @@ def chart_subagents():
     values = list(by_type.values())
 
     data = {
-        "label": "Subagents Spawned",
+        "label": "Estimated Tokens",
         "values": values
     }
 
     path = generate_html_chart(
-        "Subagent Spawns by Type",
+        "Subagent Token Usage by Type",
         "bar",
         data,
         labels,

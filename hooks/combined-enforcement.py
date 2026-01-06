@@ -330,6 +330,46 @@ def check_smart_tool_usage(tool_name: str, tool_input: dict, state: dict) -> dic
     # Bash for git → suggest gh_wrapper for queries
     if tool_name == "Bash":
         cmd = tool_input.get("command", "")
+
+        # CRITICAL: Detect Bash abuse patterns (cat/grep/find)
+        # These should NEVER be done via Bash - proper tools exist
+
+        # cat abuse → use Read
+        if re.search(r'\bcat\s+[^\|><&;]+$', cmd):
+            return block(
+                f"[BASH ABUSE] Don't use 'cat' - use Read tool instead\n"
+                f"❌ Bash: {cmd[:60]}\n"
+                f"✅ Read: {{'file_path': '<path>'}}\n"
+                f"Bash cat wastes tokens and bypasses tracking."
+            )
+
+        # grep/rg abuse → use Grep (powered by ripgrep)
+        if re.search(r'\b(grep|rg|egrep|fgrep)\s+', cmd):
+            return block(
+                f"[BASH ABUSE] Don't use grep/rg via Bash - use Grep tool instead\n"
+                f"❌ Bash: {cmd[:60]}\n"
+                f"✅ Grep: {{'pattern': '<regex>', 'path': '.', 'output_mode': 'files_with_matches'}}\n"
+                f"The Grep tool is powered by ripgrep (rg) and has proper output formatting."
+            )
+
+        # find abuse → use Glob
+        if re.search(r'\bfind\s+', cmd):
+            return block(
+                f"[BASH ABUSE] Don't use 'find' - use Glob tool instead\n"
+                f"❌ Bash: {cmd[:60]}\n"
+                f"✅ Glob: {{'pattern': '**/*.ext', 'path': '.'}}\n"
+                f"Glob is faster and integrates with tracking."
+            )
+
+        # sed/awk for file editing → use Edit
+        if re.search(r'\b(sed|awk)\s+', cmd) and not re.search(r'\|', cmd):
+            return block(
+                f"[BASH ABUSE] Don't use sed/awk for file editing - use Edit tool\n"
+                f"❌ Bash: {cmd[:60]}\n"
+                f"✅ Edit: {{'file_path': '<path>', 'old_string': '...', 'new_string': '...'}}\n"
+                f"Edit tool is atomic and tracked."
+            )
+
         if cmd.startswith("gh ") and not any(x in cmd for x in ["create", "merge", "close", "edit"]):
             # Query commands, not mutating commands
             if any(x in cmd for x in ["list", "view", "status", "search"]):
@@ -447,7 +487,7 @@ def main():
     for result in checks:
         if result:
             # Log the block
-            msg = result.get("hookSpecificOutput", {}).get("message", "blocked")
+            msg = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "blocked")
             log_event("BLOCKED", f"{tool_name}: {msg[:50]}")
             update_stats(allowed=False, reason=msg, tool_name=tool_name)
             print(json.dumps(result))
