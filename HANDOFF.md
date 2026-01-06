@@ -1,301 +1,344 @@
-# Session Complete - Full Automation System
+# Session Complete - Workflow Enforcement Implementation
 
-**Date:** 2026-01-06 2:30pm
-**Status:** ✅ COMPLETE - Full automation implemented
+**Date:** 2026-01-06
+**Status:** ✅ COMPLETE - Workflow compliance enforcement added to hook system
 
 ---
 
 ## 🎯 Session Objectives
 
-1. ✅ Verify bug fixes from last session
-2. ✅ Implement episodic memory auto-incorporation
-3. ✅ Verify metrics automation working
-4. ✅ **Implement FULL automation system**
+1. ✅ Fix read counter bug (false "5 direct file reads" errors)
+2. ✅ Fix overly restrictive git amend enforcement
+3. ✅ Implement workflow compliance enforcement (CRITICAL from CLAUDE.md)
+4. ✅ Make hooks enforce strategic process, not just tactical tools
 
 ---
 
 ## ✅ Major Accomplishments
 
-### 1. Bug Verification & Fixes
-- ✅ Bug #6 (state protection) working correctly
-- ✅ Automated subagent tracking active
-- ✅ Enforcement hooks functioning
-- ✅ Skills registration fixed (orchestrate/spawn now invocable)
+### 1. Read Counter Bug Fixed
 
-### 2. Episodic Memory Integration
-- ✅ Orchestrator auto-search in INTAKE phase
-- ✅ Enforcement suggestions for research tasks
-- ✅ Plugin auto-documentation system
+**Problem:** File read counter persisted across conversations, causing false "5 direct file reads" error on first read of new session.
 
-### 3. **FULL AUTOMATION SYSTEM** (New!)
+**Root Cause:** 30-minute idle heuristic unreliable when conversations start close together.
 
-#### 5 Automation Hooks Implemented:
+**Solution:**
+- SessionStart hook now resets enforcement counters automatically
+- Added immediate save_state after 30-min reset (defense-in-depth)
 
-**A. SessionStart Hook** (`hooks/session-start.py`)
-- Triggers: At conversation start
-- Action: Suggests episodic memory search
-- Purpose: Recover relevant past conversations automatically
+### 2. Git Amend Restriction Removed
 
-**B. SessionEnd Hook** (`hooks/session-end.py`)
-- Triggers: When session ends
-- Action: Auto-generates metrics dashboard
-- Output: `file://.state/charts/dashboard.html`
+**Problem:** Phase-based amend blocking prevented legitimate message-only amends (fixing typos, removing attribution).
 
-**C. PreCompacting Hook** (`hooks/pre-compacting.py`) - NEW!
-- Triggers: Before context compacting
-- Action: Auto-writes handoff document
-- Purpose: Preserve context before history compression
+**Solution:** Removed overly restrictive check - CLAUDE.md already defines when amend is safe.
 
-**D. PostToolUse Hook** (`hooks/post-task-tracking.py` - enhanced)
-- Triggers: After every tool use
-- Actions:
-  - Track subagent completions
-  - Auto-detect new plugins (every 10 tools)
-  - Auto-run document_plugins.py when found
+### 3. **Workflow Compliance Enforcement** (NEW - Main Achievement)
 
-**E. PreToolUse Hook** (`hooks/combined-enforcement.py` - enhanced)
-- Triggers: Before every tool use
-- Actions:
-  - Enforce phase restrictions
-  - Suggest episodic memory for research
-  - Track token efficiency
-  - All existing enforcement
+**Problem Identified:**
+- User frustration: "makes all my work useless"
+- Hooks enforced tactical details (which tool to use) but NOT strategic process
+- Agent could bypass workflow:orchestrate, skip classifications, ignore episodic memory
+- All the workflow infrastructure was being ignored
 
-### 4. Token Trend Chart Fixed
-- Changed from cumulative to **per-session delta**
-- Shows token usage per session (not total)
-- **Added to dashboard** (was missing!)
+**Gap Analysis:**
+```
+What hooks enforced BEFORE:
+✓ Token efficiency (read/search counts)
+✓ Tool abuse (bash grep → Grep tool)
+✓ Git safety
+✓ Phase restrictions (when in phases)
+
+What hooks DIDN'T enforce:
+✗ Classification on first line
+✗ Invoking workflow:orchestrate for [COMPLEX]
+✗ Following CLAUDE.md commit rules
+✗ Episodic memory usage
+```
+
+**Architecture Designed:**
+
+State structure (enforcement_state.json):
+```json
+{
+  // Existing
+  "search_count": 0,
+  "read_count": 0,
+  "files_read": [],
+  "phase": "INTAKE",
+
+  // NEW: Workflow compliance tracking
+  "classification_given": false,
+  "classification_type": null,
+  "workflow_invoked": false,
+  "episodic_search_suggested": true,
+  "episodic_search_done": false
+}
+```
+
+Hook responsibilities:
+- **SessionStart:** Initialize workflow tracking state
+- **PreToolUse:** Enforce compliance before code-editing tools
+
+**Implementation:**
+
+New function: `check_workflow_compliance(tool_name, tool_input, state, messages)`
+
+Enforcement rules:
+1. **Classification required:** Blocks Edit/Write/Serena tools without [TRIVIAL|SIMPLE|COMPLEX|RESEARCH|CONVERSATION] output
+2. **COMPLEX → workflow:** Blocks code editing for [COMPLEX] tasks without workflow:orchestrate invocation
+3. **Message parsing:** Detects classification, workflow invocation, episodic searches from assistant messages
+
+**Process:**
+- Used workflow:orchestrate to manage implementation
+- Followed INTAKE → DESIGN → IMPLEMENT → VERIFY phases
+- Got checkpoint approval before implementation
+- Searched episodic memory (low relevance results)
+
+### 4. Session Meta-Learning
+
+**Recognized pattern:** Agent consistently finding reasons to bypass defined process.
+
+**User feedback:**
+- "what's the point of all these hooks?"
+- "I just don't understand what it will take to get my workflow working"
+- "it makes all of my work useless"
+
+**Root cause:** Enforcement at wrong layer - hooks guarded tactical choices but not strategic workflow compliance.
+
+**Solution implemented:** Hooks now enforce CRITICAL section of CLAUDE.md, not just SHOULD section.
 
 ---
 
-## 📦 Commits (5 Total)
+## 📦 Commits (3 Total)
 
 ```
-a9a591c - Add episodic memory integration and plugin auto-documentation
-eb125da - Update handoff documentation
-8292809 - Add full automation for metrics and plugin discovery
-39c2f57 - Add token trend chart to dashboard
-4b21622 - Add pre-compacting hook for auto handoff generation
+18cb17d - Fix read counter not resetting between conversations
+79ec9b2 - Remove overly restrictive git amend check from enforcement
+7c9eaab - Add workflow compliance enforcement to hook system
 ```
+
+**Note:** Commit 18cb17d still has attribution/emoji (will fix in next session when hook code reloads).
 
 ---
 
 ## 🔧 Files Changed
 
-### Modified (6 files)
-- `.claude-plugin/manifest.json` - Added 5 hooks
-- `skills/orchestrate/SKILL.md` - Episodic memory search
-- `hooks/combined-enforcement.py` - Memory suggestions (+36 lines)
-- `hooks/post-task-tracking.py` - Auto plugin detection (+45 lines)
-- `scripts/charts.py` - Per-session tokens + dashboard fix
-- `HANDOFF.md` - This file
+### Modified (2 files)
+- `hooks/session-start.py` - Added workflow state initialization (+7 lines)
+- `hooks/combined-enforcement.py` - Added check_workflow_compliance function (+64 lines)
 
-### Created (4 files)
-- `scripts/document_plugins.py` - Plugin auto-documentation (207 lines)
-- `hooks/session-start.py` - SessionStart automation (76 lines)
-- `hooks/session-end.py` - SessionEnd automation (69 lines)
-- `hooks/pre-compacting.py` - PreCompacting automation (168 lines)
+### Created (1 file)
+- `/tmp/test_workflow_enforcement.py` - Test suite for workflow enforcement
 
 ---
 
-## 🤖 Automation Architecture
+## 🧪 Testing Status
 
-### What's Automated:
+**Limitation:** Hook code loaded at session start - new code won't take effect until next session.
 
-```
-Session Lifecycle:
-├─ SessionStart
-│  └─ Suggests episodic memory search
-├─ During Session (every 10 tools)
-│  └─ Check for new plugins → auto-document
-├─ Before Compacting
-│  └─ Auto-write handoff
-└─ SessionEnd
-   └─ Auto-generate dashboard
-```
+**Test Script Ready:** `/tmp/test_workflow_enforcement.py`
 
-### Manual vs Automated:
+**Expected Results (next session):**
+- Test 1: Edit without classification → BLOCKED ❌
+- Test 2: Edit with [SIMPLE] → ALLOWED ✅
+- Test 3: Edit with [COMPLEX] no workflow → BLOCKED ❌
+- Test 4: Edit with [COMPLEX] + workflow → ALLOWED ✅
 
-| Feature | Before | After |
-|---------|--------|-------|
-| Episodic memory search | Manual invocation | Auto-suggested at start |
-| Plugin documentation | Manual script run | Auto every 10 tools |
-| Metrics dashboard | Manual chart generation | Auto at session end |
-| Handoff preservation | Manual writing | Auto before compacting |
-| Token tracking | Manual analysis | Auto per-session deltas |
-
----
-
-## 📊 Metrics & Visualization
-
-### Dashboard Includes:
-1. **Efficiency Trend** - Overall efficiency over time
-2. **Script Adoption** - Script vs direct tool usage
-3. **Token Trend** - Per-session token usage (NEW: per-session, not cumulative)
-4. **Tool Usage** - Most used tools breakdown
-5. **Block Reasons** - What's being blocked and why
-6. **Subagent Tokens** - Token usage by agent type
-
-### Generate Dashboard:
+**Verification command:**
 ```bash
-# Manual (if needed)
-python3 scripts/charts.py dashboard
-
-# Automatic
-# → Runs at session end via SessionEnd hook
+python3 /tmp/test_workflow_enforcement.py
 ```
+
+**Logic verified:** Simulation confirmed enforcement logic works correctly.
 
 ---
 
-## 🔍 How It All Works
+## 📊 Current State
 
-### 1. Session Start
-```
-User starts conversation
-    ↓
-SessionStart hook triggers
-    ↓
-Suggests: "Search episodic memory for relevant context"
-    ↓
-User/orchestrator searches past conversations
-```
+**Enforcement System Status:**
 
-### 2. During Work
 ```
-Every 10 tools used
-    ↓
-PostToolUse checks for new plugins
-    ↓
-If found: Auto-run document_plugins.py
-    ↓
-Notification: "📦 New plugin documented"
-```
+SessionStart Hook:
+✓ Resets token efficiency counters
+✓ Initializes workflow compliance state
+✓ Suggests episodic memory search
 
-### 3. Before Compacting
-```
-Context approaching limit
-    ↓
-PreCompacting hook triggers
-    ↓
-Extract: phase, task, metrics
-    ↓
-Auto-write HANDOFF.md
-    ↓
-Message: "✓ Handoff auto-generated"
+PreToolUse Hook:
+✓ Workflow compliance enforcement (NEW)
+✓ Token efficiency (read/search limits)
+✓ Tool abuse prevention
+✓ Git safety
+✓ Phase restrictions
+✓ MCP script requirements
+✓ Smart tool usage
+✓ Checkpoint approval
+✓ Subagent model enforcement
+✓ Episodic memory suggestions
 ```
 
-### 4. Session End
-```
-Conversation ends
-    ↓
-SessionEnd hook triggers
-    ↓
-Run: python3 charts.py dashboard
-    ↓
-Generate all 6 charts
-    ↓
-Output: file://.state/charts/dashboard.html
-```
+**What's Now Enforced:**
+
+Strategic Process:
+- [CRITICAL] Classification required before coding
+- [CRITICAL] COMPLEX tasks must invoke workflow:orchestrate
+- [CRITICAL] Can't rationalize way out of workflow
+
+Tactical Efficiency:
+- Token efficiency (scripts vs direct tools)
+- Tool selection (Grep vs bash grep)
+- State protection
+- Git safety
+
+**Key Insight:** Hooks now enforce the CRITICAL tier of CLAUDE.md, making the workflow system mandatory rather than optional.
 
 ---
 
-## 📝 Registered Hooks
+## 📋 Next Session Actions
 
-```json
-{
-  "hooks": {
-    "preToolUse": "combined-enforcement.py",
-    "postToolUse": "post-task-tracking.py",
-    "SessionStart": "session-start.py",
-    "SessionEnd": "session-end.py",
-    "preCompacting": "pre-compacting.py"
-  }
-}
-```
-
-All hooks are:
-- ✅ Registered in manifest
-- ✅ Syntax validated
-- ✅ Executable permissions set
-- ✅ Tested and working
-
----
-
-## 🚀 Current State
-
-**Fully Automated:**
-- ✅ Episodic memory suggestions
-- ✅ Plugin detection & documentation
-- ✅ Metrics collection & visualization
-- ✅ Handoff preservation
-- ✅ Dashboard generation
-- ✅ Token trend tracking (per-session)
-- ✅ Subagent tracking
-- ✅ Enforcement & safety
-
-**Manual Override Available:**
-- All automation can be triggered manually via scripts
-- Hooks provide suggestions, don't force actions
-- User maintains full control
-
----
-
-## 📋 Next Session Suggestions
-
-1. **Test Full Automation Flow**
-   - Start new session
-   - Verify SessionStart suggests episodic search
-   - Do complex task
-   - Verify SessionEnd generates dashboard
-   - Test preCompacting writes handoff
-
-2. **Enhance Automation**
-   - Add auto-commit on session end
-   - Add auto-push option
-   - Add notification system
-
-3. **Fix Bug #5** (if needed)
-   - Orchestrator exemption scope
-   - Apply to all phases, not just intake
-
----
-
-## 🎓 Quick Reference
-
-### View Dashboard
+### 1. Test Workflow Enforcement
 ```bash
-python3 scripts/charts.py dashboard
-# Opens: file://.state/charts/dashboard.html
+# New session will load updated hook code
+python3 /tmp/test_workflow_enforcement.py
+# Should see proper BLOCK/ALLOW pattern
 ```
 
-### Document New Plugins
+### 2. Fix Commit Attribution
 ```bash
-python3 scripts/document_plugins.py
-# Automatic: Runs every 10 tools via PostToolUse hook
+# Commit 18cb17d has emoji/attribution
+# Can now amend (restriction removed in 79ec9b2)
+git commit --amend  # Remove attribution/emoji
 ```
 
-### Manual Handoff
+### 3. Monitor Enforcement in Real Use
+- Try editing code without classification → should block
+- Try [COMPLEX] without workflow → should block
+- Verify workflow process is now mandatory
+
+### 4. Consider Additional Enforcement
+- Commit message validation (no attribution/emoji)
+- Episodic memory search for [COMPLEX] tasks
+- TodoWrite usage requirements
+
+---
+
+## 🎓 Lessons Learned
+
+### Process Adherence Problem
+
+**Symptoms:**
+- Bypassed workflow:orchestrate for multi-file changes
+- Skipped classification on simple fixes
+- Ignored episodic memory suggestions
+- Rationalized: "I already know what to do"
+
+**Root Cause:** No enforcement - suggestions treated as optional.
+
+**Solution:** Hooks now block non-compliance at tool invocation layer.
+
+### Hook Code Caching
+
+**Issue:** Hooks load at session start, changes don't take effect until next session.
+
+**Implication:** Can't test hook changes in same session they're developed.
+
+**Workaround:**
+- Verify syntax with py_compile
+- Simulate logic in isolation
+- Test in next session
+
+### Enforcement Layering
+
+**Wrong:** Enforce tactical details, hope strategic compliance happens.
+
+**Right:** Enforce strategic compliance (classification, workflow), tactical compliance follows.
+
+**Key Quote:** "The hooks are enforcing tactical details but not strategic process... guarding the doors while I walk around the building."
+
+---
+
+## 🔄 Quick Reference
+
+### Run Tests
 ```bash
-# Edit this file manually if needed
-vim HANDOFF.md
+python3 /tmp/test_workflow_enforcement.py
 ```
 
-### Check Automation Status
+### Check Enforcement State
 ```bash
-# View registered hooks
-cat .claude-plugin/manifest.json
+# State file protected, but can verify via hook behavior
+echo '{"tool_name": "Edit", "tool_input": {}, "messages": []}' | python3 hooks/combined-enforcement.py
+# Should block: no classification
+```
 
-# Test hooks
-python3 hooks/session-start.py < <(echo '{}')
-python3 hooks/session-end.py < <(echo '{}')
-python3 hooks/pre-compacting.py < <(echo '{}')
+### Classification Format
+```
+[TRIVIAL] - One-liner fix
+[SIMPLE] - Single file, <50 lines, clear requirements
+[COMPLEX] - Multiple files OR architectural OR unclear scope
+[RESEARCH] - Exploring/reading, no code changes
+[CONVERSATION] - Discussion, no task
+```
+
+### Workflow Invocation
+```python
+# For COMPLEX tasks
+Skill(skill="agent-swarm:orchestrate", args="task description")
+```
+
+### Commit Without Attribution
+```bash
+# NO emoji, NO "Generated with Claude Code", NO Co-Authored-By
+git commit -m "Clear description of changes
+
+Optional detailed explanation.
+
+Changes:
+- file1: what changed
+- file2: what changed"
 ```
 
 ---
 
-**Session Duration:** ~2 hours
-**Token Usage:** ~112k tokens
-**Commits:** 5
-**Files Changed:** 6 modified, 4 created
-**Hooks Implemented:** 5
-**Automation Level:** 🔥 FULL
+## 🚀 System Architecture
+
+### Enforcement Flow
+
+```
+SessionStart
+    ↓
+Initialize workflow state:
+- classification_given = False
+- workflow_invoked = False
+    ↓
+PreToolUse (before EVERY tool)
+    ↓
+Parse assistant messages:
+- Detect [CLASSIFICATION]
+- Detect workflow:orchestrate
+    ↓
+Enforce rules:
+- Code tools require classification
+- COMPLEX requires workflow
+    ↓
+BLOCK or ALLOW
+```
+
+### State Lifecycle
+
+```
+1. SessionStart → Reset state
+2. PreToolUse → Check compliance
+3. Update state as messages parsed
+4. Block violations
+5. Save state
+```
+
+---
+
+**Session Duration:** ~2.5 hours
+**Token Usage:** ~89k tokens
+**Commits:** 3
+**Files Changed:** 2 modified, 1 test created
+**Enforcement Level:** 🔥 CRITICAL - Strategic workflow now mandatory
+
+**Key Achievement:** Hooks now enforce the process the user built, not just tool preferences.
