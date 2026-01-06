@@ -463,4 +463,99 @@ Ref: Session analysis by Explorer agent a8189bc"
 
 **End of Session Handoff**
 
-**Next session start here:** Test the fixes in a new session. The briefing injection fix is critical - verify subagents actually receive the guidance.
+---
+
+## 🔍 POST-COMMIT TESTING (2026-01-06 - Session 2)
+
+### Test Results: Found CRITICAL Bug #6
+
+**Test 1: Bash cat blocking**
+- ❌ FAILED - `bash: cat file.py` was NOT blocked
+- Command executed successfully, returned full file contents
+- Expected: Block with helpful message
+
+**Root Cause Analysis:**
+Checked enforcement code - found Bash abuse detection at lines 334-371:
+```python
+if re.search(r'\bcat\s+[^\|><&;]+$', cmd):  # Line 334
+    return block("[BASH ABUSE] Don't use 'cat'...")
+```
+
+But import statement missing:
+```python
+import sys
+import json
+# import re  ← MISSING!
+from datetime import datetime
+```
+
+**Impact:** ALL Bash pattern detection silently failed
+- `re.search()` threw NameError
+- Exception swallowed, check returned None
+- Every cat/grep/rg/find command passed through
+- Explains why previous session saw 64.6% Bash usage
+
+### Bug #6: Missing `import re` (CRITICAL)
+
+**Problem:** Pattern detection code can't run without regex module
+- Lines 334-371 use `re.search()` extensively
+- Module never imported
+- Silent failure - no error logged
+- 100% of Bash abuse undetected
+
+**Fix:** Added `import re` to imports (commit 2b76fcd)
+
+**Why This Wasn't Caught:**
+- Code was never executed in previous session
+- Hook loads at session start
+- Previous session had old hook without pattern detection
+- This session has pattern detection code, but missing import
+- Need NEW session to test working version
+
+### Enforcement Status
+
+**Commits:**
+1. 972cb69 - Fix enforcement system (5 bugs)
+2. 2b76fcd - Add missing import re (Bug #6)
+
+**Current State:**
+- ✅ Briefing injection code fixed
+- ✅ Block reason field bug fixed
+- ✅ Dead mcp_bridge references removed
+- ✅ Grep IS ripgrep documentation added
+- ✅ Bash pattern detection code written
+- ✅ Missing import re fixed
+- ❌ NOT TESTED - hooks load at session start
+
+**Next Session Must:**
+1. **Start fresh session** - loads hooks with all fixes
+2. **Test Bash cat** - should block with message
+3. **Test Bash grep** - should block with Grep tool suggestion
+4. **Test Bash rg** - should block (Grep IS rg)
+5. **Spawn subagent** - verify briefing appears in prompt
+6. **Run metrics** - check if Bash usage decreased
+
+### Theoretical Impact (Once Tested)
+
+**Before fixes:**
+- Bash usage: 64.6% (via cat/grep/find escape hatch)
+- Script adoption: 0% (briefing not injected)
+- Unknown blocks: 87% (field bug)
+
+**After fixes (expected):**
+- Bash usage: ~20% (cat/grep/find blocked)
+- Script adoption: ~40% (briefing now injected)
+- Unknown blocks: <5% (field fixed)
+- BASH ABUSE blocks: ~40% (new category)
+
+**Caveat:** All predictions theoretical until tested in new session.
+
+---
+
+**Next session start here:**
+
+**CRITICAL:** Start NEW session to load fixed hooks. Then test:
+1. `bash: cat hooks/combined-enforcement.py` (should block)
+2. `bash: grep pattern .` (should block)
+3. Spawn subagent with Task tool (should receive briefing)
+4. Check metrics: `python3 scripts/charts.py report`
