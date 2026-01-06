@@ -489,6 +489,55 @@ def check_smart_tool_usage(tool_name: str, tool_input: dict, state: dict) -> dic
 
     return None
 
+def check_checkpoint_approval(tool_name: str, tool_input: dict, state: dict) -> dict | None:
+    """Enforce checkpoint approval requirement before critical operations."""
+    phase = state.get("phase", "")
+    if not phase:
+        return None
+    
+    # Load config to check if checkpoint enabled for this phase
+    config = load_json(CONFIG_FILE)
+    checkpoints = config.get("checkpoints", {})
+    
+    if not checkpoints.get(phase, False):
+        return None  # No checkpoint required for this phase
+    
+    # Check if approval has been granted for this phase
+    checkpoint_approvals = state.get("checkpoint_approvals", {})
+    if checkpoint_approvals.get(phase, False):
+        return None  # Approval already granted
+    
+    # Block critical operations that require checkpoint approval
+    if tool_name == "Bash":
+        command = tool_input.get("command", "")
+        
+        # Block git push operations
+        if re.search(r'\bgit\s+push\b', command):
+            return block(
+                f"[CHECKPOINT: {phase}] Git push requires approval\n"
+                f"This phase has checkpoint enabled. Get user approval before pushing.\n"
+                f"To approve: Add 'checkpoint_approvals': {{'{phase}': true}} to state"
+            )
+        
+        # Block git commit operations
+        if re.search(r'\bgit\s+commit\b', command):
+            return block(
+                f"[CHECKPOINT: {phase}] Git commit requires approval\n"
+                f"This phase has checkpoint enabled. Get user approval before committing.\n"
+                f"To approve: Add 'checkpoint_approvals': {{'{phase}': true}} to state"
+            )
+    
+    # Block phase transitions
+    if tool_name == "Bash" and ("AGENT_PHASE=" in tool_input.get("command", "") or 
+                                 "/tmp/phase_" in tool_input.get("command", "")):
+        return block(
+            f"[CHECKPOINT: {phase}] Phase transition requires approval\n"
+            f"Complete checkpoint for '{phase}' phase before transitioning.\n"
+            f"To approve: Add 'checkpoint_approvals': {{'{phase}': true}} to state"
+        )
+    
+    return None
+
 def check_git_safety(tool_name: str, tool_input: dict, state: dict) -> dict | None:
     """Prevent dangerous git operations."""
     if tool_name != "Bash":
@@ -584,6 +633,7 @@ def main():
     # Run all enforcement checks
     checks = [
         check_phase_restrictions(tool_name, state, tool_input),
+        check_checkpoint_approval(tool_name, tool_input, state),
         check_mcp_script_requirement(tool_name, tool_input, state),
         check_smart_tool_usage(tool_name, tool_input, state),
         check_token_efficiency(tool_name, tool_input, state),

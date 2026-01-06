@@ -128,6 +128,50 @@ else:
 EOF
 ```
 
+### Checkpoint Approval (User Action)
+
+**When user approves at a checkpoint:**
+
+The user grants approval by manually editing the state file or using AskUserQuestion tool.
+
+**Agent behavior:**
+1. Present work summary at checkpoint
+2. Use AskUserQuestion to request approval
+3. If user approves, update state with approval
+4. Proceed with critical operations (git push, phase transition, etc.)
+
+**Manual approval (user can do this):**
+```bash
+# Edit .state/session.json and add:
+{
+  "checkpoint_approvals": {
+    "git": true,
+    "design": true,
+    # etc.
+  }
+}
+```
+
+**Agent helper (ONLY after AskUserQuestion approval):**
+```bash
+# Agent must use AskUserQuestion first, then if approved:
+python3 << 'EOF'
+import json
+from pathlib import Path
+
+state_path = Path.home() / ".claude/plugins/agent-swarm/.state/session.json"
+state = json.loads(state_path.read_text())
+
+phase = state.get("phase", "")
+approvals = state.get("checkpoint_approvals", {})
+approvals[phase] = True
+state["checkpoint_approvals"] = approvals
+
+state_path.write_text(json.dumps(state, indent=2))
+print(f"[CHECKPOINT] User approved '{phase}' phase")
+EOF
+```
+
 ### Toggle Autopilot
 ```bash
 python3 << 'EOF'
