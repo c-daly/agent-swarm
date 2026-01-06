@@ -210,8 +210,27 @@ def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dic
                 f"Or spawn an Explorer subagent with Task tool."
             )
 
-    # Track file reads
+    # Track file reads and detect duplicates
     if tool_name == "Read":
+        file_path = tool_input.get("file_path", "")
+
+        # Track which files have been read
+        files_read = state.get("files_read", [])
+
+        # Check for duplicate
+        if file_path in files_read:
+            return block(
+                f"[DUPLICATE READ] File already read in this session:\n"
+                f"  {file_path}\n\n"
+                f"Reading the same file multiple times wastes tokens.\n"
+                f"If you need to re-check: review conversation history.\n"
+                f"If content changed: explain why re-reading is necessary."
+            )
+
+        # Track this file
+        files_read.append(file_path)
+        state["files_read"] = files_read
+
         count = state.get("read_count", 0) + 1
         state["read_count"] = count
         save_state(state)
