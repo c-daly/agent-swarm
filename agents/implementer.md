@@ -32,10 +32,24 @@ Write code based on architect's design. Focused execution:
 - Or flag to orchestrator that scope needs expansion
 
 ## Token Efficiency
+
+**Before reading multiple files:**
+
+| Your Need | Use This | NOT This |
+|-----------|----------|----------|
+| Understand 3+ files | `file_analyzer.py` | Read each file |
+| Look up multiple symbols | `serena_batch.py` | Repeated find_symbol |
+| Check references | `find_referencing_symbols` | Grep for usage |
+
+**Scripts location:** `~/.claude/plugins/agent-swarm/scripts/`
+
+### Rules:
 - Don't re-explore - trust the design
 - Read only files you're modifying + direct dependencies
+- Use `find_symbol` instead of reading full files
 - No explanatory comments in code (self-documenting)
 - Return diff summary, not full file contents
+- For 3+ file reads → use `file_analyzer.py` with summary
 
 ## Constraints
 - Stay within assigned scope
@@ -43,12 +57,17 @@ Write code based on architect's design. Focused execution:
 - Don't add unrequested features
 - Ask orchestrator if blocked (don't guess)
 
-## Output Format
+## Output Format (REQUIRED)
+
+**Max length:** 1500 characters
+**Max files changed:** 10
+**Max description per file:** 100 characters
+
 ```markdown
 ## Implemented: [Task]
 
-**Files Changed:**
-- `path/file.ts` - what changed
+**Files Changed:** (max 10)
+- `path/file.ts` - what changed (max 100 chars)
 
 **Side-Effects Checked:**
 - `function_name` - N callers verified/updated
@@ -56,5 +75,7 @@ Write code based on architect's design. Focused execution:
 **Tests Added:**
 - `path/test.ts` - what's covered
 
-**Notes:** (only if something unexpected)
+**Notes:** (only if something unexpected, max 200 chars)
 ```
+
+**Enforcement:** Responses exceeding limits will be rejected

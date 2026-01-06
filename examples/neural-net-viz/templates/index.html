@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neural Network Visualizer</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Neural Network Visualizer</h1>
+            <p>Real-time visualization of neural network training on MNIST</p>
+        </header>
+
+        <div class="main-content">
+            <aside class="controls-panel">
+                <section class="control-section">
+                    <h2>Network Architecture</h2>
+                    <div class="form-group">
+                        <label for="hidden-layers">Hidden Layer Sizes (comma-separated):</label>
+                        <input type="text" id="hidden-layers" value="128, 64" placeholder="e.g., 128, 64">
+                        <small>Input: 784 (28×28), Output: 10 (digits 0-9)</small>
+                    </div>
+                    <button id="create-network-btn" class="btn btn-primary">Create Network</button>
+                    <div id="network-status" class="status-message"></div>
+                </section>
+
+                <section class="control-section">
+                    <h2>Training Controls</h2>
+                    <div class="form-group">
+                        <label for="epochs">Epochs: <span id="epochs-value">10</span></label>
+                        <input type="range" id="epochs" min="1" max="20" value="10">
+                    </div>
+                    <div class="form-group">
+                        <label for="batch-size">Batch Size:</label>
+                        <select id="batch-size">
+                            <option value="32">32</option>
+                            <option value="64" selected>64</option>
+                            <option value="128">128</option>
+                        </select>
+                    </div>
+                    <button id="start-training-btn" class="btn btn-success" disabled>Start Training</button>
+                    <button id="stop-training-btn" class="btn btn-danger" disabled>Stop Training</button>
+                </section>
+
+                <section class="control-section metrics">
+                    <h2>Training Metrics</h2>
+                    <div class="metric-card">
+                        <div class="metric-label">Epoch</div>
+                        <div class="metric-value" id="current-epoch">-</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Batch</div>
+                        <div class="metric-value" id="current-batch">-</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Loss</div>
+                        <div class="metric-value" id="current-loss">-</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Accuracy</div>
+                        <div class="metric-value" id="current-accuracy">-</div>
+                    </div>
+                </section>
+            </aside>
+
+            <main class="visualization-area">
+                <canvas id="network-canvas" width="1200" height="800"></canvas>
+                <div id="training-message" class="training-message"></div>
+            </main>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/network-viz.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/socket-client.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/controls.js') }}"></script>
+</body>
+</html>
