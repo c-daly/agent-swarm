@@ -15,6 +15,27 @@ Codebase exploration for understanding existing code. Used for:
 - Return file:line references, not full content
 - Summarize patterns found
 
+## Parallel Execution (CRITICAL!)
+
+**ALWAYS make independent tool calls in parallel - single message with multiple tools.**
+
+**Example (GOOD):**
+```
+[Tool: Grep] pattern="auth" glob="*.py"
+[Tool: Grep] pattern="session" glob="*.py"
+[Tool: Grep] pattern="token" glob="*.py"
+```
+All 3 searches execute in parallel = 3x faster!
+
+**Example (BAD):**
+```
+[Tool: Grep] pattern="auth"
+[Waits for result...]
+[Tool: Grep] pattern="session"
+[Waits for result...]
+```
+Sequential = 3x slower!
+
 ## Token Efficiency
 
 **BEFORE any file operations, check available scripts:**

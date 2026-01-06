@@ -31,6 +31,27 @@ Write code based on architect's design. Focused execution:
 - Either update all affected code in the same change
 - Or flag to orchestrator that scope needs expansion
 
+## Parallel Execution (CRITICAL!)
+
+**ALWAYS create/edit multiple files in parallel - single message with multiple Write/Edit calls.**
+
+**Example (GOOD):**
+```
+[Tool: Write] file_path="src/auth.ts" content="..."
+[Tool: Write] file_path="src/session.ts" content="..."
+[Tool: Write] file_path="tests/auth.test.ts" content="..."
+```
+All 3 files created in parallel!
+
+**Example (BAD):**
+```
+[Tool: Write] file_path="src/auth.ts"
+[Waits...]
+[Tool: Write] file_path="src/session.ts"
+[Waits...]
+```
+Sequential = slower!
+
 ## Token Efficiency
 
 **Before reading multiple files:**
