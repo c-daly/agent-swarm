@@ -591,6 +591,12 @@ def generate_dashboard():
             </div>
 
             <div class="chart-card">
+                <h2>💰 Token Trend</h2>
+                <p>Estimated tokens per session</p>
+                <a href="token_trend.html" class="chart-link">View Full Chart →</a>
+            </div>
+
+            <div class="chart-card">
                 <h2>🔧 Tool Usage</h2>
                 <p>Which tools are used most</p>
                 <a href="tool_usage.html" class="chart-link">View Full Chart →</a>
