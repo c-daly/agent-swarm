@@ -1,0 +1,33 @@
+# Minigame environment configurations
+
+MoveToBeacon:
+  step_mul: 8
+  screen_size: 84
+  minimap_size: 64
+  description: "Navigate marine to beacon"
+  difficulty: "Easy"
+  recommended_steps: 100000
+
+CollectMineralShards:
+  step_mul: 8
+  screen_size: 84
+  minimap_size: 64
+  description: "Collect 20 mineral shards with 2 marines"
+  difficulty: "Medium"
+  recommended_steps: 200000
+
+DefeatRoaches:
+  step_mul: 8
+  screen_size: 84
+  minimap_size: 64
+  description: "Defeat roaches with 9 marines"
+  difficulty: "Medium"
+  recommended_steps: 300000
+
+FindAndDefeatZerglings:
+  step_mul: 8
+  screen_size: 84
+  minimap_size: 64
+  description: "Find and defeat zergling groups"
+  difficulty: "Hard"
+  recommended_steps: 500000
