@@ -25,6 +25,10 @@
     "SessionEnd": {
       "script": "../hooks/session-end.py",
       "description": "Auto-generate metrics dashboard at session end"
+    },
+    "preCompacting": {
+      "script": "../hooks/pre-compacting.py",
+      "description": "Auto-write handoff before context compacting to preserve state"
     }
   }
 }
