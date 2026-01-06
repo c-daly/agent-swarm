@@ -159,6 +159,26 @@ def check_autopilot(state: dict) -> dict | None:
 
 def check_phase_restrictions(tool_name: str, state: dict, tool_input: dict = None) -> dict | None:
     """Enforce phase-specific tool restrictions."""
+    
+    # FIRST: State file protection (always enforced, regardless of phase)
+    if tool_name == "Bash" and tool_input:
+        command = tool_input.get("command", "").strip()
+        if '.state' in command or 'session.json' in command:
+            return block(
+                "[STATE PROTECTION] Cannot access state files\n"
+                "State management is handled by the enforcement system.\n"
+                "Use AskUserQuestion if you need checkpoint approval."
+            )
+    
+    # SECOND: Allow critical documentation files (handoffs, notes) from any phase
+    if tool_name == "Write" and tool_input:
+        from pathlib import Path
+        file_path = tool_input.get("file_path", "")
+        filename = Path(file_path).name
+        CRITICAL_FILES = {"HANDOFF.md", "SESSION_NOTES.md"}
+        if filename in CRITICAL_FILES:
+            return None  # Allow handoff writes from any phase
+    
     phase = state.get("phase", "")
 
     # No phase = no restrictions
@@ -175,6 +195,7 @@ def check_phase_restrictions(tool_name: str, state: dict, tool_input: dict = Non
 
         # Allow orchestrator phase-transition commands
         if 'AGENT_PHASE=' in command or '/tmp/phase_' in command:
+            import sys; print(f'DEBUG: AGENT_PHASE exemption triggered!', file=sys.stderr)
             return None  # Allow
 
         # Allow Python execution patterns

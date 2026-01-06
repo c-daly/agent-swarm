@@ -9,6 +9,10 @@
     "preToolUse": {
       "script": "../hooks/combined-enforcement.py",
       "description": "Enforces phase restrictions, token efficiency, and parallel execution patterns"
+    },
+    "postToolUse": {
+      "script": "../hooks/post-task-tracking.py",
+      "description": "Track subagent completion and token usage"
     }
   }
 }
