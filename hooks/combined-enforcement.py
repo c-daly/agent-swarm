@@ -173,6 +173,10 @@ def check_phase_restrictions(tool_name: str, state: dict, tool_input: dict = Non
     if phase == "intake" and tool_name == "Bash" and tool_input:
         command = tool_input.get("command", "").strip()
 
+        # Allow orchestrator phase-transition commands
+        if 'AGENT_PHASE=' in command or '/tmp/phase_' in command:
+            return None  # Allow
+
         # Allow Python execution patterns
         python_patterns = [
             command.startswith("python3 -c"),
@@ -221,6 +225,23 @@ def check_phase_restrictions(tool_name: str, state: dict, tool_input: dict = Non
 def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dict | None:
     """Enforce token-saving measures."""
     from datetime import datetime, timedelta
+
+    # Detect phase changes and reset counters
+    current_phase = state.get("phase", "")
+    last_phase = state.get("last_phase", "")
+    
+    if current_phase != last_phase and last_phase:
+        # Phase changed, reset counters
+        state["search_count"] = 0
+        state["read_count"] = 0
+        state["files_read"] = []
+        state["last_phase"] = current_phase
+        log_event("COUNTER_RESET", f"Phase changed from '{last_phase}' to '{current_phase}', counters reset")
+        save_state(state)
+    elif not last_phase:
+        # Initialize last_phase tracking
+        state["last_phase"] = current_phase
+        save_state(state)
 
     # Detect new conversation and reset counters
     # If more than 30 minutes since last tool use, consider it a new conversation
@@ -402,6 +423,10 @@ def check_smart_tool_usage(tool_name: str, tool_input: dict, state: dict) -> dic
     # Bash for git → suggest gh_wrapper for queries
     if tool_name == "Bash":
         cmd = tool_input.get("command", "")
+
+        # Exempt orchestrator system commands
+        if 'AGENT_PHASE=' in cmd or '/tmp/phase_' in cmd:
+            return None  # Allow
 
         # CRITICAL: Detect Bash abuse patterns (cat/grep/find)
         # These should NEVER be done via Bash - proper tools exist
