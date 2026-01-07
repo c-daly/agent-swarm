@@ -16,6 +16,13 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+# Try to import monitor agent (optional dependency)
+try:
+    from monitor_agent import needs_monitoring, call_monitor_agent, format_monitor_result
+    MONITOR_AVAILABLE = True
+except ImportError:
+    MONITOR_AVAILABLE = False
+
 # Configuration
 STATE_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/session.json"
 CONFIG_FILE = Path.home() / ".claude/plugins/agent-swarm/config/workflow.json"
@@ -266,8 +273,8 @@ def check_phase_restrictions(tool_name: str, state: dict, tool_input: dict = Non
         CRITICAL_FILES = {"HANDOFF.md", "SESSION_NOTES.md"}
         if filename in CRITICAL_FILES:
             return None  # Allow handoff writes from any phase
-    
-    phase = state.get("phase", "")
+
+    phase = state.get("phase", "").lower()
 
     # No phase = no restrictions
     if not phase:
@@ -698,6 +705,15 @@ def check_git_safety(tool_name: str, tool_input: dict, state: dict) -> dict | No
     # Note: git commit --amend checks are in CLAUDE.md, not enforced here
     # Message-only amends (fixing typos, removing attribution) are safe
 
+    # Monitor agent for commit message validation
+    if MONITOR_AVAILABLE and "git commit" in command:
+        if needs_monitoring("Bash", tool_input, state):
+            decision = call_monitor_agent("Bash", tool_input, state)
+            if decision:
+                result = format_monitor_result(decision)
+                if not result.get("allowed", True):
+                    return block(result["message"])
+
     return None
 
 
@@ -712,7 +728,7 @@ def check_git_approval_layers(tool_name: str, tool_input: dict, state: dict, mes
     Layer 2: Test execution requirement - track test runs, block commits without tests
     Layer 3: [VERIFY] signal - require quality check signal before commits
     """
-    if tool_name \!= "Bash":
+    if tool_name != "Bash":
         return None
     
     command = tool_input.get("command", "")
@@ -911,7 +927,50 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
             if 'episodic-memory' in content and 'search' in content:
                 state["episodic_search_done"] = True
                 save_state(state)
-    
+
+    # Track file edits per session for multi-file COMPLEX enforcement
+    if tool_name in {"Write", "Edit", "mcp__plugin_serena_serena__replace_symbol_body",
+                     "mcp__plugin_serena_serena__create_text_file",
+                     "mcp__plugin_serena_serena__replace_content"}:
+
+        if "files_edited_this_session" not in state:
+            state["files_edited_this_session"] = []
+
+        file_path = tool_input.get("file_path") or tool_input.get("relative_path")
+        if file_path:
+            if file_path not in state["files_edited_this_session"]:
+                state["files_edited_this_session"].append(file_path)
+                save_state(state)
+
+            # Block 2nd+ file with SIMPLE classification
+            if len(state["files_edited_this_session"]) > 1:
+                classification = state.get("classification_type")
+                if classification == "SIMPLE":
+                    return {
+                        "allowed": False,
+                        "message": (
+                            "[WORKFLOW VIOLATION] Multi-file edit detected.\n"
+                            f"   Files edited: {', '.join(sorted(state['files_edited_this_session']))}\n"
+                            f"   Current classification: [SIMPLE]\n"
+                            "\n"
+                            "Multi-file edits require [COMPLEX] classification.\n"
+                            "Either:\n"
+                            "1. Reclassify as [COMPLEX] and invoke workflow:orchestrate\n"
+                            "2. Complete current file, then handle second file separately"
+                        )
+                    }
+
+    # Monitor agent for classification validation
+    if MONITOR_AVAILABLE and needs_monitoring(tool_name, tool_input, state):
+        decision = call_monitor_agent(tool_name, tool_input, state)
+        if decision:
+            result = format_monitor_result(decision)
+            if not result.get("allowed", True):
+                return {
+                    "allowed": False,
+                    "message": result["message"]
+                }
+
     # Enforce rules for code-editing tools
     code_tools = ["Edit", "Write", "mcp__plugin_serena_serena__replace_symbol_body", 
                   "mcp__plugin_serena_serena__insert_after_symbol", 
