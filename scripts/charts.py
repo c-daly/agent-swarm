@@ -578,6 +578,237 @@ def chart_tool_usage():
     print(f"✅ Chart generated: {path}")
     return path
 
+
+def chart_token_by_tool():
+    """Chart token consumption by tool type with time range selector."""
+    from datetime import datetime, timedelta
+    from collections import defaultdict
+    
+    # Get current metrics for all-time
+    from metrics import analyze_activity_log
+    current_metrics = analyze_activity_log()
+    all_time_tokens = current_metrics.get("token_by_tool", {})
+    
+    # Load history for time-filtered views
+    history = load_history()
+    snapshots = history.get("snapshots", [])
+    
+    now = datetime.now()
+    
+    # Calculate time ranges
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = now - timedelta(days=7)
+    month_start = now - timedelta(days=30)
+    
+    # Aggregate tokens by time range
+    today_tokens = defaultdict(int)
+    week_tokens = defaultdict(int)
+    month_tokens = defaultdict(int)
+    
+    prev_tools = {}
+    for snapshot in snapshots:
+        date_str = snapshot.get("date", "")
+        try:
+            # Parse date (format: "YYYY-MM-DD HH:MM")
+            snap_date = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
+        except:
+            continue
+        
+        metrics = snapshot.get("metrics", {})
+        current_tools = metrics.get("tools_by_type", {})
+        
+        # Calculate token delta for this snapshot
+        for tool, count in current_tools.items():
+            prev_count = prev_tools.get(tool, 0)
+            delta = count - prev_count
+            
+            # Estimate tokens
+            estimate = {
+                "Bash": 500, "Read": 2000, "Edit": 1500,
+                "Write": 1000, "Task": 5000, "Grep": 1000,
+                "Glob": 500, "WebSearch": 3000, "WebFetch": 2500
+            }.get(tool, 500)
+            
+            tokens = estimate * max(0, delta)
+            
+            # Add to appropriate time buckets
+            if snap_date >= today_start:
+                today_tokens[tool] += tokens
+            if snap_date >= week_start:
+                week_tokens[tool] += tokens
+            if snap_date >= month_start:
+                month_tokens[tool] += tokens
+        
+        prev_tools = current_tools.copy()
+    
+    # Sort and get top 10 for each range
+    def top_10(token_dict):
+        sorted_items = sorted(token_dict.items(), key=lambda x: -x[1])[:10]
+        labels = [tool for tool, _ in sorted_items]
+        values = [tokens for _, tokens in sorted_items]
+        return labels, values
+    
+    all_labels, all_values = top_10(all_time_tokens)
+    today_labels, today_values = top_10(today_tokens)
+    week_labels, week_values = top_10(week_tokens)
+    month_labels, month_values = top_10(month_tokens)
+    
+    # Generate HTML with dropdown
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>Token Usage by Tool</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            padding: 40px;
+            background: #f5f5f5;
+        }}
+        .container {{
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }}
+        h1 {{
+            color: #333;
+            margin-bottom: 10px;
+        }}
+        .controls {{
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }}
+        .controls label {{
+            font-weight: 600;
+            color: #555;
+        }}
+        .controls select {{
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            background: white;
+            cursor: pointer;
+        }}
+        .timestamp {{
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }}
+        canvas {{
+            max-height: 500px;
+        }}
+        .back-link {{
+            display: inline-block;
+            margin-top: 20px;
+            color: #0066cc;
+            text-decoration: none;
+        }}
+        .back-link:hover {{
+            text-decoration: underline;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>💎 Token Usage by Tool</h1>
+        <div class="timestamp">Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
+        
+        <div class="controls">
+            <label for="rangeSelect">Time Range:</label>
+            <select id="rangeSelect" onchange="switchRange()">
+                <option value="all">All Time</option>
+                <option value="today">Today</option>
+                <option value="week">Last 7 Days</option>
+                <option value="month">Last 30 Days</option>
+            </select>
+        </div>
+        
+        <canvas id="chart"></canvas>
+        <a href="dashboard.html" class="back-link">← Back to Dashboard</a>
+    </div>
+
+    <script>
+        const datasets = {{
+            all: {{
+                labels: {json.dumps(all_labels)},
+                data: {json.dumps(all_values)},
+                label: 'All Time Tokens'
+            }},
+            today: {{
+                labels: {json.dumps(today_labels)},
+                data: {json.dumps(today_values)},
+                label: 'Today Tokens'
+            }},
+            week: {{
+                labels: {json.dumps(week_labels)},
+                data: {json.dumps(week_values)},
+                label: 'Last 7 Days Tokens'
+            }},
+            month: {{
+                labels: {json.dumps(month_labels)},
+                data: {json.dumps(month_values)},
+                label: 'Last 30 Days Tokens'
+            }}
+        }};
+
+        const ctx = document.getElementById('chart').getContext('2d');
+        let chart = new Chart(ctx, {{
+            type: 'bar',
+            data: {{
+                labels: datasets.all.labels,
+                datasets: [{{
+                    label: datasets.all.label,
+                    data: datasets.all.data,
+                    backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                    borderColor: 'rgb(54, 162, 235)',
+                    borderWidth: 1
+                }}]
+            }},
+            options: {{
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {{
+                    legend: {{
+                        position: 'top',
+                    }}
+                }},
+                scales: {{
+                    y: {{
+                        beginAtZero: true,
+                        title: {{
+                            display: true,
+                            text: 'Estimated Tokens'
+                        }}
+                    }}
+                }}
+            }}
+        }});
+
+        function switchRange() {{
+            const range = document.getElementById('rangeSelect').value;
+            const data = datasets[range];
+            
+            chart.data.labels = data.labels;
+            chart.data.datasets[0].label = data.label;
+            chart.data.datasets[0].data = data.data;
+            chart.update();
+        }}
+    </script>
+</body>
+</html>"""
+
+    output_path = CHARTS_DIR / "token_by_tool.html"
+    output_path.write_text(html)
+    
+    print(f"✅ Chart generated: {output_path}")
+    return output_path
+
 def chart_blocks():
     """Chart block reasons pie chart."""
     from metrics import analyze_activity_log
@@ -1029,6 +1260,12 @@ def generate_dashboard():
             </div>
 
             <div class="chart-card">
+                <h2>💎 Token by Tool</h2>
+                <p>Which tools consume most tokens</p>
+                <a href="token_by_tool.html" class="chart-link">View Full Chart →</a>
+            </div>
+
+            <div class="chart-card">
                 <h2>🚫 Block Reasons</h2>
                 <p>What's being blocked and why</p>
                 <a href="blocks.html" class="chart-link">View Full Chart →</a>
@@ -1112,6 +1349,9 @@ def main():
     elif cmd == "tool-usage":
         chart_tool_usage()
 
+    elif cmd == "token-by-tool":
+        chart_token_by_tool()
+
     elif cmd == "blocks":
         chart_blocks()
 
@@ -1128,6 +1368,7 @@ def main():
         chart_script_adoption()
         chart_token_trend()
         chart_tool_usage()
+        chart_token_by_tool()
         chart_blocks()
         chart_subagents()
         generate_dashboard()
@@ -1140,6 +1381,7 @@ def main():
         chart_script_adoption()
         chart_token_trend()
         chart_tool_usage()
+        chart_token_by_tool()
         chart_blocks()
         chart_subagents()
         generate_dashboard()

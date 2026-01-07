@@ -406,6 +406,7 @@ def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dic
         state["search_count"] = 0
         state["read_count"] = 0
         state["files_read"] = []
+        state["edits_this_response"] = 0  # Reset classification enforcement counter
         state["last_phase"] = current_phase
         log_event("COUNTER_RESET", f"Phase changed from '{last_phase}' to '{current_phase}', counters reset")
         save_state(state)
@@ -429,6 +430,7 @@ def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dic
                 state["search_count"] = 0
                 state["read_count"] = 0
                 state["files_read"] = []
+                state["edits_this_response"] = 0  # Reset classification enforcement counter
                 log_event("COUNTER_RESET", "New conversation detected, counters reset")
                 save_state(state)  # Persist reset immediately
         except (ValueError, TypeError):
@@ -1011,37 +1013,73 @@ def check_subagent_model(tool_name: str, tool_input: dict, state: dict) -> dict 
     return None
 
 def check_episodic_memory_suggestion(tool_name: str, tool_input: dict, state: dict):
-    """Suggest episodic memory search for research/exploration tasks"""
+    """Stronger suggestion for episodic memory search at key moments"""
 
-    # Only suggest once per session
-    if state.get("memory_search_suggested"):
-        return None
+    # Track suggestion count (allow multiple, but limit spam)
+    suggestion_count = state.get("memory_search_suggested", 0)
+    if suggestion_count >= 3:
+        return None  # After 3 suggestions, stop
 
-    # Suggest for Task tool with exploration/research keywords
+    # Scenario 1: Research/exploration tasks (most important)
     if tool_name == "Task":
         subagent_type = tool_input.get("subagent_type", "")
         prompt = tool_input.get("prompt", "").lower()
 
-        # Check if this is a research/exploration task
-        research_keywords = ["explore", "investigate", "understand", "how does", "find out", "research"]
+        research_keywords = ["explore", "investigate", "understand", "how does", "find out", "research", "explain", "analyze"]
         is_research = (subagent_type in ["Explore", "explorer", "research", "researcher"] or
                       any(keyword in prompt for keyword in research_keywords))
 
         if is_research:
-            # Mark as suggested
-            state["memory_search_suggested"] = True
+            state["memory_search_suggested"] = suggestion_count + 1
             save_state(state)
 
-            # Return suggestion (not blocking, just informative)
             return {
                 "hookSpecificOutput": {
                     "permissionDecision": "allow",
-                    "message": "[MEMORY] Consider searching episodic memory first:\n"
+                    "message": "\n============================================================\n"
+                    "🧠 EPISODIC MEMORY SUGGESTION\n"
+                    "============================================================\n"
+                    "Before exploring, consider searching past conversations.\n"
+                    "You might find:\n"
+                    "  • Previous work in this codebase\n"
+                    "  • Decisions and rationale for designs\n"
+                    "  • Known issues or gotchas\n"
+                    "  • Solutions to similar problems\n\n"
+                    "Search with:\n"
                     "  Skill: episodic-memory:search-conversations\n"
-                    "  OR use: mcp__plugin_episodic-memory_episodic-memory__search(query='<keywords>', limit=5)\n"
-                    "  This can recover relevant context from past sessions."
+                    "  Tool: mcp__plugin_episodic-memory_episodic-memory__search\n\n"
+                    "Example queries:\n"
+                    f"  - '{prompt[:50]}'\n"
+                    "  - '<feature/component name>'\n"
+                    "  - '<architectural decision>'\n"
+                    "============================================================"
                 }
             }
+
+    # Scenario 2: Extensive code reading/searching (new codebase exploration)
+    search_count = state.get("search_count", 0)
+    read_count = state.get("read_count", 0)
+
+    if (search_count + read_count >= 5) and suggestion_count == 0:
+        # First time doing extensive exploration
+        state["memory_search_suggested"] = 1
+        save_state(state)
+
+        return {
+            "hookSpecificOutput": {
+                "permissionDecision": "allow",
+                "message": "\n============================================================\n"
+                "🧠 EPISODIC MEMORY SUGGESTION\n"
+                "============================================================\n"
+                "You're exploring unfamiliar code.\n"
+                "Past conversations might have context about:\n"
+                "  • Architecture and design decisions\n"
+                "  • Where key features are implemented\n"
+                "  • Known issues or technical debt\n\n"
+                "Consider: episodic-memory:search-conversations\n"
+                "============================================================"
+            }
+        }
 
     return None
 
@@ -1266,7 +1304,15 @@ def main():
             return
 
     # Default: allow
-    log_event("ALLOWED", tool_name)
+    # Enhanced logging for Bash - include command for script detection
+    if tool_name == "Bash":
+        command = tool_input.get("command", "")
+        # Truncate very long commands
+        cmd_preview = command[:200] if len(command) <= 200 else command[:200] + "..."
+        log_event("ALLOWED", f"Bash: {cmd_preview}")
+    else:
+        log_event("ALLOWED", tool_name)
+    
     update_stats(allowed=True, tool_name=tool_name)
     print(json.dumps(allow()))
 

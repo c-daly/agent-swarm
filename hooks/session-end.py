@@ -71,56 +71,38 @@ def generate_dashboard():
         }
 
 def check_memory_write_needed(input_data):
-    """Check if significant work was done that should be captured in memory."""
+    """Memory write is ALWAYS required at session end."""
 
-    # Check for file modifications in the input data
-    messages = input_data.get("messages", [])
-
-    # Look for indicators of significant work
-    has_file_changes = False
-    has_architecture_work = False
-    has_problem_solving = False
-
-    for msg in messages:
-        if isinstance(msg, dict):
-            content = str(msg.get("content", "")).lower()
-
-            # Check for file edits/writes
-            if any(word in content for word in ["edit", "write", "create", "modify", "refactor"]):
-                has_file_changes = True
-
-            # Check for architecture/design work
-            if any(word in content for word in ["architecture", "design", "pattern", "structure"]):
-                has_architecture_work = True
-
-            # Check for problem-solving
-            if any(word in content for word in ["bug", "fix", "issue", "error", "problem", "gotcha"]):
-                has_problem_solving = True
-
-    # If significant work was done, suggest memory write
-    if has_file_changes or has_architecture_work or has_problem_solving:
+    # Memory write is mandatory for all sessions
+    # Even if no code was changed, conversations have context worth preserving
+    if True:  # Always true - memory write always required
         return {
             "needed": True,
             "message": (
-                "\n\n📝 MEMORY CAPTURE RECOMMENDED\n"
-                "   Significant work completed. Consider writing to project memory:\n"
-                "   \n"
-                "   Tool: mcp__plugin_serena_serena__write_memory\n"
-                "   \n"
-                "   What to capture:\n"
-                "   - Key decisions made and rationale\n"
-                "   - Gotchas/issues encountered and solutions\n"
-                "   - Architecture changes or patterns introduced\n"
-                "   - Important context for future sessions\n"
-                "   \n"
-                "   Example:\n"
-                "   write_memory(\n"
-                "       memory_file_name='workflow-consolidation-2026-01',\n"
-                "       content='# Instruction Consolidation\\n\\n'\n"
-                "               'Created CORE_PROTOCOL.md to reduce duplication.\\n'\n"
-                "               'Gotcha: Phase enforcement blocks tools in wrong phase.\\n'\n"
-                "               'Solution: Reset session.json or use correct phase.'\n"
-                "   )"
+                "\n\n============================================================\n"
+                "📝 MEMORY CAPTURE REQUIRED\n"
+                "============================================================\n"
+                "Before ending this session, you MUST write learnings to memory.\n"
+                "Even brief conversations contain valuable context.\n"
+                "\n"
+                "Tool: mcp__plugin_serena_serena__write_memory\n"
+                "\n"
+                "What to capture:\n"
+                "  • Key decisions made and rationale\n"
+                "  • Gotchas/issues encountered and solutions\n"
+                "  • Architecture changes or patterns introduced\n"
+                "  • Important context for future sessions\n"
+                "  • Even simple Q&A if it reveals codebase details\n"
+                "\n"
+                "Example:\n"
+                "  write_memory(\n"
+                "      memory_file_name='<feature>-<date>',\n"
+                "      content='# Session Summary\\n\\n'\n"
+                "              '<what was done>\\n'\n"
+                "              '<key decisions>\\n'\n"
+                "              '<gotchas and solutions>'\n"
+                "  )\n"
+                "============================================================"
             )
         }
 

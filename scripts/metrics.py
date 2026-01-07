@@ -65,6 +65,7 @@ def analyze_activity_log():
     metrics = {
         "total_events": 0,
         "tools_by_type": defaultdict(int),
+        "token_by_tool": defaultdict(int),
         "blocks_by_reason": defaultdict(int),
         "duplicate_reads": 0,
         "files_read": [],
@@ -73,52 +74,64 @@ def analyze_activity_log():
 
     seen_reads = set()
 
-    # Track script usage
-    script_names = [
-        "batch_search.py",
-        "file_analyzer.py",
-        "serena_batch.py",
-        "gh_wrapper.py",
-        "inventory.py",
-        "context7_docs.py"
-    ]
-
     for line in lines:
         if not line.strip():
             continue
 
         metrics["total_events"] += 1
 
-        # Track script usage
-        for script in script_names:
-            if script in line:
-                metrics["script_calls"] = metrics.get("script_calls", 0) + 1
-                metrics["scripts_used"] = metrics.get("scripts_used", {})
-                metrics["scripts_used"][script] = metrics["scripts_used"].get(script, 0) + 1
-
-        # Track tool usage
+        # Track tool usage and extract command content for Bash
         if "ALLOWED:" in line:
-            # Parse actual tool name from: [timestamp] ALLOWED: tool_name
             parts = line.split("ALLOWED:")
             if len(parts) > 1:
-                tool_name = parts[1].strip().split()[0]  # Get first word after ALLOWED:
+                rest = parts[1].strip()
+                
+                if rest.startswith("Bash:"):
+                    tool_name = "Bash"
+                    command = rest[5:].strip()
+                    
+                    is_script = False
+                    script_name = None
+                    
+                    if "python3" in command or "python " in command:
+                        if ".py" in command:
+                            is_script = True
+                            try:
+                                if "/tmp/" in command:
+                                    script_name = command.split("/tmp/")[1].split()[0]
+                                else:
+                                    import re
+                                    match = re.search(r'([a-zA-Z0-9_/-]+\.py)', command)
+                                    if match:
+                                        script_name = match.group(1).split('/')[-1]
+                            except:
+                                script_name = "unknown_script.py"
+                        elif " -c " in command or " << " in command:
+                            is_script = True
+                            script_name = "inline_script"
+                    
+                    if is_script:
+                        metrics["script_calls"] = metrics.get("script_calls", 0) + 1
+                        if script_name:
+                            metrics["scripts_used"] = metrics.get("scripts_used", {})
+                            metrics["scripts_used"][script_name] = metrics["scripts_used"].get(script_name, 0) + 1
+                else:
+                    tool_name = rest.split()[0]
+                
                 metrics["tools_by_type"][tool_name] += 1
+                token_estimate = TOKEN_ESTIMATES.get(tool_name, 500)
+                metrics["token_by_tool"][tool_name] += token_estimate
 
-        # Track blocks
         if "BLOCKED" in line:
-            # Format: [timestamp] BLOCKED: Tool: [REASON] message
-            # Extract the reason (second bracketed text)
             parts = line.split("BLOCKED:")
             if len(parts) > 1:
                 blocked_part = parts[1]
-                # Look for [REASON] in the blocked part
                 if "[" in blocked_part and "]" in blocked_part:
                     reason = blocked_part.split("[")[1].split("]")[0]
                     metrics["blocks_by_reason"][reason] += 1
                 else:
                     metrics["blocks_by_reason"]["unknown"] += 1
 
-        # Track duplicate reads
         if "Read" in line and "file_path" in line:
             try:
                 file = line.split("file_path")[1].split("}")[0].strip('":\' ')
