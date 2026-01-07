@@ -3,6 +3,7 @@
 import json, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "hooks"))
+import sys; sys.path.insert(0, "hooks")
 from combined_enforcement import check_git_approval_layers
 
 def test_layer1_no_approval():

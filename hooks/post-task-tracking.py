@@ -130,6 +130,16 @@ def main():
 
     # Track Task tool completions
     if tool_name == "Task":
+        # DEBUG: Log to see if hook is running
+        debug_file = STATE_DIR / "post_task_debug.log"
+        try:
+            with open(debug_file, "a") as f:
+                f.write(f"[{datetime.now().isoformat()}] Task tool detected\n")
+                f.write(f"  tool_input keys: {list(tool_input.keys())}\n")
+                f.write(f"  tool_output keys: {list(tool_output.keys())}\n")
+        except:
+            pass
+
         # Extract agent info from input and output
         # subagent_type is in tool_input, agent_id is in tool_output
         subagent_type = tool_input.get("subagent_type", "unknown")
@@ -137,13 +147,31 @@ def main():
         output_str = json.dumps(tool_output)
         agent_id, _ = extract_agent_info(output_str)
 
+        # DEBUG: Log extraction result
+        try:
+            with open(debug_file, "a") as f:
+                f.write(f"  agent_id extracted: {agent_id}\n")
+                f.write(f"  subagent_type: {subagent_type}\n")
+        except:
+            pass
+
         if agent_id:
             try:
                 prompt = tool_input.get("prompt", "")
                 track_subagent(agent_id, subagent_type, prompt)
+                # DEBUG: Confirm tracking
+                try:
+                    with open(debug_file, "a") as f:
+                        f.write(f"  ✅ Tracked successfully\n")
+                except:
+                    pass
             except Exception as e:
                 # Don't fail the hook if tracking fails
-                pass
+                try:
+                    with open(debug_file, "a") as f:
+                        f.write(f"  ❌ Tracking failed: {e}\n")
+                except:
+                    pass
 
     # Check for new plugins periodically
     plugin_msg = None

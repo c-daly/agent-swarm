@@ -25,6 +25,16 @@
     ],
     "PostToolUse": [
       {
+        "matcher": "Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/post-task-tracking.py",
+            "timeout": 3
+          }
+        ]
+      },
+      {
         "matcher": "*",
         "hooks": [
           {
