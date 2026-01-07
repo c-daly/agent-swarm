@@ -32,11 +32,18 @@ def save_metrics(metrics):
 
 def extract_agent_info(tool_output):
     """Extract agent ID and type from Task tool output."""
-    # Look for agent ID in output (format: "Agent <id>: ...")
-    # Or task ID from system messages
+    # Look for agent ID in output
+    # Formats:
+    #   - "agentId: abc1234" (async agents)
+    #   - "Agent abc1234: ..." (older format)
+    #   - "task_id: abc1234" (task output format)
 
-    # Try to find agent ID
-    agent_id_match = re.search(r'Agent ([a-f0-9]{7,})', tool_output)
+    # Try agentId: format first (most common)
+    agent_id_match = re.search(r'agentId:\s*([a-f0-9]{7,})', tool_output, re.IGNORECASE)
+    
+    # Fall back to other formats
+    if not agent_id_match:
+        agent_id_match = re.search(r'Agent\s+([a-f0-9]{7,})', tool_output)
     if not agent_id_match:
         agent_id_match = re.search(r'task_id["\s:]+([a-f0-9-]+)', tool_output)
 
@@ -45,28 +52,28 @@ def extract_agent_info(tool_output):
 
     agent_id = agent_id_match.group(1)
 
-    # Try to find agent type
-    type_match = re.search(r'subagent[_\s]type["\s:]+([a-zA-Z0-9_-]+)', tool_output, re.IGNORECASE)
+    # Try to find agent type (not in output, will be set from tool_input)
+    type_match = re.search(r'subagent[_\s]type["\s:]+([a-zA-Z0-9_:-]+)', tool_output, re.IGNORECASE)
     agent_type = type_match.group(1) if type_match else "unknown"
 
     return agent_id, agent_type
 
-def track_subagent(agent_id, agent_type):
+def track_subagent(agent_id, agent_type, prompt=""):
     """Track a completed subagent."""
     metrics = load_metrics()
 
-    # Create entry for this agent
+    # Create/update entry for this agent with correct schema
     if agent_id not in metrics:
         metrics[agent_id] = {
+            "spawned_at": datetime.now().isoformat(),
             "agent_type": agent_type,
-            "first_seen": datetime.now().isoformat(),
-            "last_updated": datetime.now().isoformat(),
-            "completions": 0
+            "status": "completed",
+            "prompt": prompt[:100] if prompt else "No description"
         }
-
-    # Update
-    metrics[agent_id]["last_updated"] = datetime.now().isoformat()
-    metrics[agent_id]["completions"] += 1
+    else:
+        # Update existing entry
+        metrics[agent_id]["status"] = "completed"
+        metrics[agent_id]["last_updated"] = datetime.now().isoformat()
 
     save_metrics(metrics)
 
@@ -132,7 +139,8 @@ def main():
 
         if agent_id:
             try:
-                track_subagent(agent_id, subagent_type)
+                prompt = tool_input.get("prompt", "")
+                track_subagent(agent_id, subagent_type, prompt)
             except Exception as e:
                 # Don't fail the hook if tracking fails
                 pass
