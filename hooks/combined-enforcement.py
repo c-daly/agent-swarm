@@ -238,6 +238,17 @@ def block(reason: str) -> dict:
     }
 
 
+def allow_with_warning(tool_name: str, tool_input: dict, warning: str) -> dict:
+    """Allow tool but inject warning message."""
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "permissionDecisionWarning": warning
+        }
+    }
+
+
 def get_tool_category(tool_name: str) -> str | None:
     """Get the category of a tool, returns None if not categorized."""
     for category, tools in TOOL_CATEGORIES.items():
@@ -367,6 +378,25 @@ def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dic
     """Enforce token-saving measures."""
     from datetime import datetime, timedelta
 
+    # CHECK COMPLIANCE: If previously blocked, agent MUST use Task/Write
+    if "blocked_at" in state:
+        blocked_info = state["blocked_at"]
+        required_tools = ["Task", "Write"]
+        
+        if tool_name in required_tools:
+            # Complied! Clear block state
+            del state["blocked_at"]
+            save_state(state)
+            log_event("COMPLIANCE", f"Agent used {tool_name} after block - compliant")
+        else:
+            # Violation - block harder
+            return block(
+                f"[COMPLIANCE VIOLATION] Previously blocked for: {blocked_info['reason']}\n\n"
+                f"REQUIRED: You were told to use Task or Write.\n"
+                f"You tried to use {tool_name} instead.\n\n"
+                f"YOU MUST USE: Task (spawn subagent) or Write (create script)"
+            )
+
     # Detect phase changes and reset counters
     current_phase = state.get("phase", "")
     last_phase = state.get("last_phase", "")
@@ -414,7 +444,32 @@ def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dic
         state["search_count"] = count
         save_state(state)
 
+        # Check thresholds before blocking
+        if count == 3:  # 50% of limit
+            log_event("THRESHOLD_WARNING", f"50% search limit reached (3/{MAX_DIRECT_SEARCHES})")
+            return allow_with_warning(
+                tool_name, tool_input,
+                f"[WARNING] 50% limit reached ({count}/{MAX_DIRECT_SEARCHES} searches).\n\n"
+                f"Approaching limit. Consider batching if you need more:\n"
+                f"• Task(subagent_type='Explore', ...) for codebase exploration\n"
+                f"• Write script to /tmp/ for multiple search patterns"
+            )
+        elif count == 4:  # 80% of limit
+            log_event("THRESHOLD_WARNING", f"80% search limit reached (4/{MAX_DIRECT_SEARCHES})")
+            return allow_with_warning(
+                tool_name, tool_input,
+                f"[CAUTION] 80% limit reached ({count}/{MAX_DIRECT_SEARCHES} searches).\n\n"
+                f"⚠️ Next search will BLOCK. Use Task or Write script now!"
+            )
+
         if count > MAX_DIRECT_SEARCHES:
+            state["blocked_at"] = {
+                "tool": tool_name,
+                "count": count,
+                "timestamp": current_time,
+                "reason": f"Exceeded search limit ({count}/{MAX_DIRECT_SEARCHES})"
+            }
+            save_state(state)
             return block(
                 f"[BLOCKED] {count} direct searches used (limit: {MAX_DIRECT_SEARCHES}).\n\n"
                 f"REQUIRED ACTION: Choose based on task type\n\n"
@@ -454,7 +509,32 @@ def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dic
         state["read_count"] = count
         save_state(state)
 
+        # Check thresholds before blocking
+        if count == 3:  # 50% of limit (3/5 = 60%)
+            log_event("THRESHOLD_WARNING", f"50% read limit reached (3/{MAX_FILE_READS})")
+            return allow_with_warning(
+                tool_name, tool_input,
+                f"[WARNING] 50% limit reached ({count}/{MAX_FILE_READS} file reads).\n\n"
+                f"Approaching limit. Consider batching if you need more:\n"
+                f"• Task(subagent_type='Explore', ...) for codebase exploration\n"
+                f"• Write script to /tmp/ for batch file processing"
+            )
+        elif count == 4:  # 80% of limit (4/5 = 80%)
+            log_event("THRESHOLD_WARNING", f"80% read limit reached (4/{MAX_FILE_READS})")
+            return allow_with_warning(
+                tool_name, tool_input,
+                f"[CAUTION] 80% limit reached ({count}/{MAX_FILE_READS} file reads).\n\n"
+                f"⚠️ Next read will BLOCK. Use Task or Write script now!"
+            )
+
         if count > MAX_FILE_READS:
+            state["blocked_at"] = {
+                "tool": tool_name,
+                "count": count,
+                "timestamp": current_time,
+                "reason": f"Exceeded read limit ({count}/{MAX_FILE_READS})"
+            }
+            save_state(state)
             return block(
                 f"[BLOCKED] {count} direct file reads (limit: {MAX_FILE_READS}).\n\n"
                 f"REQUIRED ACTION: Choose based on task type\n\n"
@@ -921,7 +1001,7 @@ def check_episodic_memory_suggestion(tool_name: str, tool_input: dict, state: di
         if is_research:
             # Mark as suggested
             state["memory_search_suggested"] = True
-            save_json(STATE_FILE, state)
+            save_state(state)
 
             # Return suggestion (not blocking, just informative)
             return {
@@ -1118,6 +1198,17 @@ def main():
     if result:
         print(json.dumps(result))
         return
+
+    # Layer 2: Pattern Detection (early intervention for batch operations)
+    if MONITOR_AVAILABLE and tool_name in (SEARCH_TOOLS | {"Read"}):
+        from monitor_agent import detect_batch_need
+        
+        batch_decision = detect_batch_need(tool_name, tool_input, state, messages)
+        if batch_decision and not batch_decision.get("allowed", True):
+            log_event("PATTERN_BLOCK", f"{tool_name}: {batch_decision['message'][:50]}")
+            update_stats(False, batch_decision["message"], tool_name)
+            print(json.dumps(block(batch_decision["message"])))
+            return
 
     # Run all enforcement checks
     checks = [

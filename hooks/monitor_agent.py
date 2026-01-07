@@ -238,3 +238,73 @@ def format_monitor_result(decision: Dict[str, Any]) -> dict:
                 "Please review and correct before proceeding."
             )
         }
+
+
+def detect_batch_need(tool_name: str, tool_input: dict, state: dict, recent_messages: list) -> dict | None:
+    """
+    Detect patterns in conversation indicating batch operations needed.
+    
+    Returns block decision if batch operation clearly needed, None otherwise.
+    """
+    import re
+    
+    # Only check on first few searches/reads
+    search_count = state.get("search_count", 0)
+    read_count = state.get("read_count", 0)
+    
+    # Only intervene early (before limit hit)
+    if search_count > 2 or read_count > 2:
+        return None
+    
+    # Get last 3 messages (user + assistant turns)
+    recent_text = " ".join([
+        msg.get("content", "") 
+        for msg in recent_messages[-3:]
+    ]).lower()
+    
+    # Patterns indicating batch operations
+    batch_indicators = [
+        (r'\b(\d+)\s+(files?|patterns?|searches?)', 'files/patterns'),
+        (r'check\s+all', 'all checks'),
+        (r'find\s+all\s+.*\s+that', 'find all pattern'),
+        (r'across\s+(multiple|many)', 'multiple targets'),
+        (r'throughout\s+the\s+codebase', 'codebase-wide'),
+        (r'every\s+\w+\s+in', 'iteration pattern'),
+    ]
+    
+    for pattern, description in batch_indicators:
+        match = re.search(pattern, recent_text)
+        if match:
+            # Extract number if present
+            num = None
+            try:
+                if match.lastindex and match.lastindex >= 1:
+                    num = int(match.group(1))
+            except (ValueError, IndexError):
+                pass
+            
+            # If explicit number > 5, or qualitative indicator ("all", "every", etc.)
+            if num and num > 5:
+                return {
+                    "allowed": False,
+                    "message": (
+                        f"[PROACTIVE BLOCK] Detected intent to process {num} items ({description}).\n\n"
+                        f"REQUIRED: Use batch approach BEFORE starting:\n\n"
+                        f"✓ OPTION 1: Spawn Explorer subagent\n"
+                        f"  Task(subagent_type='Explore', prompt='...')\n\n"
+                        f"✓ OPTION 2: Write batch script\n"
+                        f"  Write(file_path='/tmp/batch_search.py', content='''...''')\n\n"
+                        f"Don't start direct tool calls when you know you'll hit limits."
+                    )
+                }
+            elif not num and description in ['all checks', 'find all pattern', 'codebase-wide']:
+                return {
+                    "allowed": False,
+                    "message": (
+                        f"[PROACTIVE BLOCK] Detected codebase-wide operation ({description}).\n\n"
+                        f"Use Explorer subagent for codebase exploration:\n"
+                        f"  Task(subagent_type='Explore', prompt='Find all {description}...')"
+                    )
+                }
+    
+    return None
