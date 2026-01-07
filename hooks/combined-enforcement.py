@@ -379,11 +379,23 @@ def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dic
     from datetime import datetime, timedelta
 
     # CHECK COMPLIANCE: If previously blocked, agent MUST use Task/Write
+    # BUT: Allow git commands and script execution even when blocked
     if "blocked_at" in state:
         blocked_info = state["blocked_at"]
         required_tools = ["Task", "Write"]
-        
-        if tool_name in required_tools:
+
+        # Check if this is an allowed Bash command even when blocked
+        allowed_bash_command = False
+        if tool_name == "Bash":
+            command = tool_input.get("command", "")
+            # Allow git commands
+            if command.strip().startswith("git "):
+                allowed_bash_command = True
+            # Allow Python script execution
+            elif "python3" in command or "python " in command:
+                allowed_bash_command = True
+
+        if tool_name in required_tools or allowed_bash_command:
             # Complied! Clear block state
             del state["blocked_at"]
             save_state(state)
@@ -396,7 +408,6 @@ def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dic
                 f"You tried to use {tool_name} instead.\n\n"
                 f"YOU MUST USE: Task (spawn subagent) or Write (create script)"
             )
-
     # Detect phase changes and reset counters
     current_phase = state.get("phase", "")
     last_phase = state.get("last_phase", "")
@@ -890,7 +901,11 @@ def check_git_approval_layers(tool_name: str, tool_input: dict, state: dict, mes
     ]
     
     user_approved = state.get("user_approved_commit", False)
-    
+
+    # Check state flag first (survives session summaries)
+    if user_approved:
+        return None  # Already approved
+
     if not user_approved:
         # Check Bash command description first (for orchestrators)
         cmd_desc = tool_input.get("description", "").lower()
@@ -1242,6 +1257,43 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
                 "All agents run concurrently!"
             )
         save_state(state)
+
+    # === SUBAGENT TRACKING ===
+    # Track subagent spawns at PreToolUse (PostToolUse doesn't work for async Task tools)
+    if tool_name == "Task":
+        from datetime import datetime
+        import json
+
+        subagent_type = tool_input.get("subagent_type", "unknown")
+        description = tool_input.get("description", "")
+
+        # Log to activity.log
+        activity_file = STATE_DIR / "activity.log"
+        try:
+            with open(activity_file, "a") as f:
+                timestamp = datetime.now().isoformat()
+                f.write(f"[{timestamp}] SUBAGENT: {subagent_type} - {description}\n")
+        except Exception:
+            pass
+
+        # Update subagent_metrics.json
+        metrics_file = STATE_DIR / "subagent_metrics.json"
+        try:
+            if metrics_file.exists():
+                metrics = json.loads(metrics_file.read_text())
+            else:
+                metrics = []
+
+            metrics.append({
+                "type": subagent_type,
+                "description": description,
+                "timestamp": datetime.now().isoformat()
+            })
+
+            metrics_file.write_text(json.dumps(metrics, indent=2))
+        except Exception:
+            pass
+
 
 
     return None
