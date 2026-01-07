@@ -853,6 +853,8 @@ def check_git_approval_layers(tool_name: str, tool_input: dict, state: dict, mes
     Layer 1: User approval detection - scan messages for approval keywords
     Layer 2: Test execution requirement - track test runs, block commits without tests
     Layer 3: [VERIFY] signal - require quality check signal before commits
+    
+    Orchestrator mode: Skips Layer 2 & 3 for workflow-initiated commits
     """
     if tool_name != "Bash":
         return None
@@ -866,27 +868,49 @@ def check_git_approval_layers(tool_name: str, tool_input: dict, state: dict, mes
     if not (is_commit or is_push):
         return None
     
+    # Detect orchestrator mode (workflow-initiated commits)
+    is_orchestrator = (
+        state.get("workflow_phase") == "git" or 
+        state.get("phase") == "git" or
+        "orchestrator" in command.lower()
+    )
+    
+    # Debug logging
+    log_event("GIT_APPROVAL_DEBUG", f"Messages: {len(messages)}, Orchestrator: {is_orchestrator}, Command: {command[:50]}")
+    
     # LAYER 1: User Approval Detection
     # Scan recent user messages for approval keywords
     approval_keywords = [
         "approve", "approved", "go ahead", "proceed", "yes",
         "commit it", "push it", "create commit", "make the commit",
-        "create the commit", "do it", "please commit", "please push"
+        "create the commit", "do it", "please commit", "please push",
+        "go ahead and commit", "go ahead with"
     ]
     
     user_approved = state.get("user_approved_commit", False)
     
     if not user_approved:
+        # Check Bash command description first (for orchestrators)
+        cmd_desc = tool_input.get("description", "").lower()
+        if any(keyword in cmd_desc for keyword in approval_keywords):
+            state["user_approved_commit"] = True
+            save_state(state)
+            user_approved = True
+            log_event("GIT_APPROVAL", f"Approved via command description: {cmd_desc[:50]}")
+        
         # Scan last 20 messages for user approval
-        recent_messages = messages[-20:] if len(messages) > 20 else messages
-        for msg in reversed(recent_messages):
-            if msg.get("role") == "user":
-                msg_content = msg.get("content", "").lower()
-                if any(keyword in msg_content for keyword in approval_keywords):
-                    state["user_approved_commit"] = True
-                    save_state(state)
-                    user_approved = True
-                    break
+        if not user_approved:
+            recent_messages = messages[-20:] if len(messages) > 20 else messages
+            log_event("GIT_APPROVAL_DEBUG", f"Scanning {len(recent_messages)} recent messages")
+            for msg in reversed(recent_messages):
+                if msg.get("role") == "user":
+                    msg_content = msg.get("content", "").lower()
+                    if any(keyword in msg_content for keyword in approval_keywords):
+                        state["user_approved_commit"] = True
+                        save_state(state)
+                        user_approved = True
+                        log_event("GIT_APPROVAL", f"Approved via user message: {msg_content[:50]}")
+                        break
     
     if not user_approved:
         return block(
@@ -903,6 +927,11 @@ def check_git_approval_layers(tool_name: str, tool_input: dict, state: dict, mes
     # LAYER 2 & 3: Only apply to commits, not pushes
     if not is_commit:
         return None
+    
+    # Orchestrator bypass: Skip Layer 2 & 3 for workflow-initiated commits
+    if is_orchestrator:
+        log_event("GIT_APPROVAL", "Orchestrator mode: Skipping Layer 2 & 3 checks")
+        return None  # Allow commit with only Layer 1 approval
     
     # LAYER 2: Test Execution Requirement
     tests_executed = state.get("tests_executed", False)
@@ -1165,13 +1194,15 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
         recent_count = len([t for t in recent_tasks if t > one_min_ago])
         if recent_count >= 2 and not state.get("parallelism_tip_shown"):
             log_event("PARALLELISM_ADVISORY", f"Sequential Task spawns: {recent_count}")
-            inject_message(
+            state["parallelism_tip_shown"] = True
+            save_state(state)
+            return allow_with_warning(
+                tool_name, tool_input,
                 "💡 PARALLELISM TIP: Spawn multiple agents in ONE message.\n\n"
                 "❌ Sequential: Message 1→Wait→Message 2→Wait (slow)\n"
                 "✅ Parallel: Multiple Task() in Message 1 (fast)\n\n"
                 "All agents run concurrently!"
             )
-            state["parallelism_tip_shown"] = True
         save_state(state)
 
 

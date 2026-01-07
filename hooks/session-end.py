@@ -19,6 +19,19 @@ SESSION_FILE = STATE_DIR / "session.json"
 def generate_dashboard():
     """Generate the metrics dashboard."""
     try:
+        # First capture a snapshot of current metrics
+        snapshot_result = subprocess.run(
+            ["python3", str(CHARTS_SCRIPT), "snapshot"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
+        # Log snapshot result (don't fail if it errors)
+        if snapshot_result.returncode != 0:
+            print(f"⚠️ Snapshot capture failed: {snapshot_result.stderr}", file=sys.stderr)
+        
+        # Then generate the full dashboard
         result = subprocess.run(
             ["python3", str(CHARTS_SCRIPT), "all"],
             capture_output=True,
