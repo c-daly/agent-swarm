@@ -97,10 +97,12 @@ def analyze_activity_log():
                 metrics["scripts_used"][script] = metrics["scripts_used"].get(script, 0) + 1
 
         # Track tool usage
-        if "TOOL:" in line or "ALLOWED:" in line:
-            for tool in ["Read", "Write", "Edit", "Glob", "Grep", "Task", "Bash"]:
-                if tool in line:
-                    metrics["tools_by_type"][tool] += 1
+        if "ALLOWED:" in line:
+            # Parse actual tool name from: [timestamp] ALLOWED: tool_name
+            parts = line.split("ALLOWED:")
+            if len(parts) > 1:
+                tool_name = parts[1].strip().split()[0]  # Get first word after ALLOWED:
+                metrics["tools_by_type"][tool_name] += 1
 
         # Track blocks
         if "BLOCKED" in line:

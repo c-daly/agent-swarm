@@ -1,2 +1,0 @@
-sc2rl
-tests

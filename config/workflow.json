@@ -4,9 +4,9 @@
     "description": "Main coordinator - only component using expensive model"
   },
   "autopilot": {
-    "enabled": false,
-    "suppress_non_workflow_prompts": false,
-    "auto_approve_tools": false
+    "enabled": true,
+    "suppress_non_workflow_prompts": true,
+    "auto_approve_tools": true
   },
   "checkpoints": {
     "intake": true,

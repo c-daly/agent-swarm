@@ -178,7 +178,7 @@ def generate_html_chart(title, chart_type, data, labels, output_file, options=No
     return output_path
 
 def chart_efficiency_trend():
-    """Chart efficiency score over time."""
+    """Chart efficiency score over time with daily/session view toggle."""
     history = load_history()
 
     if len(history["snapshots"]) < 2:
@@ -186,52 +186,185 @@ def chart_efficiency_trend():
         print("   Run: python3 metrics.py report  (to capture current state)")
         return None
 
-    dates = []
-    scores = []
+    # Prepare session view
+    session_labels = []
+    session_scores = []
 
     for snapshot in history["snapshots"]:
-        dates.append(snapshot["date"])
-        scores.append(snapshot["metrics"].get("efficiency_score", 0))
+        session_labels.append(snapshot["date"])
+        session_scores.append(snapshot["metrics"].get("efficiency_score", 0))
 
-    data = {
-        "label": "Efficiency Score",
-        "values": scores
-    }
+    # Prepare daily view (average by date)
+    from collections import defaultdict
+    daily_data = defaultdict(list)
+    
+    for snapshot in history["snapshots"]:
+        full_date = snapshot.get("date", "Unknown")
+        date_only = full_date.split()[0] if " " in full_date else full_date
+        score = snapshot["metrics"].get("efficiency_score", 0)
+        daily_data[date_only].append(score)
+    
+    # Average scores per day
+    sorted_daily = sorted(daily_data.items())
+    daily_labels = [date for date, _ in sorted_daily]
+    daily_scores = [sum(scores) / len(scores) for _, scores in sorted_daily]
 
-    options = {
-        "scales": {
-            "y": {
-                "beginAtZero": True,
-                "max": 100
-            }
-        }
-    }
+    # Generate HTML with dropdown
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>Efficiency Score Trend</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            padding: 40px;
+            background: #f5f5f5;
+        }}
+        .container {{
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }}
+        h1 {{
+            color: #333;
+            margin-bottom: 10px;
+        }}
+        .controls {{
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }}
+        .controls label {{
+            font-weight: 600;
+            color: #555;
+        }}
+        .controls select {{
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            background: white;
+            cursor: pointer;
+        }}
+        .timestamp {{
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }}
+        canvas {{
+            max-height: 500px;
+        }}
+        .back-link {{
+            display: inline-block;
+            margin-top: 20px;
+            color: #0066cc;
+            text-decoration: none;
+        }}
+        .back-link:hover {{
+            text-decoration: underline;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Efficiency Score Trend</h1>
+        <div class="timestamp">Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
+        
+        <div class="controls">
+            <label for="viewSelect">View:</label>
+            <select id="viewSelect" onchange="switchView()">
+                <option value="daily">Daily Average</option>
+                <option value="session">Per Session</option>
+            </select>
+        </div>
+        
+        <canvas id="chart"></canvas>
+        <a href="dashboard.html" class="back-link">← Back to Dashboard</a>
+    </div>
 
-    path = generate_html_chart(
-        "Efficiency Score Trend",
-        "line",
-        data,
-        dates,
-        "efficiency_trend.html",
-        options
-    )
+    <script>
+        const dailyData = {{
+            labels: {json.dumps(daily_labels)},
+            datasets: [{{
+                label: 'Efficiency Score (Daily Avg)',
+                data: {json.dumps(daily_scores)},
+                borderColor: 'rgb(75, 192, 192)',
+                backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                tension: 0.1,
+                fill: true
+            }}]
+        }};
 
-    print(f"✅ Chart generated: {path}")
-    return path
+        const sessionData = {{
+            labels: {json.dumps(session_labels)},
+            datasets: [{{
+                label: 'Efficiency Score (Per Session)',
+                data: {json.dumps(session_scores)},
+                borderColor: 'rgb(54, 162, 235)',
+                backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                tension: 0.1,
+                fill: true
+            }}]
+        }};
+
+        const ctx = document.getElementById('chart').getContext('2d');
+        let chart = new Chart(ctx, {{
+            type: 'line',
+            data: dailyData,
+            options: {{
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {{
+                    legend: {{
+                        position: 'top',
+                    }},
+                    title: {{
+                        display: false
+                    }}
+                }},
+                scales: {{
+                    y: {{
+                        beginAtZero: true,
+                        max: 100
+                    }}
+                }}
+            }}
+        }});
+
+        function switchView() {{
+            const view = document.getElementById('viewSelect').value;
+            chart.data = view === 'daily' ? dailyData : sessionData;
+            chart.update();
+        }}
+    </script>
+</body>
+</html>"""
+
+    output_path = CHARTS_DIR / "efficiency_trend.html"
+    output_path.write_text(html)
+    
+    print(f"✅ Chart generated: {output_path}")
+    return output_path
 
 def chart_script_adoption():
-    """Chart script adoption over time."""
+    """Chart script adoption over time with daily/session view toggle."""
     history = load_history()
 
     if len(history["snapshots"]) < 2:
         print("⚠️  Need at least 2 snapshots for trend chart")
         return None
 
-    dates = []
-    adoption_rates = []
+    # Prepare session view
+    session_labels = []
+    session_rates = []
 
     for snapshot in history["snapshots"]:
-        dates.append(snapshot["date"])
+        session_labels.append(snapshot["date"])
         metrics = snapshot["metrics"]
 
         script_calls = metrics.get("script_calls", 0)
@@ -243,33 +376,173 @@ def chart_script_adoption():
         else:
             rate = 0
 
-        adoption_rates.append(rate)
+        session_rates.append(rate)
 
-    data = {
-        "label": "Script Adoption %",
-        "values": adoption_rates
-    }
+    # Prepare daily view (aggregate by date)
+    from collections import defaultdict
+    daily_scripts = defaultdict(int)
+    daily_reads = defaultdict(int)
+    
+    for snapshot in history["snapshots"]:
+        full_date = snapshot.get("date", "Unknown")
+        date_only = full_date.split()[0] if " " in full_date else full_date
+        
+        metrics = snapshot["metrics"]
+        daily_scripts[date_only] += metrics.get("script_calls", 0)
+        daily_reads[date_only] += metrics.get("tools_by_type", {}).get("Read", 0)
+    
+    # Calculate daily adoption rates
+    sorted_daily = sorted(daily_scripts.keys())
+    daily_labels = sorted_daily
+    daily_rates = []
+    for date in sorted_daily:
+        scripts = daily_scripts[date]
+        reads = daily_reads[date]
+        total = scripts + reads
+        rate = (scripts / total * 100) if total > 0 else 0
+        daily_rates.append(rate)
 
-    options = {
-        "scales": {
-            "y": {
-                "beginAtZero": True,
-                "max": 100
-            }
-        }
-    }
+    # Generate HTML with dropdown
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>Script Adoption Trend</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            padding: 40px;
+            background: #f5f5f5;
+        }}
+        .container {{
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }}
+        h1 {{
+            color: #333;
+            margin-bottom: 10px;
+        }}
+        .controls {{
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }}
+        .controls label {{
+            font-weight: 600;
+            color: #555;
+        }}
+        .controls select {{
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            background: white;
+            cursor: pointer;
+        }}
+        .timestamp {{
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }}
+        canvas {{
+            max-height: 500px;
+        }}
+        .back-link {{
+            display: inline-block;
+            margin-top: 20px;
+            color: #0066cc;
+            text-decoration: none;
+        }}
+        .back-link:hover {{
+            text-decoration: underline;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Script Adoption Trend</h1>
+        <div class="timestamp">Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
+        
+        <div class="controls">
+            <label for="viewSelect">View:</label>
+            <select id="viewSelect" onchange="switchView()">
+                <option value="daily">Daily Totals</option>
+                <option value="session">Per Session</option>
+            </select>
+        </div>
+        
+        <canvas id="chart"></canvas>
+        <a href="dashboard.html" class="back-link">← Back to Dashboard</a>
+    </div>
 
-    path = generate_html_chart(
-        "Script Adoption Trend",
-        "line",
-        data,
-        dates,
-        "script_adoption.html",
-        options
-    )
+    <script>
+        const dailyData = {{
+            labels: {json.dumps(daily_labels)},
+            datasets: [{{
+                label: 'Script Adoption % (Daily)',
+                data: {json.dumps(daily_rates)},
+                borderColor: 'rgb(75, 192, 192)',
+                backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                tension: 0.1,
+                fill: true
+            }}]
+        }};
 
-    print(f"✅ Chart generated: {path}")
-    return path
+        const sessionData = {{
+            labels: {json.dumps(session_labels)},
+            datasets: [{{
+                label: 'Script Adoption % (Per Session)',
+                data: {json.dumps(session_rates)},
+                borderColor: 'rgb(54, 162, 235)',
+                backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                tension: 0.1,
+                fill: true
+            }}]
+        }};
+
+        const ctx = document.getElementById('chart').getContext('2d');
+        let chart = new Chart(ctx, {{
+            type: 'line',
+            data: dailyData,
+            options: {{
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {{
+                    legend: {{
+                        position: 'top',
+                    }},
+                    title: {{
+                        display: false
+                    }}
+                }},
+                scales: {{
+                    y: {{
+                        beginAtZero: true,
+                        max: 100
+                    }}
+                }}
+            }}
+        }});
+
+        function switchView() {{
+            const view = document.getElementById('viewSelect').value;
+            chart.data = view === 'daily' ? dailyData : sessionData;
+            chart.update();
+        }}
+    </script>
+</body>
+</html>"""
+
+    output_path = CHARTS_DIR / "script_adoption.html"
+    output_path.write_text(html)
+    
+    print(f"✅ Chart generated: {output_path}")
+    return output_path
 
 def chart_tool_usage():
     """Chart current tool usage breakdown."""
@@ -437,7 +710,7 @@ def chart_subagents(session_filter=None):
     return path
 
 def chart_token_trend():
-    """Chart token usage trend over time."""
+    """Chart token usage trend over time with daily/session view toggle."""
     history = load_history()
     snapshots = history.get("snapshots", [])
 
@@ -445,20 +718,18 @@ def chart_token_trend():
         print("⚠️  Need at least 2 snapshots for trend. Run: charts.py snapshot")
         return None
 
-    labels = []
-    token_values = []
-    cost_values = []
-
-    # Calculate deltas to show per-session usage instead of cumulative
+    # Prepare session view (existing logic)
+    session_labels = []
+    session_tokens = []
     prev_tools = {}
 
     for snapshot in snapshots:
-        labels.append(snapshot.get("date", "Unknown"))
+        session_labels.append(snapshot.get("date", "Unknown"))
         metrics = snapshot.get("metrics", {})
         current_tools = metrics.get("tools_by_type", {})
 
         # Calculate tokens for this session only (delta from previous)
-        session_tokens = 0
+        tokens = 0
         for tool, count in current_tools.items():
             prev_count = prev_tools.get(tool, 0)
             delta = count - prev_count
@@ -468,30 +739,185 @@ def chart_token_trend():
                 "Write": 1000, "Task": 5000, "Grep": 1000,
                 "Glob": 500
             }.get(tool, 500)
-            session_tokens += estimate * delta
+            tokens += estimate * delta
 
-        token_values.append(max(0, session_tokens))  # Ensure non-negative
-        cost_values.append(session_tokens * 0.000003)
-
-        # Update prev_tools for next iteration
+        session_tokens.append(max(0, tokens))
         prev_tools = current_tools.copy()
 
-    # Token trend chart
-    data = {
-        "label": "Estimated Tokens",
-        "values": token_values
-    }
+    # Prepare daily view (aggregate by date)
+    from collections import defaultdict
+    daily_data = defaultdict(int)
+    
+    prev_tools_daily = {}
+    for snapshot in snapshots:
+        # Extract date only (YYYY-MM-DD)
+        full_date = snapshot.get("date", "Unknown")
+        date_only = full_date.split()[0] if " " in full_date else full_date
+        
+        metrics = snapshot.get("metrics", {})
+        current_tools = metrics.get("tools_by_type", {})
+        
+        # Calculate token delta
+        tokens = 0
+        for tool, count in current_tools.items():
+            prev_count = prev_tools_daily.get(tool, 0)
+            delta = count - prev_count
+            
+            estimate = {
+                "Bash": 500, "Read": 2000, "Edit": 1500,
+                "Write": 1000, "Task": 5000, "Grep": 1000,
+                "Glob": 500
+            }.get(tool, 500)
+            tokens += estimate * delta
+        
+        daily_data[date_only] += max(0, tokens)
+        prev_tools_daily = current_tools.copy()
+    
+    # Sort daily data by date
+    sorted_daily = sorted(daily_data.items())
+    daily_labels = [date for date, _ in sorted_daily]
+    daily_tokens = [tokens for _, tokens in sorted_daily]
 
-    path = generate_html_chart(
-        "Token Usage Trend",
-        "line",
-        data,
-        labels,
-        "token_trend.html"
-    )
+    # Generate HTML with dropdown selector
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>Token Usage Trend</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            padding: 40px;
+            background: #f5f5f5;
+        }}
+        .container {{
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }}
+        h1 {{
+            color: #333;
+            margin-bottom: 10px;
+        }}
+        .controls {{
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }}
+        .controls label {{
+            font-weight: 600;
+            color: #555;
+        }}
+        .controls select {{
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            background: white;
+            cursor: pointer;
+        }}
+        .timestamp {{
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }}
+        canvas {{
+            max-height: 500px;
+        }}
+        .back-link {{
+            display: inline-block;
+            margin-top: 20px;
+            color: #0066cc;
+            text-decoration: none;
+        }}
+        .back-link:hover {{
+            text-decoration: underline;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Token Usage Trend</h1>
+        <div class="timestamp">Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
+        
+        <div class="controls">
+            <label for="viewSelect">View:</label>
+            <select id="viewSelect" onchange="switchView()">
+                <option value="daily">Daily Totals</option>
+                <option value="session">Per Session</option>
+            </select>
+        </div>
+        
+        <canvas id="chart"></canvas>
+        <a href="dashboard.html" class="back-link">← Back to Dashboard</a>
+    </div>
 
-    print(f"✅ Chart generated: {path}")
-    return path
+    <script>
+        const dailyData = {{
+            labels: {json.dumps(daily_labels)},
+            datasets: [{{
+                label: 'Tokens per Day',
+                data: {json.dumps(daily_tokens)},
+                borderColor: 'rgb(75, 192, 192)',
+                backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                tension: 0.1,
+                fill: true
+            }}]
+        }};
+
+        const sessionData = {{
+            labels: {json.dumps(session_labels)},
+            datasets: [{{
+                label: 'Tokens per Session',
+                data: {json.dumps(session_tokens)},
+                borderColor: 'rgb(54, 162, 235)',
+                backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                tension: 0.1,
+                fill: true
+            }}]
+        }};
+
+        const ctx = document.getElementById('chart').getContext('2d');
+        let chart = new Chart(ctx, {{
+            type: 'line',
+            data: dailyData,
+            options: {{
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {{
+                    legend: {{
+                        position: 'top',
+                    }},
+                    title: {{
+                        display: false
+                    }}
+                }},
+                scales: {{
+                    y: {{
+                        beginAtZero: true
+                    }}
+                }}
+            }}
+        }});
+
+        function switchView() {{
+            const view = document.getElementById('viewSelect').value;
+            chart.data = view === 'daily' ? dailyData : sessionData;
+            chart.update();
+        }}
+    </script>
+</body>
+</html>"""
+
+    output_path = CHARTS_DIR / "token_trend.html"
+    output_path.write_text(html)
+    
+    print(f"✅ Chart generated: {output_path}")
+    return output_path
 
 def generate_dashboard():
     """Generate a dashboard with all charts."""

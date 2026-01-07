@@ -118,17 +118,21 @@ def main():
         return
 
     tool_name = input_data.get("tool_name", "")
+    tool_input = input_data.get("tool_input", {})
     tool_output = input_data.get("tool_output", {})
 
     # Track Task tool completions
     if tool_name == "Task":
-        # Extract agent info from output
+        # Extract agent info from input and output
+        # subagent_type is in tool_input, agent_id is in tool_output
+        subagent_type = tool_input.get("subagent_type", "unknown")
+        
         output_str = json.dumps(tool_output)
-        agent_id, agent_type = extract_agent_info(output_str)
+        agent_id, _ = extract_agent_info(output_str)
 
-        if agent_id and agent_type:
+        if agent_id:
             try:
-                track_subagent(agent_id, agent_type)
+                track_subagent(agent_id, subagent_type)
             except Exception as e:
                 # Don't fail the hook if tracking fails
                 pass

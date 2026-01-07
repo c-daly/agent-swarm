@@ -13,7 +13,7 @@ Enforces:
 import sys
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # Try to import monitor agent (optional dependency)
@@ -181,8 +181,8 @@ PHASE_ALLOWED_TOOLS = {
 ALWAYS_ALLOWED = {"TodoWrite", "AskUserQuestion"}
 
 # Thresholds
-MAX_DIRECT_SEARCHES = 2  # After this, must use scripts
-MAX_FILE_READS = 2  # After this, must use subagent
+MAX_DIRECT_SEARCHES = 5  # After this, must use scripts
+MAX_FILE_READS = 5  # After this, must use subagent
 
 # MCP tools allowed without script (low-cost single operations)
 MCP_DIRECT_ALLOWED = {
@@ -256,14 +256,32 @@ def check_phase_restrictions(tool_name: str, state: dict, tool_input: dict = Non
     """Enforce phase-specific tool restrictions."""
     
     # FIRST: State file protection (always enforced, regardless of phase)
+    # Only block WRITES to state files, allow reads (ls, cat, grep, etc.)
     if tool_name == "Bash" and tool_input:
         command = tool_input.get("command", "").strip()
         if '.state' in command or 'session.json' in command:
-            return block(
-                "[STATE PROTECTION] Cannot access state files\n"
-                "State management is handled by the enforcement system.\n"
-                "Use AskUserQuestion if you need checkpoint approval."
-            )
+            # Block write operations
+            write_patterns = [
+                r'\brm\s+',  # rm
+                r'\bmv\s+.*\.state',  # mv to .state
+                r'\bcp\s+.*\.state',  # cp to .state
+                r'>\s*.*\.state',  # redirect to .state
+                r'>\s*.*session\.json',  # redirect to session.json
+                r'\bsed\s+-i',  # sed in-place
+                r'\becho\s+.*>',  # echo redirect
+                r'\bcat\s+>',  # cat redirect
+            ]
+            if any(re.search(pattern, command) for pattern in write_patterns):
+                return block(
+                    "[BLOCKED] Cannot write to .state/ directory.\n\n"
+                    "REQUIRED ACTION: Read from .state/ only, never write\n"
+                    "✓ DO: Use ls, cat, grep, Read tool on .state/ files\n"
+                    "✗ DON'T: Try echo >, sed -i, mv, rm, or any write operation\n"
+                    "✗ DON'T: Try workarounds like temp files then mv\n\n"
+                    "Why: State files are managed by enforcement system only.\n"
+                    "Corrupting these breaks all metrics and tracking."
+                )
+            # Allow read operations (ls, cat, grep, find, etc.)
     
     # SECOND: Allow critical documentation files (handoffs, notes) from any phase
     if tool_name == "Write" and tool_input:
@@ -290,7 +308,6 @@ def check_phase_restrictions(tool_name: str, state: dict, tool_input: dict = Non
 
         # Allow orchestrator phase-transition commands
         if 'AGENT_PHASE=' in command or '/tmp/phase_' in command:
-            import sys; print(f'DEBUG: AGENT_PHASE exemption triggered!', file=sys.stderr)
             return None  # Allow
 
         # Allow Python execution patterns
@@ -399,11 +416,20 @@ def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dic
 
         if count > MAX_DIRECT_SEARCHES:
             return block(
-                f"[TOKEN EFFICIENCY] {count} direct searches used. "
-                f"Use a batch script instead:\n"
+                f"[BLOCKED] {count} direct searches used (limit: {MAX_DIRECT_SEARCHES}).\n\n"
+                f"REQUIRED ACTION: Choose based on task type\n\n"
+                f"✓ USE EXPLORER SUBAGENT when:\n"
+                f"  - 'Find all files that...'\n"
+                f"  - 'Where is X implemented?'\n"
+                f"  - Understanding codebase structure\n"
+                f"  Example: Task(subagent_type='Explore', prompt='Find error handlers...')\n\n"
+                f"✓ USE BATCH SCRIPT when:\n"
+                f"  - Multiple specific search patterns\n"
+                f"  - Data extraction from known patterns\n"
+                f"  Pattern: Create /tmp/batch_search.py\n"
                 f"```python\n"
                 f"from mcp_bridge import native_glob, native_grep\n"
-                f"# Batch your searches\n"
+                f"# Batch all searches\n"
                 f"```\n"
                 f"Or spawn an Explorer subagent with Task tool."
             )
@@ -415,15 +441,10 @@ def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dic
         # Track which files have been read
         files_read = state.get("files_read", [])
 
-        # Check for duplicate
+        # Check for duplicate - warn but allow
         if file_path in files_read:
-            return block(
-                f"[DUPLICATE READ] File already read in this session:\n"
-                f"  {file_path}\n\n"
-                f"Reading the same file multiple times wastes tokens.\n"
-                f"If you need to re-check: review conversation history.\n"
-                f"If content changed: explain why re-reading is necessary."
-            )
+            log_event("DUPLICATE_READ_WARNING", f"Re-reading: {file_path}")
+            # Advisory only - allow the read but track it
 
         # Track this file
         files_read.append(file_path)
@@ -435,9 +456,19 @@ def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dic
 
         if count > MAX_FILE_READS:
             return block(
-                f"[TOKEN EFFICIENCY] {count} direct file reads. "
-                f"Spawn an Explorer subagent to aggregate findings, "
-                f"or use a script to read and summarize."
+                f"[BLOCKED] {count} direct file reads (limit: {MAX_FILE_READS}).\n\n"
+                f"REQUIRED ACTION: Choose based on task type\n\n"
+                f"✓ USE EXPLORER SUBAGENT when:\n"
+                f"  - Exploring unfamiliar code ('how does X work?')\n"
+                f"  - Finding patterns across files\n"
+                f"  - Understanding architecture/flow\n"
+                f"  Example: Task(subagent_type='Explore', prompt='Find all API endpoints...')\n\n"
+                f"✓ USE BATCH SCRIPT when:\n"
+                f"  - Processing known file list\n"
+                f"  - Repetitive data operations\n"
+                f"  - Known extraction task\n\n"
+                f"✗ DON'T: Keep calling Read one at a time\n\n"
+                f"Why: Direct reads flood context. Agents aggregate better."
             )
 
 
@@ -508,11 +539,16 @@ def check_mcp_script_requirement(tool_name: str, tool_input: dict, state: dict) 
     state["mcp_counts"] = mcp_counts
     save_state(state)
 
-    # Block after 2nd call of same MCP tool
-    if count > 2:
+    # Block after 5th call of same MCP tool (allow sequential edits)
+    if count > 5:
         return block(
-            f"[MCP SCRIPT] {tool_name} called {count} times.\n"
-            f"Batch repeated calls into a script."
+            f"[BLOCKED] {tool_name} called {count} times.\n\n"
+            f"REQUIRED ACTION: Write a Python script to batch operations\n"
+            f"✓ DO: Create /tmp/batch_ops.py using mcp_bridge\n"
+            f"✗ DON'T: Try calling the tool 'just one more time'\n"
+            f"✗ DON'T: Switch to Edit, Read, or other workarounds\n\n"
+            f"Why: Repeated tool calls waste tokens. Scripts are faster and tracked.\n"
+            f"Ignoring this will trigger more blocks."
         )
 
     return None
@@ -554,11 +590,15 @@ def check_smart_tool_usage(tool_name: str, tool_input: dict, state: dict) -> dic
             # First read is usually OK, but suggest Serena after that
             if read_count >= 2:
                 return block(
-                    f"[SMART TOOLS] Use Serena instead of Read for code understanding:\n"
-                    f"  mcp__plugin_serena_serena__find_symbol - locate definitions\n"
-                    f"  mcp__plugin_serena_serena__get_definition - get signature + docs\n"
-                    f"  mcp__plugin_serena_serena__find_references - find usages\n"
-                    f"Serena extracts structure. Read dumps entire files into context."
+                    f"[BLOCKED] Use Serena tools instead of Read for code understanding.\n\n"
+                    f"REQUIRED ACTION: Use symbolic code exploration\n"
+                    f"✓ DO: mcp__plugin_serena_serena__find_symbol - locate definitions\n"
+                    f"✓ DO: mcp__plugin_serena_serena__get_symbols_overview - see structure\n"
+                    f"✓ DO: mcp__plugin_serena_serena__find_references - find usages\n\n"
+                    f"✗ DON'T: Use Read tool to dump entire files into context\n"
+                    f"✗ DON'T: Try reading multiple files to find something\n\n"
+                    f"Why: Serena extracts structure efficiently. Read dumps everything.\n"
+                    f"You've used Read {read_count} times - switch to symbolic tools now."
                 )
 
     # Bash for git → suggest gh_wrapper for queries
@@ -578,10 +618,12 @@ def check_smart_tool_usage(tool_name: str, tool_input: dict, state: dict) -> dic
             # Cat reading files
             if re.search(r'\bcat\s+[^\|<>]', cmd):
                 return block(
-                    f"[BASH ABUSE] Don't use 'cat' for reading - use Read tool instead\n"
-                    f"❌ Bash: {cmd[:60]}\n"
-                    f"✅ Read: {{'file_path': '<path>'}}\n"
-                    f"Bash cat wastes tokens and bypasses tracking."
+                    f"[BLOCKED] Don't use 'cat' for reading files.\n\n"
+                    f"REQUIRED ACTION: Use the Read tool\n"
+                    f"✓ DO: Read({{'file_path': '<path>'}})\n"
+                    f"✗ DON'T: Try bash cat, sed, awk, or other shell workarounds\n\n"
+                    f"Why: Bash cat wastes tokens and bypasses activity tracking.\n"
+                    f"Current command: {cmd[:60]}"
                 )
             # Cat with heredocs (writing)
             if re.search(r'\bcat\s*[>]+.*<<|\bcat\s*<<', cmd):
@@ -595,10 +637,12 @@ def check_smart_tool_usage(tool_name: str, tool_input: dict, state: dict) -> dic
         # grep/rg abuse → use Grep (powered by ripgrep)
         if re.search(r'\b(grep|rg|egrep|fgrep)\s+', cmd):
             return block(
-                f"[BASH ABUSE] Don't use grep/rg via Bash - use Grep tool instead\n"
-                f"❌ Bash: {cmd[:60]}\n"
-                f"✅ Grep: {{'pattern': '<regex>', 'path': '.', 'output_mode': 'files_with_matches'}}\n"
-                f"The Grep tool is powered by ripgrep (rg) and has proper output formatting."
+                f"[BLOCKED] Don't use grep/rg via Bash.\n\n"
+                f"REQUIRED ACTION: Use the Grep tool\n"
+                f"✓ DO: Grep({{'pattern': '<regex>', 'path': '.', 'output_mode': 'content'}})\n"
+                f"✗ DON'T: Try bash grep, egrep, rg, or shell pipes\n\n"
+                f"Why: Grep tool has proper formatting and integrates with metrics.\n"
+                f"Current command: {cmd[:60]}"
             )
 
         # find abuse → use Glob
@@ -613,10 +657,12 @@ def check_smart_tool_usage(tool_name: str, tool_input: dict, state: dict) -> dic
         # sed/awk for file editing → use Edit
         if re.search(r'\b(sed|awk)\s+', cmd) and not re.search(r'\|', cmd):
             return block(
-                f"[BASH ABUSE] Don't use sed/awk for file editing - use Edit tool\n"
-                f"❌ Bash: {cmd[:60]}\n"
-                f"✅ Edit: {{'file_path': '<path>', 'old_string': '...', 'new_string': '...'}}\n"
-                f"Edit tool is atomic and tracked."
+                f"[BLOCKED] Don't use sed/awk for file editing.\n\n"
+                f"REQUIRED ACTION: Use the Edit tool\n"
+                f"✓ DO: Edit({{'file_path': '<path>', 'old_string': '...', 'new_string': '...'}})\n"
+                f"✗ DON'T: Try bash sed, awk, perl, or in-place edit commands\n\n"
+                f"Why: Edit tool is atomic, tracked, and doesn't corrupt files.\n"
+                f"Current command: {cmd[:60]}"
             )
 
         if cmd.startswith("gh ") and not any(x in cmd for x in ["create", "merge", "close", "edit"]):
@@ -938,12 +984,8 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
 
         file_path = tool_input.get("file_path") or tool_input.get("relative_path")
         if file_path:
-            if file_path not in state["files_edited_this_session"]:
-                state["files_edited_this_session"].append(file_path)
-                save_state(state)
-
-            # Block 2nd+ file with SIMPLE classification
-            if len(state["files_edited_this_session"]) > 1:
+            # Block 2nd+ file with SIMPLE classification BEFORE adding to list
+            if file_path not in state["files_edited_this_session"] and len(state["files_edited_this_session"]) >= 1:
                 classification = state.get("classification_type")
                 if classification == "SIMPLE":
                     return {
@@ -960,6 +1002,11 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
                         )
                     }
 
+            # Add file to tracking list if not already there
+            if file_path not in state["files_edited_this_session"]:
+                state["files_edited_this_session"].append(file_path)
+                save_state(state)
+
     # Monitor agent for classification validation
     if MONITOR_AVAILABLE and needs_monitoring(tool_name, tool_input, state):
         decision = call_monitor_agent(tool_name, tool_input, state)
@@ -972,34 +1019,82 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
                 }
 
     # Enforce rules for code-editing tools
-    code_tools = ["Edit", "Write", "mcp__plugin_serena_serena__replace_symbol_body", 
-                  "mcp__plugin_serena_serena__insert_after_symbol", 
+    code_tools = ["Edit", "Write", "mcp__plugin_serena_serena__replace_symbol_body",
+                  "mcp__plugin_serena_serena__insert_after_symbol",
                   "mcp__plugin_serena_serena__insert_before_symbol"]
-    
+
     if tool_name in code_tools:
         # Rule 1: Must give classification first
-        if not state.get("classification_given"):
+        # Exempt /tmp/ utility scripts from classification requirement
+        classification_given = False
+
+        if tool_name in ["Write", "Edit"] and tool_input:
+            file_path = tool_input.get("file_path", "")
+            if file_path.startswith("/tmp/"):
+                classification_given = True  # /tmp/ scripts are tools, not project code
+
+        if not classification_given:
+            # Track edits this response - skip check on first edit (classification in current output)
+            edits_this_response = state.get("edits_this_response", 0)
+
+            # Skip check on first edit of response
+            if edits_this_response == 0:
+                classification_given = True
+                state["edits_this_response"] = 1
+                save_state(state)
+            else:
+                classification_given = state.get("classification_given")
+
+        if not classification_given:
             return block(
-                "[PROCESS VIOLATION] Classification required before editing code.\n"
-                "Output classification as first line: [TRIVIAL|SIMPLE|COMPLEX|RESEARCH|CONVERSATION]\n\n"
-                "Classification criteria:\n"
+                "[BLOCKED] Classification required before editing code.\n\n"
+                "REQUIRED ACTION: Output classification tag as first line of your response\n"
+                "✓ DO: Start response with [SIMPLE] or [COMPLEX] before any tool use\n"
+                "✗ DON'T: Try Edit, Write, or other tools without classification first\n\n"
+                "Classification format: [TRIVIAL|SIMPLE|COMPLEX|RESEARCH|CONVERSATION]\n\n"
+                "Criteria:\n"
                 "- TRIVIAL: One-liner fix\n"
                 "- SIMPLE: Single file, <50 lines, clear requirements\n"
                 "- COMPLEX: Multiple files OR architectural decisions OR unclear scope\n"
                 "- RESEARCH: Exploring/reading, no code changes\n"
                 "- CONVERSATION: Discussion only"
             )
-        
+
         # Rule 2: COMPLEX tasks must invoke workflow
         if state.get("classification_type") == "COMPLEX" and not state.get("workflow_invoked"):
             return block(
-                "[PROCESS VIOLATION] [COMPLEX] tasks require workflow:orchestrate.\n"
-                "From CLAUDE.md: 'Invoke workflow:orchestrate BEFORE any work'\n\n"
-                "Do NOT skip because you 'already know what to do'\n"
-                "Do NOT rationalize your way out of this\n\n"
-                "Use: Skill(skill='agent-swarm:orchestrate', args='<task description>')"
+                "[BLOCKED] [COMPLEX] tasks require workflow orchestration.\n\n"
+                "REQUIRED ACTION: Invoke the orchestrator NOW\n"
+                "✓ DO: Skill(skill='agent-swarm:orchestrate', args='<full task description>')\n\n"
+                "✗ DON'T: Skip because you 'already know what to do'\n"
+                "✗ DON'T: Rationalize that it's not really complex\n"
+                "✗ DON'T: Start coding without workflow approval\n\n"
+                "From CLAUDE.md: 'Invoke workflow:orchestrate BEFORE any work'\n"
+                "Why: Complex tasks need planning, checkpoints, and review phases."
             )
-    
+
+    # Parallelism advisory for Task tool
+    if tool_name == "Task":
+        recent_tasks = state.get("recent_task_spawns", [])
+        current_time = datetime.now()
+        recent_tasks.append(current_time.isoformat())
+        five_min_ago = (current_time - timedelta(minutes=5)).isoformat()
+        recent_tasks = [t for t in recent_tasks if t > five_min_ago]
+        state["recent_task_spawns"] = recent_tasks
+        one_min_ago = (current_time - timedelta(minutes=1)).isoformat()
+        recent_count = len([t for t in recent_tasks if t > one_min_ago])
+        if recent_count >= 2 and not state.get("parallelism_tip_shown"):
+            log_event("PARALLELISM_ADVISORY", f"Sequential Task spawns: {recent_count}")
+            inject_message(
+                "💡 PARALLELISM TIP: Spawn multiple agents in ONE message.\n\n"
+                "❌ Sequential: Message 1→Wait→Message 2→Wait (slow)\n"
+                "✅ Parallel: Multiple Task() in Message 1 (fast)\n\n"
+                "All agents run concurrently!"
+            )
+            state["parallelism_tip_shown"] = True
+        save_state(state)
+
+
     return None
 
 

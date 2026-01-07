@@ -20,7 +20,7 @@ def generate_dashboard():
     """Generate the metrics dashboard."""
     try:
         result = subprocess.run(
-            ["python3", str(CHARTS_SCRIPT), "dashboard"],
+            ["python3", str(CHARTS_SCRIPT), "all"],
             capture_output=True,
             text=True,
             timeout=30
