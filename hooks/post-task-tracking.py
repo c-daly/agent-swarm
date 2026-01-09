@@ -126,7 +126,32 @@ def main():
 
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input", {})
-    tool_output = input_data.get("tool_output", {})
+    tool_output_raw = input_data.get("tool_response", {})
+
+    # DEBUG: Log full structure to understand format
+    debug_file = STATE_DIR / "post_task_debug.log"
+    try:
+        with open(debug_file, "a") as f:
+            f.write(f"\n[{datetime.now().isoformat()}] FULL INPUT DUMP\n")
+            f.write(f"  tool_name: {tool_name}\n")
+            f.write(f"  input_data keys: {list(input_data.keys())}\n")
+            f.write(f"  tool_output type: {type(tool_output_raw)}\n")
+            f.write(f"  tool_output repr: {repr(tool_output_raw)[:500]}\n")
+            if isinstance(tool_output_raw, dict):
+                f.write(f"  tool_output keys: {list(tool_output_raw.keys())}\n")
+                # Check for common fields
+                for key in ['agentId', 'agent_id', 'task_id', 'id', 'result', 'output']:
+                    if key in tool_output_raw:
+                        f.write(f"  Found {key}: {tool_output_raw[key]}\n")
+    except Exception as e:
+        # Log the exception
+        try:
+            with open(debug_file, "a") as f:
+                f.write(f"  ERROR in debug logging: {e}\n")
+        except:
+            pass
+
+    tool_output = tool_output_raw
 
     # Track Task tool completions
     if tool_name == "Task":
@@ -136,7 +161,7 @@ def main():
             with open(debug_file, "a") as f:
                 f.write(f"[{datetime.now().isoformat()}] Task tool detected\n")
                 f.write(f"  tool_input keys: {list(tool_input.keys())}\n")
-                f.write(f"  tool_output keys: {list(tool_output.keys())}\n")
+                f.write(f"  tool_response type: {type(tool_output)} keys: {list(tool_output.keys()) if isinstance(tool_output, dict) else len(tool_output)}\n")
         except:
             pass
 
@@ -144,8 +169,13 @@ def main():
         # subagent_type is in tool_input, agent_id is in tool_output
         subagent_type = tool_input.get("subagent_type", "unknown")
         
-        output_str = json.dumps(tool_output)
-        agent_id, _ = extract_agent_info(output_str)
+        # Extract agent_id from tool_response
+        if isinstance(tool_output, dict):
+            # Modern format: dict with 'agentId' field
+            agent_id = tool_output.get('agentId', None)
+        else:
+            # Legacy format: string that needs parsing
+            agent_id, _ = extract_agent_info(str(tool_output))
 
         # DEBUG: Log extraction result
         try:

@@ -293,7 +293,21 @@ def check_phase_restrictions(tool_name: str, state: dict, tool_input: dict = Non
                     "Corrupting these breaks all metrics and tracking."
                 )
             # Allow read operations (ls, cat, grep, find, etc.)
-    
+
+    # Block .state/ writes for Write/Edit tools
+    if tool_name in ["Write", "Edit"] and tool_input:
+        from pathlib import Path
+        file_path = tool_input.get("file_path", "")
+        if ".state" in file_path or "session.json" in file_path:
+            return block(
+                "[BLOCKED] Cannot write to .state/ directory.\n\n"
+                "REQUIRED ACTION: Read from .state/ only, never write\n"
+                "✓ DO: Use Read tool or Bash (ls, cat, grep) on .state/ files\n"
+                "✗ DON'T: Use Write or Edit tools on .state/ files\n\n"
+                "Why: State files are managed by enforcement system only.\n"
+                "Corrupting these breaks all metrics and tracking."
+            )
+
     # SECOND: Allow critical documentation files (handoffs, notes) from any phase
     if tool_name == "Write" and tool_input:
         from pathlib import Path

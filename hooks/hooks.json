@@ -44,6 +44,18 @@
           }
         ]
       }
+    ],
+    "PreCompacting": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/pre-compacting.py",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }

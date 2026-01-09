@@ -545,41 +545,253 @@ def chart_script_adoption():
     return output_path
 
 def chart_tool_usage():
-    """Chart current tool usage breakdown."""
-    # Get latest metrics
-    from metrics import analyze_activity_log
-    metrics = analyze_activity_log()
+    """Chart tool usage breakdown with time range filtering."""
+    from datetime import datetime, timedelta
+    from collections import defaultdict
 
-    tools = metrics.get("tools_by_type", {})
+    history = load_history()
+    snapshots = history.get("snapshots", [])
 
-    if not tools:
-        print("⚠️  No tool usage data found")
+    if len(snapshots) < 1:
+        print("⚠️  Need at least 1 snapshot for chart")
         return None
 
-    # Sort by usage
-    sorted_tools = sorted(tools.items(), key=lambda x: -x[1])[:10]
+    # Helper to aggregate tool usage for a time range
+    def aggregate_tools(snapshots_subset):
+        aggregated = defaultdict(int)
+        for snapshot in snapshots_subset:
+            snapshot_tools = snapshot.get("metrics", {}).get("tools_by_type", {})
+            for tool, count in snapshot_tools.items():
+                aggregated[tool] += count
+        return aggregated
 
-    labels = [tool for tool, _ in sorted_tools]
-    values = [count for _, count in sorted_tools]
+    # Parse dates and filter snapshots
+    now = datetime.now()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_ago = now - timedelta(days=7)
+    month_ago = now - timedelta(days=30)
 
-    data = {
-        "label": "Tool Calls",
-        "values": values
-    }
+    def parse_snapshot_date(snapshot):
+        try:
+            date_str = snapshot.get("timestamp") or snapshot.get("date", "")
+            if "T" in date_str:  # ISO format
+                return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+            else:  # "YYYY-MM-DD HH:MM" format
+                return datetime.strptime(date_str, "%Y-%m-%d %H:%M")
+        except:
+            return None
 
-    path = generate_html_chart(
-        "Tool Usage Breakdown",
-        "bar",
-        data,
-        labels,
-        "tool_usage.html"
-    )
+    # Filter snapshots by time range
+    session_snapshots = snapshots[-1:] if snapshots else []
+    today_snapshots = [s for s in snapshots if parse_snapshot_date(s) and parse_snapshot_date(s) >= today_start]
+    week_snapshots = [s for s in snapshots if parse_snapshot_date(s) and parse_snapshot_date(s) >= week_ago]
+    month_snapshots = [s for s in snapshots if parse_snapshot_date(s) and parse_snapshot_date(s) >= month_ago]
+    all_snapshots = snapshots
 
-    print(f"✅ Chart generated: {path}")
-    return path
+    # Aggregate for each time range
+    session_tools = aggregate_tools(session_snapshots)
+    today_tools = aggregate_tools(today_snapshots)
+    week_tools = aggregate_tools(week_snapshots)
+    month_tools = aggregate_tools(month_snapshots)
+    all_tools = aggregate_tools(all_snapshots)
 
+    # Prepare sorted top 10 for each view
+    def get_top_10(tools_dict):
+        sorted_tools = sorted(tools_dict.items(), key=lambda x: -x[1])[:10]
+        labels = [tool for tool, _ in sorted_tools]
+        values = [count for _, count in sorted_tools]
+        return labels, values
 
+    session_labels, session_values = get_top_10(session_tools)
+    today_labels, today_values = get_top_10(today_tools)
+    week_labels, week_values = get_top_10(week_tools)
+    month_labels, month_values = get_top_10(month_tools)
+    all_labels, all_values = get_top_10(all_tools)
 
+    # Generate HTML with dropdown for all time ranges
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>Tool Usage Breakdown</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            padding: 40px;
+            background: #f5f5f5;
+        }}
+        .container {{
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }}
+        h1 {{
+            color: #333;
+            margin-bottom: 10px;
+        }}
+        .controls {{
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }}
+        .controls label {{
+            font-weight: 600;
+            color: #555;
+        }}
+        .controls select {{
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            background: white;
+            cursor: pointer;
+        }}
+        .timestamp {{
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }}
+        canvas {{
+            max-height: 500px;
+        }}
+        .back-link {{
+            display: inline-block;
+            margin-top: 20px;
+            color: #0066cc;
+            text-decoration: none;
+        }}
+        .back-link:hover {{
+            text-decoration: underline;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Tool Usage Breakdown</h1>
+        <div class="timestamp">Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
+
+        <div class="controls">
+            <label for="viewSelect">Time Range:</label>
+            <select id="viewSelect" onchange="switchView()">
+                <option value="session" selected>Session</option>
+                <option value="today">Today</option>
+                <option value="week">Last Week</option>
+                <option value="month">Last Month</option>
+                <option value="all">All Time</option>
+            </select>
+        </div>
+
+        <canvas id="chart"></canvas>
+        <a href="dashboard.html" class="back-link">← Back to Dashboard</a>
+    </div>
+
+    <script>
+        const colors = [
+            'rgba(255, 99, 132, 0.5)',
+            'rgba(54, 162, 235, 0.5)',
+            'rgba(255, 206, 86, 0.5)',
+            'rgba(75, 192, 192, 0.5)',
+            'rgba(153, 102, 255, 0.5)',
+            'rgba(255, 159, 64, 0.5)',
+            'rgba(201, 203, 207, 0.5)',
+            'rgba(255, 99, 71, 0.5)',
+            'rgba(60, 179, 113, 0.5)',
+            'rgba(123, 104, 238, 0.5)'
+        ];
+
+        const sessionData = {{
+            labels: {json.dumps(session_labels)},
+            datasets: [{{
+                label: 'Tool Calls (Session)',
+                data: {json.dumps(session_values)},
+                backgroundColor: colors.slice(0, {len(session_labels)})
+            }}]
+        }};
+
+        const todayData = {{
+            labels: {json.dumps(today_labels)},
+            datasets: [{{
+                label: 'Tool Calls (Today)',
+                data: {json.dumps(today_values)},
+                backgroundColor: colors.slice(0, {len(today_labels)})
+            }}]
+        }};
+
+        const weekData = {{
+            labels: {json.dumps(week_labels)},
+            datasets: [{{
+                label: 'Tool Calls (Last Week)',
+                data: {json.dumps(week_values)},
+                backgroundColor: colors.slice(0, {len(week_labels)})
+            }}]
+        }};
+
+        const monthData = {{
+            labels: {json.dumps(month_labels)},
+            datasets: [{{
+                label: 'Tool Calls (Last Month)',
+                data: {json.dumps(month_values)},
+                backgroundColor: colors.slice(0, {len(month_labels)})
+            }}]
+        }};
+
+        const allData = {{
+            labels: {json.dumps(all_labels)},
+            datasets: [{{
+                label: 'Tool Calls (All Time)',
+                data: {json.dumps(all_values)},
+                backgroundColor: colors.slice(0, {len(all_labels)})
+            }}]
+        }};
+
+        const ctx = document.getElementById('chart').getContext('2d');
+        let chart = new Chart(ctx, {{
+            type: 'bar',
+            data: sessionData,
+            options: {{
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {{
+                    legend: {{
+                        position: 'top',
+                    }},
+                    title: {{
+                        display: false
+                    }}
+                }},
+                scales: {{
+                    y: {{
+                        beginAtZero: true
+                    }}
+                }}
+            }}
+        }});
+
+        function switchView() {{
+            const view = document.getElementById('viewSelect').value;
+            const dataMap = {{
+                'session': sessionData,
+                'today': todayData,
+                'week': weekData,
+                'month': monthData,
+                'all': allData
+            }};
+            chart.data = dataMap[view];
+            chart.update();
+        }}
+    </script>
+</body>
+</html>"""
+
+    output_path = CHARTS_DIR / "tool_usage.html"
+    output_path.write_text(html)
+
+    print(f"✅ Chart generated: {output_path}")
+    return output_path
 
 def chart_blocks():
     """Chart block reasons pie chart."""
