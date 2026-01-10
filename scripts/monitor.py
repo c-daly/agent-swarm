@@ -18,10 +18,12 @@ STATE_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/session.json"
 LOG_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/activity.log"
 STATS_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/stats.json"
 
+
 def load_state() -> dict:
     if STATE_FILE.exists():
         return json.loads(STATE_FILE.read_text())
     return {}
+
 
 def load_stats() -> dict:
     if STATS_FILE.exists():
@@ -32,12 +34,14 @@ def load_stats() -> dict:
         "subagents_spawned": 0,
         "phase_transitions": 0,
         "blocks_by_reason": {},
-        "model_usage": {"haiku": 0, "sonnet": 0, "opus": 0}
+        "model_usage": {"haiku": 0, "sonnet": 0, "opus": 0},
     }
+
 
 def save_stats(stats: dict):
     STATS_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATS_FILE.write_text(json.dumps(stats, indent=2))
+
 
 def log_event(event_type: str, details: str):
     """Append event to activity log."""
@@ -45,6 +49,7 @@ def log_event(event_type: str, details: str):
     timestamp = datetime.now().strftime("%H:%M:%S")
     with open(LOG_FILE, "a") as f:
         f.write(f"[{timestamp}] {event_type}: {details}\n")
+
 
 def show_status():
     state = load_state()
@@ -63,23 +68,24 @@ def show_status():
     active_checkpoints = [k for k, v in checkpoints.items() if v]
     print(f"⏸️  Checkpoints: {', '.join(active_checkpoints) or 'none'}")
 
-    print(f"\n📈 Session Stats:")
+    print("\n📈 Session Stats:")
     print(f"   Tools allowed: {stats.get('tools_allowed', 0)}")
     print(f"   Tools blocked: {stats.get('tools_blocked', 0)}")
     print(f"   Subagents spawned: {stats.get('subagents_spawned', 0)}")
 
     blocks = stats.get("blocks_by_reason", {})
     if blocks:
-        print(f"\n🚫 Blocks by reason:")
+        print("\n🚫 Blocks by reason:")
         for reason, count in sorted(blocks.items(), key=lambda x: -x[1])[:5]:
             print(f"   {reason}: {count}")
 
     models = stats.get("model_usage", {})
     if any(models.values()):
-        print(f"\n💰 Model usage:")
+        print("\n💰 Model usage:")
         for model, count in models.items():
             if count > 0:
                 print(f"   {model}: {count}")
+
 
 def show_log(lines: int = 20):
     if not LOG_FILE.exists():
@@ -94,8 +100,10 @@ def show_log(lines: int = 20):
     for line in all_lines[-lines:]:
         print(line.rstrip())
 
+
 def watch_log():
     import time
+
     print("Watching activity log (Ctrl+C to stop)...")
     print("-" * 40)
 
@@ -115,6 +123,7 @@ def watch_log():
         except KeyboardInterrupt:
             print("\nStopped watching")
 
+
 def show_stats():
     stats = load_stats()
 
@@ -125,7 +134,7 @@ def show_stats():
     total_tools = stats.get("tools_allowed", 0) + stats.get("tools_blocked", 0)
     if total_tools > 0:
         block_rate = stats.get("tools_blocked", 0) / total_tools * 100
-        print(f"\n🔧 Tool Usage:")
+        print("\n🔧 Tool Usage:")
         print(f"   Total: {total_tools}")
         print(f"   Allowed: {stats.get('tools_allowed', 0)}")
         print(f"   Blocked: {stats.get('tools_blocked', 0)} ({block_rate:.1f}%)")
@@ -135,17 +144,18 @@ def show_stats():
 
     blocks = stats.get("blocks_by_reason", {})
     if blocks:
-        print(f"\n🚫 Top block reasons:")
+        print("\n🚫 Top block reasons:")
         for reason, count in sorted(blocks.items(), key=lambda x: -x[1]):
             print(f"   {reason}: {count}")
 
     models = stats.get("model_usage", {})
     total_model = sum(models.values())
     if total_model > 0:
-        print(f"\n💰 Model distribution:")
+        print("\n💰 Model distribution:")
         for model, count in sorted(models.items(), key=lambda x: -x[1]):
             pct = count / total_model * 100
             print(f"   {model}: {count} ({pct:.1f}%)")
+
 
 def main():
     if len(sys.argv) < 2:
@@ -166,6 +176,7 @@ def main():
     else:
         print(f"Unknown command: {cmd}")
         print("Usage: monitor.py status|log|watch|stats")
+
 
 if __name__ == "__main__":
     main()

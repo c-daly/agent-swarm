@@ -22,12 +22,14 @@ CONFIG_FILE = Path.home() / ".claude/plugins/agent-swarm/config/workflow.json"
 LOG_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/activity.log"
 STATS_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/stats.json"
 
+
 def log_event(event_type: str, details: str):
     """Append event to activity log."""
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%H:%M:%S")
     with open(LOG_FILE, "a") as f:
         f.write(f"[{timestamp}] {event_type}: {details}\n")
+
 
 def update_stats(allowed: bool, reason: str = None, tool_name: str = None):
     """Update usage statistics."""
@@ -45,7 +47,9 @@ def update_stats(allowed: bool, reason: str = None, tool_name: str = None):
         if reason:
             blocks = stats.get("blocks_by_reason", {})
             # Extract first word as category
-            category = reason.split("]")[0].replace("[", "") if "]" in reason else "other"
+            category = (
+                reason.split("]")[0].replace("[", "") if "]" in reason else "other"
+            )
             blocks[category] = blocks.get(category, 0) + 1
             stats["blocks_by_reason"] = blocks
 
@@ -54,6 +58,7 @@ def update_stats(allowed: bool, reason: str = None, tool_name: str = None):
 
     STATS_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATS_FILE.write_text(json.dumps(stats, indent=2))
+
 
 # Tool categories
 WRITE_TOOLS = {"Edit", "Write", "NotebookEdit"}
@@ -120,6 +125,7 @@ MCP_SCRIPT_REQUIRED = {
     "mcp__filesystem__search_files",
 }
 
+
 def load_json(path: Path) -> dict:
     """Load JSON file safely."""
     if path.exists():
@@ -129,17 +135,25 @@ def load_json(path: Path) -> dict:
             pass
     return {}
 
+
 def save_state(state: dict) -> None:
     """Save session state."""
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text(json.dumps(state, indent=2))
 
+
 def allow(reason: str = None) -> dict:
     """Return allow decision."""
-    result = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}
+    result = {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+        }
+    }
     if reason:
         result["hookSpecificOutput"]["permissionDecisionReason"] = reason
     return result
+
 
 def block(reason: str) -> dict:
     """Return block decision."""
@@ -147,9 +161,10 @@ def block(reason: str) -> dict:
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
-            "permissionDecisionReason": reason
+            "permissionDecisionReason": reason,
         }
     }
+
 
 def check_autopilot(state: dict) -> dict | None:
     """Autopilot mode bypasses all enforcement."""
@@ -157,28 +172,32 @@ def check_autopilot(state: dict) -> dict | None:
         return allow("[AUTOPILOT] Auto-approved")
     return None
 
-def check_phase_restrictions(tool_name: str, state: dict, tool_input: dict = None) -> dict | None:
+
+def check_phase_restrictions(
+    tool_name: str, state: dict, tool_input: dict = None
+) -> dict | None:
     """Enforce phase-specific tool restrictions."""
-    
+
     # FIRST: State file protection (always enforced, regardless of phase)
     if tool_name == "Bash" and tool_input:
         command = tool_input.get("command", "").strip()
-        if '.state' in command or 'session.json' in command:
+        if ".state" in command or "session.json" in command:
             return block(
                 "[STATE PROTECTION] Cannot access state files\n"
                 "State management is handled by the enforcement system.\n"
                 "Use AskUserQuestion if you need checkpoint approval."
             )
-    
+
     # SECOND: Allow critical documentation files (handoffs, notes) from any phase
     if tool_name == "Write" and tool_input:
         from pathlib import Path
+
         file_path = tool_input.get("file_path", "")
         filename = Path(file_path).name
         CRITICAL_FILES = {"HANDOFF.md", "SESSION_NOTES.md"}
         if filename in CRITICAL_FILES:
             return None  # Allow handoff writes from any phase
-    
+
     phase = state.get("phase", "")
 
     # No phase = no restrictions
@@ -194,8 +213,10 @@ def check_phase_restrictions(tool_name: str, state: dict, tool_input: dict = Non
         command = tool_input.get("command", "").strip()
 
         # Allow orchestrator phase-transition commands
-        if 'AGENT_PHASE=' in command or '/tmp/phase_' in command:
-            import sys; print(f'DEBUG: AGENT_PHASE exemption triggered!', file=sys.stderr)
+        if "AGENT_PHASE=" in command or "/tmp/phase_" in command:
+            import sys
+
+            print("DEBUG: AGENT_PHASE exemption triggered!", file=sys.stderr)
             return None  # Allow
 
         # Allow Python execution patterns
@@ -203,7 +224,8 @@ def check_phase_restrictions(tool_name: str, state: dict, tool_input: dict = Non
             command.startswith("python3 -c"),
             command.startswith("python3 <<"),
             "cat >" in command and ".py" in command,  # Creating temp Python script
-            command.startswith("python3 /tmp/") and ".py" in command,  # Running temp script
+            command.startswith("python3 /tmp/")
+            and ".py" in command,  # Running temp script
             command.startswith("rm /tmp/") and ".py" in command,  # Cleanup
         ]
 
@@ -212,13 +234,13 @@ def check_phase_restrictions(tool_name: str, state: dict, tool_input: dict = Non
 
         # Block all other Bash commands in intake
         return block(
-            f"[PHASE: intake] Bash restricted to Python execution only.\n"
-            f"Allowed patterns:\n"
-            f"  - python3 -c \"...\"\n"
-            f"  - cat > /tmp/script.py << 'EOF'\n"
-            f"  - python3 /tmp/script.py\n"
-            f"  - rm /tmp/*.py\n"
-            f"For other operations, use allowed tools: Read, Glob, Grep, AskUserQuestion"
+            "[PHASE: intake] Bash restricted to Python execution only.\n"
+            "Allowed patterns:\n"
+            '  - python3 -c "..."\n'
+            "  - cat > /tmp/script.py << 'EOF'\n"
+            "  - python3 /tmp/script.py\n"
+            "  - rm /tmp/*.py\n"
+            "For other operations, use allowed tools: Read, Glob, Grep, AskUserQuestion"
         )
 
     # Check phase restrictions
@@ -243,21 +265,27 @@ def check_phase_restrictions(tool_name: str, state: dict, tool_input: dict = Non
 
     return None
 
-def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dict | None:
+
+def check_token_efficiency(
+    tool_name: str, tool_input: dict, state: dict
+) -> dict | None:
     """Enforce token-saving measures."""
     from datetime import datetime, timedelta
 
     # Detect phase changes and reset counters
     current_phase = state.get("phase", "")
     last_phase = state.get("last_phase", "")
-    
+
     if current_phase != last_phase and last_phase:
         # Phase changed, reset counters
         state["search_count"] = 0
         state["read_count"] = 0
         state["files_read"] = []
         state["last_phase"] = current_phase
-        log_event("COUNTER_RESET", f"Phase changed from '{last_phase}' to '{current_phase}', counters reset")
+        log_event(
+            "COUNTER_RESET",
+            f"Phase changed from '{last_phase}' to '{current_phase}', counters reset",
+        )
         save_state(state)
     elif not last_phase:
         # Initialize last_phase tracking
@@ -338,10 +366,13 @@ def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dic
 
     return None
 
-def check_scope_discipline(tool_name: str, tool_input: dict, state: dict) -> dict | None:
+
+def check_scope_discipline(
+    tool_name: str, tool_input: dict, state: dict
+) -> dict | None:
     """Prevent off-task exploration."""
     phase = state.get("phase", "")
-    task_summary = state.get("task_summary", "")
+    state.get("task_summary", "")
 
     # Only enforce during active phases
     if not phase or phase in ("intake", "research", "explore"):
@@ -352,13 +383,16 @@ def check_scope_discipline(tool_name: str, tool_input: dict, state: dict) -> dic
         prompt = tool_input.get("prompt", "")
         if len(prompt) < 20:
             return block(
-                f"[SCOPE] Subagent prompt too vague. "
-                f"Provide clear, specific instructions for the subagent."
+                "[SCOPE] Subagent prompt too vague. "
+                "Provide clear, specific instructions for the subagent."
             )
 
     return None
 
-def check_mcp_script_requirement(tool_name: str, tool_input: dict, state: dict) -> dict | None:
+
+def check_mcp_script_requirement(
+    tool_name: str, tool_input: dict, state: dict
+) -> dict | None:
     """Enforce script usage for high-cost MCP operations."""
 
     # Check if this is an MCP tool
@@ -397,27 +431,54 @@ def check_mcp_script_requirement(tool_name: str, tool_input: dict, state: dict) 
 
     return None
 
-def check_smart_tool_usage(tool_name: str, tool_input: dict, state: dict) -> dict | None:
+
+def check_smart_tool_usage(
+    tool_name: str, tool_input: dict, state: dict
+) -> dict | None:
     """Block dumb methods when smarter alternatives exist."""
 
     # WebSearch for library docs → use Context7
     if tool_name == "WebSearch":
         query = tool_input.get("query", "").lower()
-        doc_indicators = ["docs", "documentation", "api", "how to", "example",
-                          "tutorial", "guide", "reference", "usage"]
+        doc_indicators = [
+            "docs",
+            "documentation",
+            "api",
+            "how to",
+            "example",
+            "tutorial",
+            "guide",
+            "reference",
+            "usage",
+        ]
 
         # Common libraries that are definitely in Context7
-        known_libs = ["react", "next", "vue", "angular", "svelte", "express",
-                      "fastapi", "django", "flask", "prisma", "drizzle",
-                      "tailwind", "typescript", "node", "deno", "bun"]
+        known_libs = [
+            "react",
+            "next",
+            "vue",
+            "angular",
+            "svelte",
+            "express",
+            "fastapi",
+            "django",
+            "flask",
+            "prisma",
+            "drizzle",
+            "tailwind",
+            "typescript",
+            "node",
+            "deno",
+            "bun",
+        ]
 
         if any(ind in query for ind in doc_indicators):
             if any(lib in query for lib in known_libs):
                 return block(
-                    f"[SMART TOOLS] Use Context7 instead of WebSearch for docs:\n"
-                    f"  1. mcp__context7__resolve-library-id\n"
-                    f"  2. mcp__context7__query-docs\n"
-                    f"Context7 has curated, up-to-date docs. WebSearch wastes tokens on noise."
+                    "[SMART TOOLS] Use Context7 instead of WebSearch for docs:\n"
+                    "  1. mcp__context7__resolve-library-id\n"
+                    "  2. mcp__context7__query-docs\n"
+                    "Context7 has curated, up-to-date docs. WebSearch wastes tokens on noise."
                 )
 
     # Read for code understanding → use Serena
@@ -428,17 +489,17 @@ def check_smart_tool_usage(tool_name: str, tool_input: dict, state: dict) -> dic
 
         if any(file_path.endswith(ext) for ext in code_exts):
             # Check if this looks like exploration vs targeted read
-            phase = state.get("phase", "")
+            state.get("phase", "")
             read_count = state.get("read_count", 0)
 
             # First read is usually OK, but suggest Serena after that
             if read_count >= 2:
                 return block(
-                    f"[SMART TOOLS] Use Serena instead of Read for code understanding:\n"
-                    f"  mcp__plugin_serena_serena__find_symbol - locate definitions\n"
-                    f"  mcp__plugin_serena_serena__get_definition - get signature + docs\n"
-                    f"  mcp__plugin_serena_serena__find_references - find usages\n"
-                    f"Serena extracts structure. Read dumps entire files into context."
+                    "[SMART TOOLS] Use Serena instead of Read for code understanding:\n"
+                    "  mcp__plugin_serena_serena__find_symbol - locate definitions\n"
+                    "  mcp__plugin_serena_serena__get_definition - get signature + docs\n"
+                    "  mcp__plugin_serena_serena__find_references - find usages\n"
+                    "Serena extracts structure. Read dumps entire files into context."
                 )
 
     # Bash for git → suggest gh_wrapper for queries
@@ -446,7 +507,7 @@ def check_smart_tool_usage(tool_name: str, tool_input: dict, state: dict) -> dic
         cmd = tool_input.get("command", "")
 
         # Exempt orchestrator system commands
-        if 'AGENT_PHASE=' in cmd or '/tmp/phase_' in cmd:
+        if "AGENT_PHASE=" in cmd or "/tmp/phase_" in cmd:
             return None  # Allow
 
         # CRITICAL: Detect Bash abuse patterns (cat/grep/find)
@@ -454,9 +515,9 @@ def check_smart_tool_usage(tool_name: str, tool_input: dict, state: dict) -> dic
 
         # cat abuse → use Read or Write tools
         # Block cat UNLESS it's receiving piped input (e.g., grep | cat)
-        if 'cat' in cmd and not re.search(r'\|\s*cat\s*(?:[|;]|$)', cmd):
+        if "cat" in cmd and not re.search(r"\|\s*cat\s*(?:[|;]|$)", cmd):
             # Cat reading files
-            if re.search(r'\bcat\s+[^\|<>]', cmd):
+            if re.search(r"\bcat\s+[^\|<>]", cmd):
                 return block(
                     f"[BASH ABUSE] Don't use 'cat' for reading - use Read tool instead\n"
                     f"❌ Bash: {cmd[:60]}\n"
@@ -464,7 +525,7 @@ def check_smart_tool_usage(tool_name: str, tool_input: dict, state: dict) -> dic
                     f"Bash cat wastes tokens and bypasses tracking."
                 )
             # Cat with heredocs (writing)
-            if re.search(r'\bcat\s*[>]+.*<<|\bcat\s*<<', cmd):
+            if re.search(r"\bcat\s*[>]+.*<<|\bcat\s*<<", cmd):
                 return block(
                     f"[BASH ABUSE] Don't use 'cat' for writing - use Write tool instead\n"
                     f"❌ Bash: {cmd[:60]}\n"
@@ -473,7 +534,7 @@ def check_smart_tool_usage(tool_name: str, tool_input: dict, state: dict) -> dic
                 )
 
         # grep/rg abuse → use Grep (powered by ripgrep)
-        if re.search(r'\b(grep|rg|egrep|fgrep)\s+', cmd):
+        if re.search(r"\b(grep|rg|egrep|fgrep)\s+", cmd):
             return block(
                 f"[BASH ABUSE] Don't use grep/rg via Bash - use Grep tool instead\n"
                 f"❌ Bash: {cmd[:60]}\n"
@@ -482,7 +543,7 @@ def check_smart_tool_usage(tool_name: str, tool_input: dict, state: dict) -> dic
             )
 
         # find abuse → use Glob
-        if re.search(r'\bfind\s+', cmd):
+        if re.search(r"\bfind\s+", cmd):
             return block(
                 f"[BASH ABUSE] Don't use 'find' - use Glob tool instead\n"
                 f"❌ Bash: {cmd[:60]}\n"
@@ -491,7 +552,7 @@ def check_smart_tool_usage(tool_name: str, tool_input: dict, state: dict) -> dic
             )
 
         # sed/awk for file editing → use Edit
-        if re.search(r'\b(sed|awk)\s+', cmd) and not re.search(r'\|', cmd):
+        if re.search(r"\b(sed|awk)\s+", cmd) and not re.search(r"\|", cmd):
             return block(
                 f"[BASH ABUSE] Don't use sed/awk for file editing - use Edit tool\n"
                 f"❌ Bash: {cmd[:60]}\n"
@@ -499,7 +560,9 @@ def check_smart_tool_usage(tool_name: str, tool_input: dict, state: dict) -> dic
                 f"Edit tool is atomic and tracked."
             )
 
-        if cmd.startswith("gh ") and not any(x in cmd for x in ["create", "merge", "close", "edit"]):
+        if cmd.startswith("gh ") and not any(
+            x in cmd for x in ["create", "merge", "close", "edit"]
+        ):
             # Query commands, not mutating commands
             if any(x in cmd for x in ["list", "view", "status", "search"]):
                 return block(
@@ -510,54 +573,100 @@ def check_smart_tool_usage(tool_name: str, tool_input: dict, state: dict) -> dic
 
     return None
 
-def check_checkpoint_approval(tool_name: str, tool_input: dict, state: dict) -> dict | None:
+
+def check_checkpoint_approval(
+    tool_name: str, tool_input: dict, state: dict
+) -> dict | None:
     """Enforce checkpoint approval requirement before critical operations."""
     phase = state.get("phase", "")
     if not phase:
         return None
-    
+
     # Load config to check if checkpoint enabled for this phase
     config = load_json(CONFIG_FILE)
     checkpoints = config.get("checkpoints", {})
-    
+
     if not checkpoints.get(phase, False):
         return None  # No checkpoint required for this phase
-    
+
     # Check if approval has been granted for this phase
     checkpoint_approvals = state.get("checkpoint_approvals", {})
     if checkpoint_approvals.get(phase, False):
         return None  # Approval already granted
-    
+
     # Block critical operations that require checkpoint approval
     if tool_name == "Bash":
         command = tool_input.get("command", "")
-        
+
         # Block git push operations
-        if re.search(r'\bgit\s+push\b', command):
+        if re.search(r"\bgit\s+push\b", command):
             return block(
                 f"[CHECKPOINT: {phase}] Git push requires approval\n"
                 f"This phase has checkpoint enabled. Get user approval before pushing.\n"
                 f"To approve: Add 'checkpoint_approvals': {{'{phase}': true}} to state"
             )
-        
+
         # Block git commit operations
-        if re.search(r'\bgit\s+commit\b', command):
+        if re.search(r"\bgit\s+commit\b", command):
             return block(
                 f"[CHECKPOINT: {phase}] Git commit requires approval\n"
                 f"This phase has checkpoint enabled. Get user approval before committing.\n"
                 f"To approve: Add 'checkpoint_approvals': {{'{phase}': true}} to state"
             )
-    
+
     # Block phase transitions
-    if tool_name == "Bash" and ("AGENT_PHASE=" in tool_input.get("command", "") or 
-                                 "/tmp/phase_" in tool_input.get("command", "")):
+    if tool_name == "Bash" and (
+        "AGENT_PHASE=" in tool_input.get("command", "")
+        or "/tmp/phase_" in tool_input.get("command", "")
+    ):
         return block(
             f"[CHECKPOINT: {phase}] Phase transition requires approval\n"
             f"Complete checkpoint for '{phase}' phase before transitioning.\n"
             f"To approve: Add 'checkpoint_approvals': {{'{phase}': true}} to state"
         )
-    
+
     return None
+
+
+def check_verify_required(tool_name: str, tool_input: dict, state: dict) -> dict | None:
+    """Block git commit unless verify has passed."""
+    if tool_name != "Bash":
+        return None
+
+    command = tool_input.get("command", "")
+
+    # Only check git commit commands
+    if not re.search(r"\bgit\s+commit\b", command):
+        return None
+
+    # Check if verify enforcement is enabled
+    config = load_json(CONFIG_FILE)
+    if not config.get("verify_required", False):
+        return None  # Verify enforcement disabled
+
+    # Check if verify has passed
+    if state.get("verify_passed", False):
+        return None  # Verify passed, allow commit
+
+    return block(
+        "[VERIFY REQUIRED] Git commit blocked - verification not passed.\n"
+        "Run /verify (or `python3 ~/.claude/plugins/agent-swarm/scripts/verify.py`)\n"
+        "to check: ruff, black, mypy, pytest\n"
+        "All checks must pass before committing."
+    )
+
+
+def reset_verify_on_edit(tool_name: str, tool_input: dict, state: dict) -> None:
+    """Reset verify_passed flag when files are edited."""
+    if tool_name not in WRITE_TOOLS:
+        return
+
+    # Reset the flag since code has changed
+    if state.get("verify_passed", False):
+        state["verify_passed"] = False
+        save_state(state)
+        log_event("VERIFY_RESET", f"verify_passed reset due to {tool_name}")
+
 
 def check_git_safety(tool_name: str, tool_input: dict, state: dict) -> dict | None:
     """Prevent dangerous git operations."""
@@ -587,49 +696,49 @@ def check_git_safety(tool_name: str, tool_input: dict, state: dict) -> dict | No
         phase = state.get("phase", "")
         if phase != "git":
             return block(
-                f"[GIT SAFETY] Amend outside git phase. "
-                f"Switch to git phase first, or get explicit approval."
+                "[GIT SAFETY] Amend outside git phase. "
+                "Switch to git phase first, or get explicit approval."
             )
 
     return None
-
 
 
 def check_subagent_model(tool_name: str, tool_input: dict, state: dict) -> dict | None:
     """Enforce correct model usage when spawning subagents."""
     if tool_name != "Task":
         return None
-    
+
     subagent_type = tool_input.get("subagent_type", "")
     specified_model = tool_input.get("model", "")
-    
+
     # Skip if not an agent type we track
     if subagent_type not in AGENT_MODEL_MAP:
         return None
-    
+
     expected_model = AGENT_MODEL_MAP[subagent_type]
-    
+
     # If no model specified, warn and suggest
     if not specified_model:
         return block(
             f"[MODEL] Task missing 'model' parameter.\n"
-            f"  For {subagent_type}, use: model: \"{expected_model}\""
+            f'  For {subagent_type}, use: model: "{expected_model}"'
         )
-    
+
     # If wrong model, block with correction
     if specified_model != expected_model:
         # Allow downgrade (sonnet agent using haiku for simple task)
         if expected_model == "sonnet" and specified_model == "haiku":
             return None  # Downgrade is OK
-        
+
         # Block upgrade or wrong model
         return block(
             f"[MODEL] Wrong model for {subagent_type}.\n"
             f"  Expected: {expected_model}, got: {specified_model}\n"
             f"  Downgrades OK (sonnet->haiku), upgrades blocked."
         )
-    
+
     return None
+
 
 def main():
     # Read input from stdin
@@ -651,10 +760,14 @@ def main():
         print(json.dumps(result))
         return
 
+    # Reset verify flag on edits (side effect, not a check)
+    reset_verify_on_edit(tool_name, tool_input, state)
+
     # Run all enforcement checks
     checks = [
         check_phase_restrictions(tool_name, state, tool_input),
         check_checkpoint_approval(tool_name, tool_input, state),
+        check_verify_required(tool_name, tool_input, state),
         check_mcp_script_requirement(tool_name, tool_input, state),
         check_smart_tool_usage(tool_name, tool_input, state),
         check_token_efficiency(tool_name, tool_input, state),
@@ -666,7 +779,9 @@ def main():
     for result in checks:
         if result:
             # Log the block
-            msg = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "blocked")
+            msg = result.get("hookSpecificOutput", {}).get(
+                "permissionDecisionReason", "blocked"
+            )
             log_event("BLOCKED", f"{tool_name}: {msg[:50]}")
             update_stats(allowed=False, reason=msg, tool_name=tool_name)
             print(json.dumps(result))
@@ -676,6 +791,7 @@ def main():
     log_event("ALLOWED", tool_name)
     update_stats(allowed=True, tool_name=tool_name)
     print(json.dumps(allow()))
+
 
 if __name__ == "__main__":
     main()

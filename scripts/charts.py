@@ -17,7 +17,6 @@ import json
 import sys
 from pathlib import Path
 from datetime import datetime
-from collections import defaultdict
 
 STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
 CHARTS_DIR = STATE_DIR / "charts"
@@ -25,15 +24,18 @@ HISTORY_FILE = STATE_DIR / "metrics_history.json"
 ACTIVITY_LOG = STATE_DIR / "activity.log"
 SUBAGENT_METRICS = STATE_DIR / "subagent_metrics.json"
 
+
 def ensure_charts_dir():
     """Create charts directory if needed."""
     CHARTS_DIR.mkdir(parents=True, exist_ok=True)
+
 
 def load_history():
     """Load historical metrics."""
     if HISTORY_FILE.exists():
         return json.loads(HISTORY_FILE.read_text())
     return {"snapshots": []}
+
 
 def save_snapshot(metrics_data):
     """Save current metrics to history."""
@@ -42,7 +44,7 @@ def save_snapshot(metrics_data):
     snapshot = {
         "timestamp": datetime.now().isoformat(),
         "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "metrics": metrics_data
+        "metrics": metrics_data,
     }
 
     history["snapshots"].append(snapshot)
@@ -54,6 +56,7 @@ def save_snapshot(metrics_data):
     HISTORY_FILE.write_text(json.dumps(history, indent=2))
     print(f"✅ Snapshot saved ({len(history['snapshots'])} total)")
 
+
 def generate_html_chart(title, chart_type, data, labels, output_file, options=None):
     """Generate standalone HTML with Chart.js."""
 
@@ -62,44 +65,47 @@ def generate_html_chart(title, chart_type, data, labels, output_file, options=No
 
     # Prepare data for Chart.js
     if chart_type == "line":
-        datasets = [{
-            "label": data.get("label", "Value"),
-            "data": data.get("values", []),
-            "borderColor": "rgb(75, 192, 192)",
-            "backgroundColor": "rgba(75, 192, 192, 0.2)",
-            "tension": 0.1
-        }]
+        datasets = [
+            {
+                "label": data.get("label", "Value"),
+                "data": data.get("values", []),
+                "borderColor": "rgb(75, 192, 192)",
+                "backgroundColor": "rgba(75, 192, 192, 0.2)",
+                "tension": 0.1,
+            }
+        ]
     elif chart_type == "bar":
-        datasets = [{
-            "label": data.get("label", "Value"),
-            "data": data.get("values", []),
-            "backgroundColor": [
-                "rgba(255, 99, 132, 0.5)",
-                "rgba(54, 162, 235, 0.5)",
-                "rgba(255, 206, 86, 0.5)",
-                "rgba(75, 192, 192, 0.5)",
-                "rgba(153, 102, 255, 0.5)",
-                "rgba(255, 159, 64, 0.5)"
-            ][:len(data.get("values", []))]
-        }]
+        datasets = [
+            {
+                "label": data.get("label", "Value"),
+                "data": data.get("values", []),
+                "backgroundColor": [
+                    "rgba(255, 99, 132, 0.5)",
+                    "rgba(54, 162, 235, 0.5)",
+                    "rgba(255, 206, 86, 0.5)",
+                    "rgba(75, 192, 192, 0.5)",
+                    "rgba(153, 102, 255, 0.5)",
+                    "rgba(255, 159, 64, 0.5)",
+                ][: len(data.get("values", []))],
+            }
+        ]
     elif chart_type == "pie":
-        datasets = [{
-            "data": data.get("values", []),
-            "backgroundColor": [
-                "rgba(255, 99, 132, 0.8)",
-                "rgba(54, 162, 235, 0.8)",
-                "rgba(255, 206, 86, 0.8)",
-                "rgba(75, 192, 192, 0.8)",
-                "rgba(153, 102, 255, 0.8)",
-                "rgba(255, 159, 64, 0.8)",
-                "rgba(201, 203, 207, 0.8)"
-            ][:len(data.get("values", []))]
-        }]
+        datasets = [
+            {
+                "data": data.get("values", []),
+                "backgroundColor": [
+                    "rgba(255, 99, 132, 0.8)",
+                    "rgba(54, 162, 235, 0.8)",
+                    "rgba(255, 206, 86, 0.8)",
+                    "rgba(75, 192, 192, 0.8)",
+                    "rgba(153, 102, 255, 0.8)",
+                    "rgba(255, 159, 64, 0.8)",
+                    "rgba(201, 203, 207, 0.8)",
+                ][: len(data.get("values", []))],
+            }
+        ]
 
-    chart_data = {
-        "labels": labels,
-        "datasets": datasets
-    }
+    chart_data = {"labels": labels, "datasets": datasets}
 
     html = f"""<!DOCTYPE html>
 <html>
@@ -177,6 +183,7 @@ def generate_html_chart(title, chart_type, data, labels, output_file, options=No
     output_path.write_text(html)
     return output_path
 
+
 def chart_efficiency_trend():
     """Chart efficiency score over time."""
     history = load_history()
@@ -193,31 +200,17 @@ def chart_efficiency_trend():
         dates.append(snapshot["date"])
         scores.append(snapshot["metrics"].get("efficiency_score", 0))
 
-    data = {
-        "label": "Efficiency Score",
-        "values": scores
-    }
+    data = {"label": "Efficiency Score", "values": scores}
 
-    options = {
-        "scales": {
-            "y": {
-                "beginAtZero": True,
-                "max": 100
-            }
-        }
-    }
+    options = {"scales": {"y": {"beginAtZero": True, "max": 100}}}
 
     path = generate_html_chart(
-        "Efficiency Score Trend",
-        "line",
-        data,
-        dates,
-        "efficiency_trend.html",
-        options
+        "Efficiency Score Trend", "line", data, dates, "efficiency_trend.html", options
     )
 
     print(f"✅ Chart generated: {path}")
     return path
+
 
 def chart_script_adoption():
     """Chart script adoption over time."""
@@ -245,36 +238,23 @@ def chart_script_adoption():
 
         adoption_rates.append(rate)
 
-    data = {
-        "label": "Script Adoption %",
-        "values": adoption_rates
-    }
+    data = {"label": "Script Adoption %", "values": adoption_rates}
 
-    options = {
-        "scales": {
-            "y": {
-                "beginAtZero": True,
-                "max": 100
-            }
-        }
-    }
+    options = {"scales": {"y": {"beginAtZero": True, "max": 100}}}
 
     path = generate_html_chart(
-        "Script Adoption Trend",
-        "line",
-        data,
-        dates,
-        "script_adoption.html",
-        options
+        "Script Adoption Trend", "line", data, dates, "script_adoption.html", options
     )
 
     print(f"✅ Chart generated: {path}")
     return path
 
+
 def chart_tool_usage():
     """Chart current tool usage breakdown."""
     # Get latest metrics
     from metrics import analyze_activity_log
+
     metrics = analyze_activity_log()
 
     tools = metrics.get("tools_by_type", {})
@@ -289,25 +269,20 @@ def chart_tool_usage():
     labels = [tool for tool, _ in sorted_tools]
     values = [count for _, count in sorted_tools]
 
-    data = {
-        "label": "Tool Calls",
-        "values": values
-    }
+    data = {"label": "Tool Calls", "values": values}
 
     path = generate_html_chart(
-        "Tool Usage Breakdown",
-        "bar",
-        data,
-        labels,
-        "tool_usage.html"
+        "Tool Usage Breakdown", "bar", data, labels, "tool_usage.html"
     )
 
     print(f"✅ Chart generated: {path}")
     return path
 
+
 def chart_blocks():
     """Chart block reasons pie chart."""
     from metrics import analyze_activity_log
+
     metrics = analyze_activity_log()
 
     blocks = metrics.get("blocks_by_reason", {})
@@ -322,20 +297,15 @@ def chart_blocks():
     labels = [reason for reason, _ in sorted_blocks]
     values = [count for _, count in sorted_blocks]
 
-    data = {
-        "values": values
-    }
+    data = {"values": values}
 
     path = generate_html_chart(
-        "Block Reasons Distribution",
-        "pie",
-        data,
-        labels,
-        "blocks.html"
+        "Block Reasons Distribution", "pie", data, labels, "blocks.html"
     )
 
     print(f"✅ Chart generated: {path}")
     return path
+
 
 def chart_subagents(session_filter=None):
     """Chart subagent token usage by type (or by individual agent if session filtered)."""
@@ -360,15 +330,16 @@ def chart_subagents(session_filter=None):
         "debugger": 150000,
         "researcher": 150000,
         "git-agent": 30000,
-        "default": 50000
+        "default": 50000,
     }
 
     # Filter by session if requested
     if session_filter:
         # Filter metrics to only agents from specific session
         # (Assuming session info will be added to metrics in future)
-        filtered_metrics = {k: v for k, v in metrics.items()
-                          if v.get("session") == session_filter}
+        filtered_metrics = {
+            k: v for k, v in metrics.items() if v.get("session") == session_filter
+        }
         if not filtered_metrics:
             print(f"⚠️  No agents found for session: {session_filter}")
             return None
@@ -390,7 +361,7 @@ def chart_subagents(session_filter=None):
                     tokens = TOKEN_ESTIMATES[key]
                     break
 
-            type_name = agent_type.split(':')[-1] if ':' in agent_type else agent_type
+            type_name = agent_type.split(":")[-1] if ":" in agent_type else agent_type
             label = f"{type_name} ({agent_id[:7]})"
             results[label] = tokens
     else:
@@ -400,7 +371,7 @@ def chart_subagents(session_filter=None):
             agent_type = data.get("agent_type", "unknown")
 
             # Extract type name (remove prefix if present)
-            type_name = agent_type.split(':')[-1] if ':' in agent_type else agent_type
+            type_name = agent_type.split(":")[-1] if ":" in agent_type else agent_type
 
             # Estimate tokens for this agent
             tokens = TOKEN_ESTIMATES.get("default", 50000)
@@ -420,21 +391,13 @@ def chart_subagents(session_filter=None):
     labels = list(results.keys())
     values = list(results.values())
 
-    data = {
-        "label": "Estimated Tokens",
-        "values": values
-    }
+    data = {"label": "Estimated Tokens", "values": values}
 
-    path = generate_html_chart(
-        title,
-        "bar",
-        data,
-        labels,
-        "subagents.html"
-    )
+    path = generate_html_chart(title, "bar", data, labels, "subagents.html")
 
     print(f"✅ Chart generated: {path}")
     return path
+
 
 def chart_token_trend():
     """Chart token usage trend over time."""
@@ -457,9 +420,13 @@ def chart_token_trend():
         total_tokens = 0
         for tool, count in metrics.get("tools_by_type", {}).items():
             estimate = {
-                "Bash": 500, "Read": 2000, "Edit": 1500,
-                "Write": 1000, "Task": 5000, "Grep": 1000,
-                "Glob": 500
+                "Bash": 500,
+                "Read": 2000,
+                "Edit": 1500,
+                "Write": 1000,
+                "Task": 5000,
+                "Grep": 1000,
+                "Glob": 500,
             }.get(tool, 500)
             total_tokens += estimate * count
 
@@ -467,21 +434,15 @@ def chart_token_trend():
         cost_values.append(total_tokens * 0.000003)
 
     # Token trend chart
-    data = {
-        "label": "Estimated Tokens",
-        "values": token_values
-    }
+    data = {"label": "Estimated Tokens", "values": token_values}
 
     path = generate_html_chart(
-        "Token Usage Trend",
-        "line",
-        data,
-        labels,
-        "token_trend.html"
+        "Token Usage Trend", "line", data, labels, "token_trend.html"
     )
 
     print(f"✅ Chart generated: {path}")
     return path
+
 
 def generate_dashboard():
     """Generate a dashboard with all charts."""
@@ -622,10 +583,11 @@ python3 ~/.claude/plugins/agent-swarm/scripts/charts.py tool-usage
     dashboard_path.write_text(html)
 
     print(f"\n✅ Dashboard generated: {dashboard_path}")
-    print(f"\n🌐 Open in browser:")
+    print("\n🌐 Open in browser:")
     print(f"   file://{dashboard_path.absolute()}")
 
     return dashboard_path
+
 
 def capture_snapshot():
     """Capture current metrics as snapshot."""
@@ -635,10 +597,12 @@ def capture_snapshot():
 
     # Calculate efficiency score
     from metrics import calculate_efficiency_score
+
     efficiency = calculate_efficiency_score(metrics)
     metrics["efficiency_score"] = efficiency
 
     save_snapshot(metrics)
+
 
 def main():
     ensure_charts_dir()
@@ -704,6 +668,7 @@ def main():
 
     else:
         print(f"Unknown command: {cmd}")
+
 
 if __name__ == "__main__":
     main()

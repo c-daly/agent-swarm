@@ -145,12 +145,14 @@ class TestResolveContext:
 
     def test_resolve_single_layer(self, tmp_path):
         context_file = tmp_path / "CONTEXT.md"
-        context_file.write_text("""## Purpose
+        context_file.write_text(
+            """## Purpose
 Test project
 
 ## Conventions
 - Use Python 3.10+
-""")
+"""
+        )
 
         ctx = resolve_context(tmp_path, user_dir=tmp_path / ".claude")
 
@@ -162,24 +164,30 @@ Test project
         # User level - separate from project tree
         user_dir = tmp_path / "home" / ".claude"
         user_dir.mkdir(parents=True)
-        (user_dir / "CONTEXT.md").write_text("""## Preferences
+        (user_dir / "CONTEXT.md").write_text(
+            """## Preferences
 - Be concise
-""")
+"""
+        )
 
         # Repo level
         repo_dir = tmp_path / "projects" / "repo"
         repo_dir.mkdir(parents=True)
         (repo_dir / ".git").mkdir()
-        (repo_dir / "CONTEXT.md").write_text("""## Conventions
+        (repo_dir / "CONTEXT.md").write_text(
+            """## Conventions
 - Use TypeScript
-""")
+"""
+        )
 
         # Feature level
         feature_dir = repo_dir / "features" / "auth"
         feature_dir.mkdir(parents=True)
-        (feature_dir / "CONTEXT.md").write_text("""## Purpose
+        (feature_dir / "CONTEXT.md").write_text(
+            """## Purpose
 Authentication feature
-""")
+"""
+        )
 
         ctx = resolve_context(feature_dir, user_dir=user_dir)
 
@@ -194,18 +202,22 @@ Authentication feature
         # Parent
         parent_dir = tmp_path / "parent"
         parent_dir.mkdir()
-        (parent_dir / "CONTEXT.md").write_text("""## Conventions
+        (parent_dir / "CONTEXT.md").write_text(
+            """## Conventions
 Parent conventions
-""")
+"""
+        )
 
         # Child with override
         child_dir = parent_dir / "child"
         child_dir.mkdir()
-        (child_dir / "CONTEXT.md").write_text("""@override: conventions
+        (child_dir / "CONTEXT.md").write_text(
+            """@override: conventions
 
 ## Conventions
 Child conventions only
-""")
+"""
+        )
 
         ctx = resolve_context(child_dir, user_dir=tmp_path / ".claude")
 
@@ -217,21 +229,25 @@ Child conventions only
         # Parent
         parent_dir = tmp_path / "parent"
         parent_dir.mkdir()
-        (parent_dir / "CONTEXT.md").write_text("""## Purpose
+        (parent_dir / "CONTEXT.md").write_text(
+            """## Purpose
 Parent purpose
 
 ## Conventions
 Parent conventions
-""")
+"""
+        )
 
         # Child that doesn't inherit
         child_dir = parent_dir / "child"
         child_dir.mkdir()
-        (child_dir / "CONTEXT.md").write_text("""@inherit: false
+        (child_dir / "CONTEXT.md").write_text(
+            """@inherit: false
 
 ## Purpose
 Child purpose only
-""")
+"""
+        )
 
         ctx = resolve_context(child_dir, user_dir=tmp_path / ".claude")
 
@@ -245,12 +261,14 @@ class TestAggregatedContext:
 
     def test_to_markdown(self, tmp_path):
         context_file = tmp_path / "CONTEXT.md"
-        context_file.write_text("""## Purpose
+        context_file.write_text(
+            """## Purpose
 Test
 
 ## Conventions
 - Rule 1
-""")
+"""
+        )
 
         ctx = resolve_context(tmp_path, user_dir=tmp_path / ".claude")
         md = ctx.to_markdown()
@@ -271,7 +289,8 @@ Test
 
     def test_get_sections(self, tmp_path):
         context_file = tmp_path / "CONTEXT.md"
-        context_file.write_text("""## Purpose
+        context_file.write_text(
+            """## Purpose
 Test
 
 ## Conventions
@@ -279,7 +298,8 @@ Rules
 
 ## Pitfalls
 Watch out
-""")
+"""
+        )
 
         ctx = resolve_context(tmp_path, user_dir=tmp_path / ".claude")
         sections = ctx.get_sections(["purpose", "conventions"])
@@ -294,7 +314,8 @@ class TestAgentContext:
 
     def test_explorer_context(self, tmp_path):
         context_file = tmp_path / "CONTEXT.md"
-        context_file.write_text("""## Purpose
+        context_file.write_text(
+            """## Purpose
 Project purpose
 
 ## Boundaries
@@ -305,7 +326,8 @@ Code conventions
 
 ## Pitfalls
 Known issues
-""")
+"""
+        )
 
         ctx = get_agent_context("explorer", tmp_path)
 
@@ -315,7 +337,8 @@ Known issues
 
     def test_implementer_context(self, tmp_path):
         context_file = tmp_path / "CONTEXT.md"
-        context_file.write_text("""## Purpose
+        context_file.write_text(
+            """## Purpose
 Project purpose
 
 ## Conventions
@@ -326,7 +349,8 @@ Design patterns
 
 ## Pitfalls
 Known issues
-""")
+"""
+        )
 
         ctx = get_agent_context("implementer", tmp_path)
 
@@ -341,12 +365,14 @@ class TestShowContextTree:
 
     def test_tree_output(self, tmp_path):
         context_file = tmp_path / "CONTEXT.md"
-        context_file.write_text("""## Purpose
+        context_file.write_text(
+            """## Purpose
 Test
 
 ## Conventions
 Rules
-""")
+"""
+        )
 
         tree = show_context_tree(tmp_path)
 

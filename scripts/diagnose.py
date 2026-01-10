@@ -13,11 +13,11 @@ import json
 import re
 from pathlib import Path
 from collections import defaultdict, Counter
-from datetime import datetime
 
 STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
 ACTIVITY_LOG = STATE_DIR / "activity.log"
 SUBAGENT_METRICS = STATE_DIR / "subagent_metrics.json"
+
 
 class EfficiencyAnalyzer:
     def __init__(self):
@@ -47,7 +47,7 @@ class EfficiencyAnalyzer:
         """Parse a log line into structured event."""
         try:
             # Extract timestamp
-            time_match = re.search(r'\[(\d{2}:\d{2}:\d{2})\]', line)
+            time_match = re.search(r"\[(\d{2}:\d{2}:\d{2})\]", line)
             timestamp = time_match.group(1) if time_match else None
 
             # Extract event type
@@ -56,8 +56,16 @@ class EfficiencyAnalyzer:
                 tool = line.split("ALLOWED:")[1].split()[0].strip()
             elif "BLOCKED" in line:
                 event_type = "blocked"
-                tool = line.split("BLOCKED:")[1].split()[0].strip() if ":" in line.split("BLOCKED")[1] else "unknown"
-                reason = line.split("[")[-1].split("]")[0] if "[" in line.split("BLOCKED")[-1] else "unknown"
+                tool = (
+                    line.split("BLOCKED:")[1].split()[0].strip()
+                    if ":" in line.split("BLOCKED")[1]
+                    else "unknown"
+                )
+                reason = (
+                    line.split("[")[-1].split("]")[0]
+                    if "[" in line.split("BLOCKED")[-1]
+                    else "unknown"
+                )
             else:
                 return None
 
@@ -66,7 +74,7 @@ class EfficiencyAnalyzer:
                 "type": event_type,
                 "tool": tool,
                 "reason": reason if event_type == "blocked" else None,
-                "raw": line
+                "raw": line,
             }
         except:
             return None
@@ -94,12 +102,14 @@ class EfficiencyAnalyzer:
         # Pattern: Repeated same tool
         for tool, count in tool_counts.items():
             if count >= 5:
-                self.patterns["repeated_tool"].append({
-                    "window": window,
-                    "tool": tool,
-                    "count": count,
-                    "issue": f"Used {tool} {count} times in short period - consider batching"
-                })
+                self.patterns["repeated_tool"].append(
+                    {
+                        "window": window,
+                        "tool": tool,
+                        "count": count,
+                        "issue": f"Used {tool} {count} times in short period - consider batching",
+                    }
+                )
 
         # Pattern: Read after Read after Read
         read_sequence = 0
@@ -108,22 +118,26 @@ class EfficiencyAnalyzer:
                 read_sequence += 1
             else:
                 if read_sequence >= 3:
-                    self.patterns["read_sequence"].append({
-                        "window": window,
-                        "count": read_sequence,
-                        "issue": f"{read_sequence} consecutive Reads - use batch script"
-                    })
+                    self.patterns["read_sequence"].append(
+                        {
+                            "window": window,
+                            "count": read_sequence,
+                            "issue": f"{read_sequence} consecutive Reads - use batch script",
+                        }
+                    )
                 read_sequence = 0
 
         # Pattern: Blocked then same tool allowed
         for i in range(len(events) - 1):
-            if events[i]["type"] == "blocked" and events[i+1]["type"] == "allowed":
-                if events[i]["tool"] == events[i+1]["tool"]:
-                    self.patterns["block_retry"].append({
-                        "window": window,
-                        "tool": events[i]["tool"],
-                        "issue": "Tool blocked then immediately retried - may indicate confusion"
-                    })
+            if events[i]["type"] == "blocked" and events[i + 1]["type"] == "allowed":
+                if events[i]["tool"] == events[i + 1]["tool"]:
+                    self.patterns["block_retry"].append(
+                        {
+                            "window": window,
+                            "tool": events[i]["tool"],
+                            "issue": "Tool blocked then immediately retried - may indicate confusion",
+                        }
+                    )
 
     def identify_issues(self):
         """Identify specific inefficiency issues."""
@@ -131,34 +145,40 @@ class EfficiencyAnalyzer:
         # Issue: High repeat tool usage
         if self.patterns["repeated_tool"]:
             worst = max(self.patterns["repeated_tool"], key=lambda x: x["count"])
-            self.issues.append({
-                "severity": "high" if worst["count"] > 10 else "medium",
-                "category": "batching",
-                "description": f"{worst['tool']} used {worst['count']} times rapidly",
-                "recommendation": f"Use batch script: batch_search.py or file_analyzer.py",
-                "impact": "High token waste on redundant operations"
-            })
+            self.issues.append(
+                {
+                    "severity": "high" if worst["count"] > 10 else "medium",
+                    "category": "batching",
+                    "description": f"{worst['tool']} used {worst['count']} times rapidly",
+                    "recommendation": "Use batch script: batch_search.py or file_analyzer.py",
+                    "impact": "High token waste on redundant operations",
+                }
+            )
 
         # Issue: Long read sequences
         if self.patterns["read_sequence"]:
             worst = max(self.patterns["read_sequence"], key=lambda x: x["count"])
-            self.issues.append({
-                "severity": "high",
-                "category": "sequential_reads",
-                "description": f"{worst['count']} consecutive file reads",
-                "recommendation": "Use mcp__plugin_serena_serena__find_symbol instead of reading full files",
-                "impact": "Reading full files when only need specific symbols"
-            })
+            self.issues.append(
+                {
+                    "severity": "high",
+                    "category": "sequential_reads",
+                    "description": f"{worst['count']} consecutive file reads",
+                    "recommendation": "Use mcp__plugin_serena_serena__find_symbol instead of reading full files",
+                    "impact": "Reading full files when only need specific symbols",
+                }
+            )
 
         # Issue: Block-retry cycles
         if self.patterns["block_retry"]:
-            self.issues.append({
-                "severity": "medium",
-                "category": "enforcement_friction",
-                "description": f"{len(self.patterns['block_retry'])} block-retry cycles",
-                "recommendation": "Review AGENT_RULES.md - may not understand tool restrictions",
-                "impact": "Wasted attempts, agent confusion"
-            })
+            self.issues.append(
+                {
+                    "severity": "medium",
+                    "category": "enforcement_friction",
+                    "description": f"{len(self.patterns['block_retry'])} block-retry cycles",
+                    "recommendation": "Review AGENT_RULES.md - may not understand tool restrictions",
+                    "impact": "Wasted attempts, agent confusion",
+                }
+            )
 
     def identify_wins(self):
         """Identify what's working well."""
@@ -167,31 +187,37 @@ class EfficiencyAnalyzer:
 
         # Win: Using Task tool (delegation)
         if tool_usage.get("Task", 0) > 5:
-            self.wins.append({
-                "category": "delegation",
-                "description": f"Good use of subagents ({tool_usage['Task']} spawns)",
-                "impact": "Parallel work, focused agents"
-            })
+            self.wins.append(
+                {
+                    "category": "delegation",
+                    "description": f"Good use of subagents ({tool_usage['Task']} spawns)",
+                    "impact": "Parallel work, focused agents",
+                }
+            )
 
         # Win: Low duplicate rate
         reads = [e for e in self.events if e["tool"] == "Read"]
         # Can't easily detect dupes without file paths, but low read count is good
         if len(reads) < 10 and len(self.events) > 50:
-            self.wins.append({
-                "category": "selective_reading",
-                "description": f"Minimal file reads ({len(reads)} total)",
-                "impact": "Using semantic tools instead of brute-force reading"
-            })
+            self.wins.append(
+                {
+                    "category": "selective_reading",
+                    "description": f"Minimal file reads ({len(reads)} total)",
+                    "impact": "Using semantic tools instead of brute-force reading",
+                }
+            )
 
         # Win: Low block rate
         blocks = len([e for e in self.events if e["type"] == "blocked"])
         total = len(self.events)
         if total > 20 and blocks / total < 0.1:
-            self.wins.append({
-                "category": "compliance",
-                "description": f"Low block rate ({blocks}/{total} = {blocks/total*100:.1f}%)",
-                "impact": "Following workflow rules effectively"
-            })
+            self.wins.append(
+                {
+                    "category": "compliance",
+                    "description": f"Low block rate ({blocks}/{total} = {blocks/total*100:.1f}%)",
+                    "impact": "Following workflow rules effectively",
+                }
+            )
 
     def check_subagent_efficiency(self):
         """Check subagent performance."""
@@ -205,27 +231,33 @@ class EfficiencyAnalyzer:
             max_tokens = stats.get("max_tokens", 0)
 
             if max_tokens > 3000000:
-                self.issues.append({
-                    "severity": "critical",
-                    "category": "runaway_agent",
-                    "description": f"{agent_type} used {max_tokens:,} tokens in single execution",
-                    "recommendation": "URGENT: Add token budget enforcement to prevent this",
-                    "impact": "Massive cost, no output, system waste"
-                })
+                self.issues.append(
+                    {
+                        "severity": "critical",
+                        "category": "runaway_agent",
+                        "description": f"{agent_type} used {max_tokens:,} tokens in single execution",
+                        "recommendation": "URGENT: Add token budget enforcement to prevent this",
+                        "impact": "Massive cost, no output, system waste",
+                    }
+                )
             elif avg_tokens > 200000:
-                self.issues.append({
-                    "severity": "high",
-                    "category": "expensive_agents",
-                    "description": f"{agent_type} averages {avg_tokens:,} tokens per execution",
-                    "recommendation": "Add structured output requirements, enforce tool selection",
-                    "impact": "Agents doing too much work for their purpose"
-                })
+                self.issues.append(
+                    {
+                        "severity": "high",
+                        "category": "expensive_agents",
+                        "description": f"{agent_type} averages {avg_tokens:,} tokens per execution",
+                        "recommendation": "Add structured output requirements, enforce tool selection",
+                        "impact": "Agents doing too much work for their purpose",
+                    }
+                )
             elif avg_tokens < 50000 and stats["count"] > 3:
-                self.wins.append({
-                    "category": "efficient_agents",
-                    "description": f"{agent_type} averages only {avg_tokens:,} tokens",
-                    "impact": "Efficient execution, good tool selection"
-                })
+                self.wins.append(
+                    {
+                        "category": "efficient_agents",
+                        "description": f"{agent_type} averages only {avg_tokens:,} tokens",
+                        "impact": "Efficient execution, good tool selection",
+                    }
+                )
 
     def generate_report(self):
         """Generate diagnostic report."""
@@ -256,7 +288,7 @@ class EfficiencyAnalyzer:
                     print(f"   Fix: {issue['recommendation']}")
                     print()
         else:
-            print(f"\n✅ NO ISSUES FOUND")
+            print("\n✅ NO ISSUES FOUND")
 
         # Wins
         if self.wins:
@@ -267,7 +299,7 @@ class EfficiencyAnalyzer:
                 print()
 
         # Specific recommendations
-        print(f"\n💡 ACTIONABLE RECOMMENDATIONS:\n")
+        print("\n💡 ACTIONABLE RECOMMENDATIONS:\n")
 
         if not self.issues:
             print("✅ System operating efficiently. Consider:")
@@ -293,26 +325,27 @@ class EfficiencyAnalyzer:
 
         # Pattern summary
         if self.patterns:
-            print(f"\n📈 PATTERNS DETECTED:\n")
+            print("\n📈 PATTERNS DETECTED:\n")
             for pattern_type, instances in self.patterns.items():
                 if instances:
                     print(f"   {pattern_type}: {len(instances)} occurrences")
+
 
 def main():
     analyzer = EfficiencyAnalyzer()
 
     # Parse arguments
     recent = None
-    agent_filter = None
 
     for i, arg in enumerate(sys.argv[1:]):
         if arg == "--recent" and i + 1 < len(sys.argv) - 1:
             recent = int(sys.argv[i + 2])
         elif arg == "--agent" and i + 1 < len(sys.argv) - 1:
-            agent_filter = sys.argv[i + 2]
+            sys.argv[i + 2]
 
     analyzer.load_activity_log(recent=recent)
     analyzer.generate_report()
+
 
 if __name__ == "__main__":
     main()

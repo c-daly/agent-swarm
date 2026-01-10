@@ -10,30 +10,24 @@ Usage:
 
 import json
 import sys
-import subprocess
+
 
 def call_mcp(server: str, tool: str, params: dict) -> dict:
     """Call MCP tool via claude mcp command or direct."""
     # This would integrate with the MCP bridge
     # For now, output the command to run
-    return {
-        "tool": f"mcp__plugin_serena_serena__{tool}",
-        "params": params
-    }
+    return {"tool": f"mcp__plugin_serena_serena__{tool}", "params": params}
+
 
 def get_symbols(path: str, pattern: str = None) -> str:
     """Get symbols from path using Serena."""
-    cmd = {
-        "action": "find_symbols",
-        "path": path,
-        "pattern": pattern
-    }
     return f"""Use Serena tool:
   mcp__plugin_serena_serena__find_symbol
   pattern: "{pattern or '*'}"
   path: "{path}"
 
 Returns: symbol names with locations, NOT file contents"""
+
 
 def get_references(symbol: str, file: str = None) -> str:
     """Find all references to a symbol."""
@@ -44,13 +38,15 @@ def get_references(symbol: str, file: str = None) -> str:
 
 Returns: locations where symbol is used, NOT file contents"""
 
+
 def get_structure(path: str) -> str:
     """Get code structure without reading files."""
-    return f"""Use Serena tool:
+    return """Use Serena tool:
   mcp__plugin_serena_serena__list_dir (for structure)
   mcp__plugin_serena_serena__get_symbols (for definitions)
 
 Returns: directory tree + symbol list, NOT file contents"""
+
 
 def get_definition(symbol: str) -> str:
     """Get symbol definition."""
@@ -60,9 +56,11 @@ def get_definition(symbol: str) -> str:
 
 Returns: definition signature + docstring, NOT full implementation"""
 
+
 def main():
     if len(sys.argv) < 3:
-        print("""Usage: serena_batch.py <command> '<json_params>'
+        print(
+            """Usage: serena_batch.py <command> '<json_params>'
 
 Commands:
   symbols    - Find symbols matching pattern
@@ -72,7 +70,8 @@ Commands:
 
 Example:
   serena_batch.py symbols '{"path": "src/", "pattern": "handle"}'
-""")
+"""
+        )
         sys.exit(1)
 
     cmd = sys.argv[1]
@@ -92,6 +91,7 @@ Example:
         print(get_definition(params.get("symbol", "")))
     else:
         print(f"Unknown command: {cmd}")
+
 
 if __name__ == "__main__":
     main()

@@ -6,12 +6,10 @@ Walks up the directory tree collecting context files and merges them
 with locality-of-reference priority (more specific overrides more general).
 """
 
-import os
 import re
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
-import json
 
 # Context file search order within each directory
 CONTEXT_FILE_PATTERNS = [
@@ -44,6 +42,7 @@ CONTEXT_SECTIONS = [
 @dataclass
 class ContextLayer:
     """A single layer of context from one directory level."""
+
     path: Path
     level: str  # 'user', 'project', 'repo', 'feature', 'component'
     content: str
@@ -60,12 +59,14 @@ class ContextLayer:
         current_section = None
         current_content = []
 
-        for line in self.content.split('\n'):
+        for line in self.content.split("\n"):
             # Match ## Section headers
-            header_match = re.match(r'^##\s+(.+)$', line)
+            header_match = re.match(r"^##\s+(.+)$", line)
             if header_match:
                 if current_section:
-                    sections[current_section.lower()] = '\n'.join(current_content).strip()
+                    sections[current_section.lower()] = "\n".join(
+                        current_content
+                    ).strip()
                 current_section = header_match.group(1)
                 current_content = []
             elif current_section:
@@ -73,28 +74,28 @@ class ContextLayer:
 
         # Don't forget last section
         if current_section:
-            sections[current_section.lower()] = '\n'.join(current_content).strip()
+            sections[current_section.lower()] = "\n".join(current_content).strip()
 
         return sections
 
     def _parse_metadata(self) -> dict:
         """Parse @directives from content."""
         metadata = {
-            'inherit': True,
-            'override': [],
-            'ignore': [],
-            'priority': 'normal',
+            "inherit": True,
+            "override": [],
+            "ignore": [],
+            "priority": "normal",
         }
 
-        for line in self.content.split('\n'):
-            if line.startswith('@inherit:'):
-                metadata['inherit'] = line.split(':')[1].strip().lower() == 'true'
-            elif line.startswith('@override:'):
-                metadata['override'].append(line.split(':')[1].strip())
-            elif line.startswith('@ignore:'):
-                metadata['ignore'].append(line.split(':')[1].strip())
-            elif line.startswith('@priority:'):
-                metadata['priority'] = line.split(':')[1].strip()
+        for line in self.content.split("\n"):
+            if line.startswith("@inherit:"):
+                metadata["inherit"] = line.split(":")[1].strip().lower() == "true"
+            elif line.startswith("@override:"):
+                metadata["override"].append(line.split(":")[1].strip())
+            elif line.startswith("@ignore:"):
+                metadata["ignore"].append(line.split(":")[1].strip())
+            elif line.startswith("@priority:"):
+                metadata["priority"] = line.split(":")[1].strip()
 
         return metadata
 
@@ -102,6 +103,7 @@ class ContextLayer:
 @dataclass
 class AggregatedContext:
     """Merged context from all layers."""
+
     layers: list[ContextLayer]
     merged_sections: dict = field(default_factory=dict)
 
@@ -114,17 +116,17 @@ class AggregatedContext:
 
         # Process from most general (first) to most specific (last)
         for layer in self.layers:
-            if not layer.metadata.get('inherit', True):
+            if not layer.metadata.get("inherit", True):
                 # This layer doesn't inherit - start fresh
                 result = {}
 
             for section, content in layer.sections.items():
                 # Check if this section should be ignored from parent
-                if section in layer.metadata.get('ignore', []):
+                if section in layer.metadata.get("ignore", []):
                     continue
 
                 # Check if this section overrides parent completely
-                if section in layer.metadata.get('override', []):
+                if section in layer.metadata.get("override", []):
                     result[section] = content
                 else:
                     # Default: append to existing
@@ -141,8 +143,11 @@ class AggregatedContext:
 
     def get_sections(self, names: list[str]) -> dict:
         """Get multiple sections as a dict."""
-        return {name: self.merged_sections.get(name.lower())
-                for name in names if name.lower() in self.merged_sections}
+        return {
+            name: self.merged_sections.get(name.lower())
+            for name in names
+            if name.lower() in self.merged_sections
+        }
 
     def to_markdown(self, max_tokens: int = 4500) -> str:
         """Render merged context as markdown with token budget."""
@@ -152,26 +157,28 @@ class AggregatedContext:
             if content:
                 parts.append(f"## {section.title()}\n{content}")
 
-        result = '\n\n'.join(parts)
+        result = "\n\n".join(parts)
 
         # Rough token estimate (4 chars per token)
         if len(result) > max_tokens * 4:
-            result = result[:max_tokens * 4] + "\n\n[Context truncated due to token limit]"
+            result = (
+                result[: max_tokens * 4] + "\n\n[Context truncated due to token limit]"
+            )
 
         return result
 
     def to_dict(self) -> dict:
         """Export as dictionary for JSON serialization."""
         return {
-            'layers': [
+            "layers": [
                 {
-                    'path': str(layer.path),
-                    'level': layer.level,
-                    'sections': layer.sections,
+                    "path": str(layer.path),
+                    "level": layer.level,
+                    "sections": layer.sections,
                 }
                 for layer in self.layers
             ],
-            'merged': self.merged_sections,
+            "merged": self.merged_sections,
         }
 
 
@@ -196,28 +203,30 @@ def find_memory_file(directory: Path) -> Optional[Path]:
 def detect_level(path: Path, working_dir: Path, user_dir: Path) -> str:
     """Detect what level of hierarchy this path represents."""
     if path == user_dir:
-        return 'user'
+        return "user"
 
     # Check for .git to identify repo root
-    if (path / '.git').exists():
-        return 'repo'
+    if (path / ".git").exists():
+        return "repo"
 
     # Check for project markers
-    if (path / '.project').exists() or (path / 'PROJECT.md').exists():
-        return 'project'
+    if (path / ".project").exists() or (path / "PROJECT.md").exists():
+        return "project"
 
     # Relative depth from working dir determines feature vs component
     try:
         rel = working_dir.relative_to(path)
         depth = len(rel.parts)
         if depth <= 2:
-            return 'feature'
-        return 'component'
+            return "feature"
+        return "component"
     except ValueError:
-        return 'unknown'
+        return "unknown"
 
 
-def resolve_context(working_dir: Path, user_dir: Optional[Path] = None) -> AggregatedContext:
+def resolve_context(
+    working_dir: Path, user_dir: Optional[Path] = None
+) -> AggregatedContext:
     """
     Walk up from working_dir collecting context files.
 
@@ -229,7 +238,7 @@ def resolve_context(working_dir: Path, user_dir: Optional[Path] = None) -> Aggre
         AggregatedContext with all layers merged
     """
     if user_dir is None:
-        user_dir = Path.home() / '.claude'
+        user_dir = Path.home() / ".claude"
 
     layers = []
 
@@ -242,22 +251,26 @@ def resolve_context(working_dir: Path, user_dir: Optional[Path] = None) -> Aggre
         if context_file:
             content = context_file.read_text()
             level = detect_level(current, working_dir, user_dir)
-            layers.append(ContextLayer(
-                path=current,
-                level=level,
-                content=content,
-            ))
+            layers.append(
+                ContextLayer(
+                    path=current,
+                    level=level,
+                    content=content,
+                )
+            )
         current = current.parent
 
     # Add user-level context
     user_context_file = find_context_file(user_dir)
     if user_context_file:
         content = user_context_file.read_text()
-        layers.append(ContextLayer(
-            path=user_dir,
-            level='user',
-            content=content,
-        ))
+        layers.append(
+            ContextLayer(
+                path=user_dir,
+                level="user",
+                content=content,
+            )
+        )
 
     # Reverse so general comes first (user -> project -> repo -> feature)
     layers.reverse()
@@ -266,9 +279,7 @@ def resolve_context(working_dir: Path, user_dir: Optional[Path] = None) -> Aggre
 
 
 def get_agent_context(
-    agent_type: str,
-    working_dir: Path,
-    phase: Optional[str] = None
+    agent_type: str, working_dir: Path, phase: Optional[str] = None
 ) -> str:
     """
     Get context tailored for a specific agent type and phase.
@@ -285,23 +296,23 @@ def get_agent_context(
 
     # Agent-specific section priorities
     agent_sections = {
-        'explorer': ['boundaries', 'conventions', 'patterns'],
-        'implementer': ['conventions', 'patterns', 'pitfalls', 'dependencies'],
-        'architect': ['purpose', 'key_decisions', 'dependencies', 'boundaries'],
-        'reviewer': ['conventions', 'pitfalls', 'patterns'],
-        'researcher': ['purpose', 'dependencies'],
-        'debugger': ['patterns', 'pitfalls', 'conventions'],
-        'git-agent': ['conventions'],
+        "explorer": ["boundaries", "conventions", "patterns"],
+        "implementer": ["conventions", "patterns", "pitfalls", "dependencies"],
+        "architect": ["purpose", "key_decisions", "dependencies", "boundaries"],
+        "reviewer": ["conventions", "pitfalls", "patterns"],
+        "researcher": ["purpose", "dependencies"],
+        "debugger": ["patterns", "pitfalls", "conventions"],
+        "git-agent": ["conventions"],
     }
 
     # Phase-specific section priorities
     phase_sections = {
-        'intake': ['purpose', 'boundaries'],
-        'explore': ['conventions', 'boundaries', 'patterns'],
-        'design': ['key_decisions', 'dependencies', 'patterns'],
-        'implement': ['conventions', 'patterns', 'pitfalls'],
-        'review': ['conventions', 'pitfalls'],
-        'git': ['conventions'],
+        "intake": ["purpose", "boundaries"],
+        "explore": ["conventions", "boundaries", "patterns"],
+        "design": ["key_decisions", "dependencies", "patterns"],
+        "implement": ["conventions", "patterns", "pitfalls"],
+        "review": ["conventions", "pitfalls"],
+        "git": ["conventions"],
     }
 
     # Combine agent and phase priorities
@@ -317,7 +328,7 @@ def get_agent_context(
         if content:
             parts.append(f"## {section.title()}\n{content}")
 
-    return '\n\n'.join(parts)
+    return "\n\n".join(parts)
 
 
 def show_context_tree(working_dir: Path) -> str:
@@ -335,11 +346,11 @@ def show_context_tree(working_dir: Path) -> str:
             section_indent = "  " * (i + 1)
             lines.append(f"{section_indent}    • {section}")
 
-    return '\n'.join(lines)
+    return "\n".join(lines)
 
 
 # CLI interface
-if __name__ == '__main__':
+if __name__ == "__main__":
     import sys
 
     if len(sys.argv) < 2:
@@ -351,21 +362,21 @@ if __name__ == '__main__':
         sys.exit(1)
 
     command = sys.argv[1]
-    work_dir = Path(sys.argv[2] if len(sys.argv) > 2 else '.').resolve()
+    work_dir = Path(sys.argv[2] if len(sys.argv) > 2 else ".").resolve()
 
-    if command == 'resolve':
+    if command == "resolve":
         ctx = resolve_context(work_dir)
         print(ctx.to_markdown())
 
-    elif command == 'tree':
+    elif command == "tree":
         print(show_context_tree(work_dir))
 
-    elif command == 'agent':
+    elif command == "agent":
         if len(sys.argv) < 3:
             print("Usage: resolver.py agent <type> [dir]")
             sys.exit(1)
         agent_type = sys.argv[2]
-        work_dir = Path(sys.argv[3] if len(sys.argv) > 3 else '.').resolve()
+        work_dir = Path(sys.argv[3] if len(sys.argv) > 3 else ".").resolve()
         print(get_agent_context(agent_type, work_dir))
 
     else:

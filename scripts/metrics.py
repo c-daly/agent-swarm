@@ -23,16 +23,17 @@ SUBAGENT_METRICS = STATE_DIR / "subagent_metrics.json"
 
 # Token cost estimates per tool type
 TOKEN_ESTIMATES = {
-    "Bash": 500,      # Small commands
-    "Read": 2000,     # Average file size
-    "Edit": 1500,     # Editing context
-    "Write": 1000,    # Writing new files
-    "Task": 5000,     # Subagent overhead
-    "Grep": 1000,     # Search results
-    "Glob": 500,      # File listings
+    "Bash": 500,  # Small commands
+    "Read": 2000,  # Average file size
+    "Edit": 1500,  # Editing context
+    "Write": 1000,  # Writing new files
+    "Task": 5000,  # Subagent overhead
+    "Grep": 1000,  # Search results
+    "Glob": 500,  # File listings
     "WebSearch": 3000,  # Search results
-    "WebFetch": 2500,   # Fetched content
+    "WebFetch": 2500,  # Fetched content
 }
+
 
 def load_metrics():
     """Load current metrics."""
@@ -46,14 +47,16 @@ def load_metrics():
             "agents": {},
             "tool_calls": [],
             "cache_stats": {"hits": 0, "misses": 0},
-            "quality_scores": []
-        }
+            "quality_scores": [],
+        },
     }
+
 
 def save_metrics(metrics):
     """Save metrics to file."""
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     METRICS_FILE.write_text(json.dumps(metrics, indent=2))
+
 
 def analyze_activity_log():
     """Extract metrics from activity log."""
@@ -68,7 +71,7 @@ def analyze_activity_log():
         "blocks_by_reason": defaultdict(int),
         "duplicate_reads": 0,
         "files_read": [],
-        "search_patterns": []
+        "search_patterns": [],
     }
 
     seen_reads = set()
@@ -80,7 +83,7 @@ def analyze_activity_log():
         "serena_batch.py",
         "gh_wrapper.py",
         "inventory.py",
-        "context7_docs.py"
+        "context7_docs.py",
     ]
 
     for line in lines:
@@ -94,7 +97,9 @@ def analyze_activity_log():
             if script in line:
                 metrics["script_calls"] = metrics.get("script_calls", 0) + 1
                 metrics["scripts_used"] = metrics.get("scripts_used", {})
-                metrics["scripts_used"][script] = metrics["scripts_used"].get(script, 0) + 1
+                metrics["scripts_used"][script] = (
+                    metrics["scripts_used"].get(script, 0) + 1
+                )
 
         # Track tool usage
         if "TOOL:" in line or "ALLOWED:" in line:
@@ -119,7 +124,7 @@ def analyze_activity_log():
         # Track duplicate reads
         if "Read" in line and "file_path" in line:
             try:
-                file = line.split("file_path")[1].split("}")[0].strip('":\' ')
+                file = line.split("file_path")[1].split("}")[0].strip("\":' ")
                 if file in seen_reads:
                     metrics["duplicate_reads"] += 1
                 seen_reads.add(file)
@@ -131,9 +136,12 @@ def analyze_activity_log():
     metrics["total_reads"] = len(metrics["files_read"])
 
     if metrics["total_reads"] > 0:
-        metrics["duplicate_rate"] = metrics["duplicate_reads"] / metrics["total_reads"] * 100
+        metrics["duplicate_rate"] = (
+            metrics["duplicate_reads"] / metrics["total_reads"] * 100
+        )
 
     return metrics
+
 
 def calculate_efficiency_score(metrics):
     """Calculate overall efficiency score (0-100)."""
@@ -160,6 +168,7 @@ def calculate_efficiency_score(metrics):
         score += min(batch_ratio * 0.2, 10)  # Max 10 point bonus
 
     return max(0, min(100, score))
+
 
 def calculate_token_estimate(log_metrics):
     """Estimate tokens used based on tool calls."""
@@ -200,6 +209,7 @@ def calculate_token_estimate(log_metrics):
 
     return total_tokens, token_by_tool, cost
 
+
 def show_report():
     """Show comprehensive metrics report."""
     print("=" * 60)
@@ -214,18 +224,20 @@ def show_report():
 
     # Token usage
     total_tokens, token_by_tool, cost = calculate_token_estimate(log_metrics)
-    print(f"\n💰 Token Usage (estimated):")
+    print("\n💰 Token Usage (estimated):")
     print(f"   Total: {total_tokens:,} tokens (${cost:.2f})")
-    print(f"   Top consumers:")
+    print("   Top consumers:")
     for tool, tokens in sorted(token_by_tool.items(), key=lambda x: -x[1])[:5]:
         if tokens > 0:
             pct = tokens / total_tokens * 100
             print(f"     {tool:15} {tokens:>10,} tokens ({pct:5.1f}%)")
 
     # Tool usage breakdown
-    print(f"\n🔧 Tool Usage:")
+    print("\n🔧 Tool Usage:")
     total_tools = sum(log_metrics["tools_by_type"].values())
-    for tool, count in sorted(log_metrics["tools_by_type"].items(), key=lambda x: -x[1]):
+    for tool, count in sorted(
+        log_metrics["tools_by_type"].items(), key=lambda x: -x[1]
+    ):
         pct = count / total_tools * 100 if total_tools > 0 else 0
         print(f"   {tool:15} {count:4} ({pct:5.1f}%)")
 
@@ -234,43 +246,53 @@ def show_report():
     direct_reads = log_metrics["tools_by_type"].get("Read", 0)
     total_data_ops = script_calls + direct_reads
 
-    print(f"\n📜 Script Usage:")
+    print("\n📜 Script Usage:")
     print(f"   Script calls: {script_calls}")
     print(f"   Direct reads: {direct_reads}")
     if total_data_ops > 0:
         adoption = script_calls / total_data_ops * 100
-        print(f"   Adoption rate: {adoption:.1f}% {'✅' if adoption >= 60 else '⚠️' if adoption >= 30 else '❌'}")
-        print(f"   Target: 60%+")
+        print(
+            f"   Adoption rate: {adoption:.1f}% {'✅' if adoption >= 60 else '⚠️' if adoption >= 30 else '❌'}"
+        )
+        print("   Target: 60%+")
 
     if log_metrics.get("scripts_used"):
-        print(f"\n   Scripts used:")
-        for script, count in sorted(log_metrics["scripts_used"].items(), key=lambda x: -x[1]):
+        print("\n   Scripts used:")
+        for script, count in sorted(
+            log_metrics["scripts_used"].items(), key=lambda x: -x[1]
+        ):
             print(f"      {script}: {count}")
 
     # Efficiency metrics
-    print(f"\n⚡ Efficiency Metrics:")
+    print("\n⚡ Efficiency Metrics:")
     print(f"   Files read: {log_metrics['total_reads']}")
     print(f"   Unique files: {log_metrics['unique_files']}")
-    print(f"   Duplicate reads: {log_metrics['duplicate_reads']} ({log_metrics.get('duplicate_rate', 0):.1f}%)")
+    print(
+        f"   Duplicate reads: {log_metrics['duplicate_reads']} ({log_metrics.get('duplicate_rate', 0):.1f}%)"
+    )
 
     # Block analysis
-    print(f"\n🚫 Blocks:")
+    print("\n🚫 Blocks:")
     total_blocks = sum(log_metrics["blocks_by_reason"].values())
     if total_blocks > 0:
-        for reason, count in sorted(log_metrics["blocks_by_reason"].items(), key=lambda x: -x[1]):
+        for reason, count in sorted(
+            log_metrics["blocks_by_reason"].items(), key=lambda x: -x[1]
+        ):
             pct = count / total_blocks * 100
             print(f"   {reason:25} {count:3} ({pct:.1f}%)")
     else:
         print("   None")
 
     # Recommendations
-    print(f"\n💡 Recommendations:")
+    print("\n💡 Recommendations:")
 
     # Script adoption recommendations
     if total_data_ops > 0:
         adoption = script_calls / total_data_ops * 100
         if adoption < 30 and direct_reads > 5:
-            print("   🔴 CRITICAL: Low script adoption - agents dumping data into context")
+            print(
+                "   🔴 CRITICAL: Low script adoption - agents dumping data into context"
+            )
             print("      Fix: Update subagent-briefing.md with correct script paths")
         elif adoption < 60 and direct_reads > 10:
             print("   ⚠️  Script adoption below target - review agent briefings")
@@ -296,6 +318,7 @@ def show_report():
     else:
         print("   ❌ Low efficiency - significant optimization needed")
 
+
 def save_baseline():
     """Save current metrics as baseline for comparison."""
     log_metrics = analyze_activity_log()
@@ -303,11 +326,12 @@ def save_baseline():
     baseline = {
         "timestamp": datetime.now().isoformat(),
         "metrics": log_metrics,
-        "efficiency_score": calculate_efficiency_score(log_metrics)
+        "efficiency_score": calculate_efficiency_score(log_metrics),
     }
 
     BASELINE_FILE.write_text(json.dumps(baseline, indent=2))
     print(f"✅ Baseline saved: {baseline['efficiency_score']:.1f}/100 efficiency")
+
 
 def compare_to_baseline():
     """Compare current metrics to baseline."""
@@ -325,7 +349,7 @@ def compare_to_baseline():
     baseline_score = baseline["efficiency_score"]
     current_score = calculate_efficiency_score(current)
 
-    print(f"\n📊 Efficiency Score:")
+    print("\n📊 Efficiency Score:")
     print(f"   Baseline: {baseline_score:.1f}")
     print(f"   Current:  {current_score:.1f}")
 
@@ -338,13 +362,13 @@ def compare_to_baseline():
         print(f"   Change:   {diff:.1f} → Same")
 
     # Compare key metrics
-    print(f"\n📈 Key Metrics:")
+    print("\n📈 Key Metrics:")
 
     metrics_compare = [
         ("Total reads", "total_reads"),
         ("Unique files", "unique_files"),
         ("Duplicate rate", "duplicate_rate"),
-        ("Total blocks", lambda m: sum(m.get("blocks_by_reason", {}).values()))
+        ("Total blocks", lambda m: sum(m.get("blocks_by_reason", {}).values())),
     ]
 
     for label, key in metrics_compare:
@@ -359,12 +383,14 @@ def compare_to_baseline():
         symbol = "✅" if diff <= 0 else "⚠️"
 
         if isinstance(curr_val, float):
-            print(f"   {label:20} {base_val:6.1f} → {curr_val:6.1f} ({diff:+.1f}) {symbol}")
+            print(
+                f"   {label:20} {base_val:6.1f} → {curr_val:6.1f} ({diff:+.1f}) {symbol}"
+            )
         else:
             print(f"   {label:20} {base_val:6} → {curr_val:6} ({diff:+}) {symbol}")
 
     # Tool usage changes
-    print(f"\n🔧 Tool Usage Changes:")
+    print("\n🔧 Tool Usage Changes:")
     base_tools = baseline["metrics"].get("tools_by_type", {})
     curr_tools = current.get("tools_by_type", {})
 
@@ -377,6 +403,7 @@ def compare_to_baseline():
             symbol = "📈" if diff > 0 else "📉"
             print(f"   {tool:15} {base:4} → {curr:4} ({diff:+3}) {symbol}")
 
+
 def record_agent_metrics(agent_type, tokens_used, output_size, task_description):
     """Record metrics for a specific agent execution."""
     metrics = load_metrics()
@@ -386,7 +413,7 @@ def record_agent_metrics(agent_type, tokens_used, output_size, task_description)
         "type": agent_type,
         "tokens": tokens_used,
         "output_size": output_size,
-        "task": task_description[:100]
+        "task": task_description[:100],
     }
 
     if agent_type not in metrics["current_session"]["agents"]:
@@ -396,6 +423,7 @@ def record_agent_metrics(agent_type, tokens_used, output_size, task_description)
     save_metrics(metrics)
 
     print(f"✅ Recorded: {agent_type} used {tokens_used} tokens")
+
 
 def main():
     if len(sys.argv) < 2:
@@ -418,6 +446,7 @@ def main():
     else:
         print(f"Unknown command: {cmd}")
         print("Usage: metrics.py report|baseline|compare|record")
+
 
 if __name__ == "__main__":
     main()

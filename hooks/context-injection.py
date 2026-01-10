@@ -11,10 +11,8 @@ Usage:
 """
 
 import sys
-import os
 import json
 from pathlib import Path
-from datetime import datetime
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -44,17 +42,17 @@ def inject_context(agent_type: str, working_dir: str, phase: str = None) -> dict
     full_context = resolve_context(work_path)
 
     return {
-        'context_markdown': context_md,
-        'context_layers': [
+        "context_markdown": context_md,
+        "context_layers": [
             {
-                'level': layer.level,
-                'path': str(layer.path),
+                "level": layer.level,
+                "path": str(layer.path),
             }
             for layer in full_context.layers
         ],
-        'agent_type': agent_type,
-        'phase': phase,
-        'working_dir': working_dir,
+        "agent_type": agent_type,
+        "phase": phase,
+        "working_dir": working_dir,
     }
 
 
@@ -65,22 +63,22 @@ def format_context_block(context_data: dict) -> str:
         "<context>",
     ]
 
-    if context_data.get('context_markdown'):
-        lines.append(context_data['context_markdown'])
+    if context_data.get("context_markdown"):
+        lines.append(context_data["context_markdown"])
     else:
         lines.append("*No context files found in hierarchy*")
 
     # Add layer info as comment
-    if context_data.get('context_layers'):
+    if context_data.get("context_layers"):
         lines.append("")
         lines.append("<!-- Context loaded from:")
-        for layer in context_data['context_layers']:
+        for layer in context_data["context_layers"]:
             lines.append(f"  - [{layer['level']}] {layer['path']}")
         lines.append("-->")
 
     lines.append("</context>")
 
-    return '\n'.join(lines)
+    return "\n".join(lines)
 
 
 def on_agent_start(agent_type: str, working_dir: str, phase: str = None) -> str:
@@ -139,17 +137,17 @@ def run_distillation(working_dir: str) -> dict:
     memory = trigger_distillation(work_path)
 
     return {
-        'patterns_count': len(memory.patterns),
-        'categories': {
+        "patterns_count": len(memory.patterns),
+        "categories": {
             cat: len(memory.get_by_category(cat))
-            for cat in ['pattern', 'pitfall', 'preference', 'approach']
+            for cat in ["pattern", "pitfall", "preference", "approach"]
         },
-        'last_distilled': memory.last_distilled,
+        "last_distilled": memory.last_distilled,
     }
 
 
 # CLI interface for testing
-if __name__ == '__main__':
+if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: context-injection.py <command> [args]")
         print("Commands:")
@@ -161,15 +159,15 @@ if __name__ == '__main__':
 
     command = sys.argv[1]
 
-    if command == 'inject':
-        agent_type = sys.argv[2] if len(sys.argv) > 2 else 'explorer'
-        working_dir = sys.argv[3] if len(sys.argv) > 3 else '.'
+    if command == "inject":
+        agent_type = sys.argv[2] if len(sys.argv) > 2 else "explorer"
+        working_dir = sys.argv[3] if len(sys.argv) > 3 else "."
         phase = sys.argv[4] if len(sys.argv) > 4 else None
 
         context_block = on_agent_start(agent_type, working_dir, phase)
         print(context_block)
 
-    elif command == 'complete':
+    elif command == "complete":
         if len(sys.argv) < 5:
             print("Usage: context-injection.py complete <agent> <task> <outcome>")
             sys.exit(1)
@@ -180,19 +178,19 @@ if __name__ == '__main__':
 
         episode_id = on_agent_complete(
             agent_type=agent_type,
-            working_dir='.',
+            working_dir=".",
             task=task,
             outcome=outcome,
         )
         print(f"Logged episode: {episode_id}")
 
-    elif command == 'check-distill':
-        working_dir = sys.argv[2] if len(sys.argv) > 2 else '.'
+    elif command == "check-distill":
+        working_dir = sys.argv[2] if len(sys.argv) > 2 else "."
         needed = check_distillation_needed(working_dir)
         print(f"Distillation needed: {needed}")
 
-    elif command == 'distill':
-        working_dir = sys.argv[2] if len(sys.argv) > 2 else '.'
+    elif command == "distill":
+        working_dir = sys.argv[2] if len(sys.argv) > 2 else "."
         result = run_distillation(working_dir)
         print(json.dumps(result, indent=2))
 

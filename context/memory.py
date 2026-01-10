@@ -18,6 +18,7 @@ import hashlib
 @dataclass
 class Pattern:
     """A learned pattern or observation."""
+
     content: str
     category: str  # 'pattern', 'pitfall', 'preference', 'approach'
     confidence: float  # 0.0 to 1.0
@@ -57,6 +58,7 @@ class Pattern:
 @dataclass
 class Episode:
     """A single session record awaiting distillation."""
+
     id: str
     timestamp: str
     scope_path: str
@@ -74,11 +76,13 @@ class Episode:
         for learning in self.learnings:
             # Classify the learning
             category = self._classify_learning(learning)
-            patterns.append({
-                'content': learning,
-                'category': category,
-                'source_episode': self.id,
-            })
+            patterns.append(
+                {
+                    "content": learning,
+                    "category": category,
+                    "source_episode": self.id,
+                }
+            )
 
         return patterns
 
@@ -86,26 +90,36 @@ class Episode:
         """Classify a learning into a category."""
         learning_lower = learning.lower()
 
-        if any(w in learning_lower for w in ['error', 'fail', 'broke', 'wrong', 'avoid']):
-            return 'pitfall'
-        elif any(w in learning_lower for w in ['prefer', 'like', 'want', 'should']):
-            return 'preference'
-        elif any(w in learning_lower for w in ['works', 'effective', 'success', 'helped']):
-            return 'approach'
+        if any(
+            w in learning_lower for w in ["error", "fail", "broke", "wrong", "avoid"]
+        ):
+            return "pitfall"
+        elif any(w in learning_lower for w in ["prefer", "like", "want", "should"]):
+            return "preference"
+        elif any(
+            w in learning_lower for w in ["works", "effective", "success", "helped"]
+        ):
+            return "approach"
         else:
-            return 'pattern'
+            return "pattern"
 
 
 @dataclass
 class Memory:
     """Semantic memory store for a scope."""
+
     scope_path: str
     patterns: dict[str, Pattern] = field(default_factory=dict)  # id -> Pattern
     last_distilled: Optional[str] = None
     version: int = 1
 
-    def add_pattern(self, content: str, category: str, confidence: float = 0.3,
-                    episode_id: Optional[str] = None) -> Pattern:
+    def add_pattern(
+        self,
+        content: str,
+        category: str,
+        confidence: float = 0.3,
+        episode_id: Optional[str] = None,
+    ) -> Pattern:
         """Add a new pattern or reinforce existing."""
         # Check for similar existing pattern
         existing = self._find_similar(content)
@@ -152,7 +166,8 @@ class Memory:
     def prune(self, min_confidence: float = 0.2):
         """Remove patterns below confidence threshold."""
         to_remove = [
-            pid for pid, pattern in self.patterns.items()
+            pid
+            for pid, pattern in self.patterns.items()
             if pattern.confidence < min_confidence
         ]
         for pid in to_remove:
@@ -168,10 +183,10 @@ class Memory:
         lines = [f"# Memory: {self.scope_path}", ""]
 
         categories = {
-            'pattern': 'Patterns Observed',
-            'pitfall': 'Pitfalls Discovered',
-            'preference': 'Preferences Inferred',
-            'approach': 'Effective Approaches',
+            "pattern": "Patterns Observed",
+            "pitfall": "Pitfalls Discovered",
+            "preference": "Preferences Inferred",
+            "approach": "Effective Approaches",
         }
 
         for cat_key, cat_name in categories.items():
@@ -179,34 +194,40 @@ class Memory:
             if patterns:
                 lines.append(f"## {cat_name}")
                 for p in patterns:
-                    conf_label = 'high' if p.confidence > 0.7 else 'medium' if p.confidence > 0.4 else 'low'
+                    conf_label = (
+                        "high"
+                        if p.confidence > 0.7
+                        else "medium" if p.confidence > 0.4 else "low"
+                    )
                     lines.append(f"- {p.content}")
-                    lines.append(f"  Confidence: {conf_label} | Last reinforced: {p.last_reinforced[:10]}")
+                    lines.append(
+                        f"  Confidence: {conf_label} | Last reinforced: {p.last_reinforced[:10]}"
+                    )
                 lines.append("")
 
         if self.last_distilled:
-            lines.append(f"---")
+            lines.append("---")
             lines.append(f"*Last distilled: {self.last_distilled[:10]}*")
 
-        return '\n'.join(lines)
+        return "\n".join(lines)
 
     def to_dict(self) -> dict:
         """Export as dictionary for JSON serialization."""
         return {
-            'scope_path': self.scope_path,
-            'patterns': {pid: asdict(p) for pid, p in self.patterns.items()},
-            'last_distilled': self.last_distilled,
-            'version': self.version,
+            "scope_path": self.scope_path,
+            "patterns": {pid: asdict(p) for pid, p in self.patterns.items()},
+            "last_distilled": self.last_distilled,
+            "version": self.version,
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> 'Memory':
+    def from_dict(cls, data: dict) -> "Memory":
         """Load from dictionary."""
-        memory = cls(scope_path=data['scope_path'])
-        memory.last_distilled = data.get('last_distilled')
-        memory.version = data.get('version', 1)
+        memory = cls(scope_path=data["scope_path"])
+        memory.last_distilled = data.get("last_distilled")
+        memory.version = data.get("version", 1)
 
-        for pid, pdata in data.get('patterns', {}).items():
+        for pid, pdata in data.get("patterns", {}).items():
             memory.patterns[pid] = Pattern(**pdata)
 
         return memory
@@ -222,9 +243,9 @@ class EpisodeStore:
     def _find_or_create_episodes_file(self) -> Path:
         """Find or create the episodes file."""
         candidates = [
-            self.scope_path / '.context' / 'EPISODES.md',
-            self.scope_path / '.claude' / 'EPISODES.md',
-            self.scope_path / 'EPISODES.md',
+            self.scope_path / ".context" / "EPISODES.md",
+            self.scope_path / ".claude" / "EPISODES.md",
+            self.scope_path / "EPISODES.md",
         ]
 
         for candidate in candidates:
@@ -232,9 +253,9 @@ class EpisodeStore:
                 return candidate
 
         # Create in .context directory
-        episodes_dir = self.scope_path / '.context'
+        episodes_dir = self.scope_path / ".context"
         episodes_dir.mkdir(exist_ok=True)
-        episodes_file = episodes_dir / 'EPISODES.md'
+        episodes_file = episodes_dir / "EPISODES.md"
         episodes_file.write_text(f"# Episodes: {self.scope_path.name}\n\n")
         return episodes_file
 
@@ -267,7 +288,7 @@ class EpisodeStore:
             for learning in episode.learnings:
                 lines.append(f"  - {learning}")
 
-        return '\n'.join(lines)
+        return "\n".join(lines)
 
     def get_episodes(self, since: Optional[datetime] = None) -> list[Episode]:
         """Parse episodes from the store."""
@@ -275,7 +296,7 @@ class EpisodeStore:
         episodes = []
 
         # Parse markdown episodes
-        session_pattern = r'## Session: (.+?)(?=\n## Session:|\Z)'
+        session_pattern = r"## Session: (.+?)(?=\n## Session:|\Z)"
         for match in re.finditer(session_pattern, content, re.DOTALL):
             session_content = match.group(0)
             episode = self._parse_episode(session_content)
@@ -287,12 +308,12 @@ class EpisodeStore:
 
     def _parse_episode(self, content: str) -> Optional[Episode]:
         """Parse a single episode from markdown."""
-        lines = content.strip().split('\n')
+        lines = content.strip().split("\n")
         if not lines:
             return None
 
         # Extract timestamp from header
-        header_match = re.match(r'## Session: (.+)', lines[0])
+        header_match = re.match(r"## Session: (.+)", lines[0])
         if not header_match:
             return None
 
@@ -308,25 +329,25 @@ class EpisodeStore:
 
         in_learnings = False
         for line in lines[1:]:
-            if line.startswith('- **Task**:'):
-                task = line.split(':', 1)[1].strip()
+            if line.startswith("- **Task**:"):
+                task = line.split(":", 1)[1].strip()
                 in_learnings = False
-            elif line.startswith('- **Outcome**:'):
-                outcome = line.split(':', 1)[1].strip()
+            elif line.startswith("- **Outcome**:"):
+                outcome = line.split(":", 1)[1].strip()
                 in_learnings = False
-            elif line.startswith('- **Agent**:'):
-                agent_type = line.split(':', 1)[1].strip()
+            elif line.startswith("- **Agent**:"):
+                agent_type = line.split(":", 1)[1].strip()
                 in_learnings = False
-            elif line.startswith('- **Phase**:'):
-                phase = line.split(':', 1)[1].strip()
+            elif line.startswith("- **Phase**:"):
+                phase = line.split(":", 1)[1].strip()
                 in_learnings = False
-            elif line.startswith('- **Duration**:'):
-                duration_str = line.split(':', 1)[1].strip()
-                duration = int(re.search(r'\d+', duration_str).group())
+            elif line.startswith("- **Duration**:"):
+                duration_str = line.split(":", 1)[1].strip()
+                duration = int(re.search(r"\d+", duration_str).group())
                 in_learnings = False
-            elif line.startswith('- **Learnings**:'):
+            elif line.startswith("- **Learnings**:"):
                 in_learnings = True
-            elif in_learnings and line.strip().startswith('- '):
+            elif in_learnings and line.strip().startswith("- "):
                 learnings.append(line.strip()[2:])
 
         return Episode(
@@ -368,7 +389,7 @@ class Distiller:
         memory_file = self._find_memory_file()
         if memory_file and memory_file.exists():
             # Try to load JSON sidecar first
-            json_sidecar = memory_file.with_suffix('.json')
+            json_sidecar = memory_file.with_suffix(".json")
             if json_sidecar.exists():
                 data = json.loads(json_sidecar.read_text())
                 return Memory.from_dict(data)
@@ -378,17 +399,19 @@ class Distiller:
     def _find_memory_file(self) -> Optional[Path]:
         """Find the memory file location."""
         candidates = [
-            self.scope_path / '.context' / 'MEMORY.md',
-            self.scope_path / '.claude' / 'MEMORY.md',
-            self.scope_path / 'MEMORY.md',
+            self.scope_path / ".context" / "MEMORY.md",
+            self.scope_path / ".claude" / "MEMORY.md",
+            self.scope_path / "MEMORY.md",
         ]
         for candidate in candidates:
             if candidate.exists():
                 return candidate
         # Default location
-        return self.scope_path / '.context' / 'MEMORY.md'
+        return self.scope_path / ".context" / "MEMORY.md"
 
-    def distill(self, since: Optional[datetime] = None, clear_episodes: bool = True) -> Memory:
+    def distill(
+        self, since: Optional[datetime] = None, clear_episodes: bool = True
+    ) -> Memory:
         """
         Distill episodes into memory.
 
@@ -405,9 +428,9 @@ class Distiller:
             patterns = episode.extract_patterns()
             for pattern_data in patterns:
                 self.memory.add_pattern(
-                    content=pattern_data['content'],
-                    category=pattern_data['category'],
-                    episode_id=pattern_data['source_episode'],
+                    content=pattern_data["content"],
+                    category=pattern_data["category"],
+                    episode_id=pattern_data["source_episode"],
                 )
 
         # Apply decay and prune
@@ -423,7 +446,9 @@ class Distiller:
         # Optionally clear processed episodes
         if clear_episodes and episodes:
             oldest_episode = min(episodes, key=lambda e: e.timestamp)
-            cutoff = datetime.fromisoformat(oldest_episode.timestamp) - timedelta(days=1)
+            cutoff = datetime.fromisoformat(oldest_episode.timestamp) - timedelta(
+                days=1
+            )
             self.episode_store.clear_episodes(before=cutoff)
 
         return self.memory
@@ -439,7 +464,7 @@ class Distiller:
         memory_file.write_text(self.memory.to_markdown())
 
         # Save JSON sidecar for reliable parsing
-        json_sidecar = memory_file.with_suffix('.json')
+        json_sidecar = memory_file.with_suffix(".json")
         json_sidecar.write_text(json.dumps(self.memory.to_dict(), indent=2))
 
 
@@ -478,7 +503,7 @@ def trigger_distillation(scope_path: Path, force: bool = False) -> Memory:
 
 
 # CLI interface
-if __name__ == '__main__':
+if __name__ == "__main__":
     import sys
 
     if len(sys.argv) < 2:
@@ -491,18 +516,18 @@ if __name__ == '__main__':
         sys.exit(1)
 
     command = sys.argv[1]
-    work_dir = Path(sys.argv[2] if len(sys.argv) > 2 else '.').resolve()
+    work_dir = Path(sys.argv[2] if len(sys.argv) > 2 else ".").resolve()
 
-    if command == 'distill':
+    if command == "distill":
         memory = trigger_distillation(work_dir)
         print(f"Distilled {len(memory.patterns)} patterns")
         print(memory.to_markdown())
 
-    elif command == 'show':
+    elif command == "show":
         distiller = Distiller(work_dir)
         print(distiller.memory.to_markdown())
 
-    elif command == 'episodes':
+    elif command == "episodes":
         store = EpisodeStore(work_dir)
         episodes = store.get_episodes()
         print(f"Pending episodes: {len(episodes)}")
@@ -511,7 +536,7 @@ if __name__ == '__main__':
             for learning in ep.learnings:
                 print(f"  - {learning}")
 
-    elif command == 'log':
+    elif command == "log":
         if len(sys.argv) < 4:
             print("Usage: memory.py log <task> <outcome>")
             print("Learnings: provide via stdin, one per line")
