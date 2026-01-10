@@ -51,7 +51,7 @@ def save_snapshot(metrics_data):
     if len(history["snapshots"]) > 100:
         history["snapshots"] = history["snapshots"][-100:]
 
-    HISTORY_FILE.write_text(json.dumps(history, indent=2))
+    HISTORY_FILE.write_text(json.dumps(history, indent=2), encoding='utf-8')
     print(f"✅ Snapshot saved ({len(history['snapshots'])} total)")
 
 def generate_html_chart(title, chart_type, data, labels, output_file, options=None):
@@ -174,7 +174,7 @@ def generate_html_chart(title, chart_type, data, labels, output_file, options=No
 </html>"""
 
     output_path = CHARTS_DIR / output_file
-    output_path.write_text(html)
+    output_path.write_text(html, encoding='utf-8')
     return output_path
 
 def chart_efficiency_trend():
@@ -346,7 +346,7 @@ def chart_efficiency_trend():
 </html>"""
 
     output_path = CHARTS_DIR / "efficiency_trend.html"
-    output_path.write_text(html)
+    output_path.write_text(html, encoding='utf-8')
     
     print(f"✅ Chart generated: {output_path}")
     return output_path
@@ -539,7 +539,7 @@ def chart_script_adoption():
 </html>"""
 
     output_path = CHARTS_DIR / "script_adoption.html"
-    output_path.write_text(html)
+    output_path.write_text(html, encoding='utf-8')
     
     print(f"✅ Chart generated: {output_path}")
     return output_path
@@ -788,7 +788,7 @@ def chart_tool_usage():
 </html>"""
 
     output_path = CHARTS_DIR / "tool_usage.html"
-    output_path.write_text(html)
+    output_path.write_text(html, encoding='utf-8')
 
     print(f"✅ Chart generated: {output_path}")
     return output_path
@@ -1082,7 +1082,7 @@ def chart_token_impact():
 </html>"""
 
     output_path = CHARTS_DIR / "token_impact.html"
-    output_path.write_text(html)
+    output_path.write_text(html, encoding='utf-8')
     
     print(f"✅ Chart generated: {output_path}")
     return output_path
@@ -1391,7 +1391,7 @@ def chart_token_trend():
 </html>"""
 
     output_path = CHARTS_DIR / "token_trend.html"
-    output_path.write_text(html)
+    output_path.write_text(html, encoding='utf-8')
     
     print(f"✅ Chart generated: {output_path}")
     return output_path
@@ -1544,7 +1544,7 @@ python3 ~/.claude/plugins/agent-swarm/scripts/charts.py tool-usage
 </html>"""
 
     dashboard_path = CHARTS_DIR / "dashboard.html"
-    dashboard_path.write_text(html)
+    dashboard_path.write_text(html, encoding='utf-8')
 
     print(f"\n✅ Dashboard generated: {dashboard_path}")
     print(f"\n🌐 Open in browser:")
