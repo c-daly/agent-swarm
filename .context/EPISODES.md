@@ -1,6 +1,23 @@
-# Episodes:
+# Episodes
 
-## Session: 2026-01-10T12:27:47.018138
+## Session: 2026-01-10 (Part 2) - Verify Skill
+- **Task**: Resume from handoff - add /verify skill and enforcement
+- **Outcome**: success
+- **Actions**:
+  - Created /verify skill (skills/verify/SKILL.md)
+  - Implemented scripts/verify.py - runs ruff, black, mypy, pytest
+  - Added check_verify_required() to combined-enforcement.py
+  - Added reset_verify_on_edit() - resets verify_passed on file edits
+  - Created mypy.ini to exclude examples/
+  - Auto-formatted codebase with black (26 files)
+  - Pushed to branch claude/context-system-setup-du5fY
+- **Learnings**:
+  - Commit messages via file (git commit -F) to avoid heredoc blocking
+  - Verify enforcement requires verify_required: true in workflow.json
+
+---
+
+## Session: 2026-01-10 (Part 1) - Context System
 - **Task**: Context system implementation
 - **Outcome**: success
 - **Agent**: orchestrator
