@@ -14,7 +14,6 @@ from datetime import datetime
 STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
 SUBAGENT_METRICS = STATE_DIR / "subagent_metrics.json"
 
-
 def load_metrics():
     """Load existing subagent metrics."""
     if SUBAGENT_METRICS.exists():
@@ -26,20 +25,25 @@ def load_metrics():
     # Initialize structure
     return {}
 
-
 def save_metrics(metrics):
     """Save subagent metrics."""
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     SUBAGENT_METRICS.write_text(json.dumps(metrics, indent=2))
 
-
 def extract_agent_info(tool_output):
     """Extract agent ID and type from Task tool output."""
-    # Look for agent ID in output (format: "Agent <id>: ...")
-    # Or task ID from system messages
+    # Look for agent ID in output
+    # Formats:
+    #   - "agentId: abc1234" (async agents)
+    #   - "Agent abc1234: ..." (older format)
+    #   - "task_id: abc1234" (task output format)
 
-    # Try to find agent ID
-    agent_id_match = re.search(r"Agent ([a-f0-9]{7,})", tool_output)
+    # Try agentId: format first (most common)
+    agent_id_match = re.search(r'agentId:\s*([a-f0-9]{7,})', tool_output, re.IGNORECASE)
+    
+    # Fall back to other formats
+    if not agent_id_match:
+        agent_id_match = re.search(r'Agent\s+([a-f0-9]{7,})', tool_output)
     if not agent_id_match:
         agent_id_match = re.search(r'task_id["\s:]+([a-f0-9-]+)', tool_output)
 
@@ -48,34 +52,67 @@ def extract_agent_info(tool_output):
 
     agent_id = agent_id_match.group(1)
 
-    # Try to find agent type
-    type_match = re.search(
-        r'subagent[_\s]type["\s:]+([a-zA-Z0-9_-]+)', tool_output, re.IGNORECASE
-    )
+    # Try to find agent type (not in output, will be set from tool_input)
+    type_match = re.search(r'subagent[_\s]type["\s:]+([a-zA-Z0-9_:-]+)', tool_output, re.IGNORECASE)
     agent_type = type_match.group(1) if type_match else "unknown"
 
     return agent_id, agent_type
 
-
-def track_subagent(agent_id, agent_type):
+def track_subagent(agent_id, agent_type, prompt=""):
     """Track a completed subagent."""
     metrics = load_metrics()
 
-    # Create entry for this agent
+    # Create/update entry for this agent with correct schema
     if agent_id not in metrics:
         metrics[agent_id] = {
+            "spawned_at": datetime.now().isoformat(),
             "agent_type": agent_type,
-            "first_seen": datetime.now().isoformat(),
-            "last_updated": datetime.now().isoformat(),
-            "completions": 0,
+            "status": "completed",
+            "prompt": prompt[:100] if prompt else "No description"
         }
-
-    # Update
-    metrics[agent_id]["last_updated"] = datetime.now().isoformat()
-    metrics[agent_id]["completions"] += 1
+    else:
+        # Update existing entry
+        metrics[agent_id]["status"] = "completed"
+        metrics[agent_id]["last_updated"] = datetime.now().isoformat()
 
     save_metrics(metrics)
 
+def check_new_plugins():
+    """Check for and auto-document new plugins (every 10 tool uses)."""
+    import subprocess
+    from pathlib import Path
+
+    # Track check count
+    state_file = Path.home() / ".claude/plugins/agent-swarm/.state/plugin_check_count.txt"
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        count = int(state_file.read_text()) if state_file.exists() else 0
+    except:
+        count = 0
+
+    count += 1
+
+    # Check every 10 tools
+    if count % 10 == 0:
+        try:
+            doc_script = Path(__file__).parent.parent / "scripts/document_plugins.py"
+            result = subprocess.run(
+                ["python3", str(doc_script)],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+
+            # If new plugins were documented, return message
+            if "new plugin" in result.stdout.lower():
+                state_file.write_text("0")  # Reset counter
+                return result.stdout
+        except:
+            pass
+
+    state_file.write_text(str(count))
+    return None
 
 def main():
     """Post-task hook main."""
@@ -88,27 +125,97 @@ def main():
         return
 
     tool_name = input_data.get("tool_name", "")
-    tool_output = input_data.get("tool_output", {})
+    tool_input = input_data.get("tool_input", {})
+    tool_output_raw = input_data.get("tool_response", {})
 
-    # Only track Task tool completions
-    if tool_name != "Task":
-        print(json.dumps({"hookSpecificOutput": {}}))
-        return
-
-    # Extract agent info from output
-    output_str = json.dumps(tool_output)
-    agent_id, agent_type = extract_agent_info(output_str)
-
-    if agent_id and agent_type:
+    # DEBUG: Log full structure to understand format
+    debug_file = STATE_DIR / "post_task_debug.log"
+    try:
+        with open(debug_file, "a") as f:
+            f.write(f"\n[{datetime.now().isoformat()}] FULL INPUT DUMP\n")
+            f.write(f"  tool_name: {tool_name}\n")
+            f.write(f"  input_data keys: {list(input_data.keys())}\n")
+            f.write(f"  tool_output type: {type(tool_output_raw)}\n")
+            f.write(f"  tool_output repr: {repr(tool_output_raw)[:500]}\n")
+            if isinstance(tool_output_raw, dict):
+                f.write(f"  tool_output keys: {list(tool_output_raw.keys())}\n")
+                # Check for common fields
+                for key in ['agentId', 'agent_id', 'task_id', 'id', 'result', 'output']:
+                    if key in tool_output_raw:
+                        f.write(f"  Found {key}: {tool_output_raw[key]}\n")
+    except Exception as e:
+        # Log the exception
         try:
-            track_subagent(agent_id, agent_type)
-        except Exception:
-            # Don't fail the hook if tracking fails
+            with open(debug_file, "a") as f:
+                f.write(f"  ERROR in debug logging: {e}\n")
+        except:
             pass
 
-    # Always allow (this is post-task, just for logging)
-    print(json.dumps({"hookSpecificOutput": {}}))
+    tool_output = tool_output_raw
 
+    # Track Task tool completions
+    if tool_name == "Task":
+        # DEBUG: Log to see if hook is running
+        debug_file = STATE_DIR / "post_task_debug.log"
+        try:
+            with open(debug_file, "a") as f:
+                f.write(f"[{datetime.now().isoformat()}] Task tool detected\n")
+                f.write(f"  tool_input keys: {list(tool_input.keys())}\n")
+                f.write(f"  tool_response type: {type(tool_output)} keys: {list(tool_output.keys()) if isinstance(tool_output, dict) else len(tool_output)}\n")
+        except:
+            pass
+
+        # Extract agent info from input and output
+        # subagent_type is in tool_input, agent_id is in tool_output
+        subagent_type = tool_input.get("subagent_type", "unknown")
+        
+        # Extract agent_id from tool_response
+        if isinstance(tool_output, dict):
+            # Modern format: dict with 'agentId' field
+            agent_id = tool_output.get('agentId', None)
+        else:
+            # Legacy format: string that needs parsing
+            agent_id, _ = extract_agent_info(str(tool_output))
+
+        # DEBUG: Log extraction result
+        try:
+            with open(debug_file, "a") as f:
+                f.write(f"  agent_id extracted: {agent_id}\n")
+                f.write(f"  subagent_type: {subagent_type}\n")
+        except:
+            pass
+
+        if agent_id:
+            try:
+                prompt = tool_input.get("prompt", "")
+                track_subagent(agent_id, subagent_type, prompt)
+                # DEBUG: Confirm tracking
+                try:
+                    with open(debug_file, "a") as f:
+                        f.write(f"  ✅ Tracked successfully\n")
+                except:
+                    pass
+            except Exception as e:
+                # Don't fail the hook if tracking fails
+                try:
+                    with open(debug_file, "a") as f:
+                        f.write(f"  ❌ Tracking failed: {e}\n")
+                except:
+                    pass
+
+    # Check for new plugins periodically
+    plugin_msg = None
+    try:
+        plugin_msg = check_new_plugins()
+    except:
+        pass
+
+    # Return message if new plugins found
+    output = {"hookSpecificOutput": {}}
+    if plugin_msg:
+        output["hookSpecificOutput"]["message"] = f"📦 {plugin_msg}"
+
+    print(json.dumps(output))
 
 if __name__ == "__main__":
     main()

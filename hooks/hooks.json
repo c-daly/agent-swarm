@@ -25,12 +25,34 @@
     ],
     "PostToolUse": [
       {
+        "matcher": "Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/post-task-tracking.py",
+            "timeout": 3
+          }
+        ]
+      },
+      {
         "matcher": "*",
         "hooks": [
           {
             "type": "command",
             "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-tracking.py",
             "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PreCompacting": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/pre-compacting.py",
+            "timeout": 5
           }
         ]
       }

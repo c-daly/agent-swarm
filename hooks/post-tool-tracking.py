@@ -17,7 +17,6 @@ from pathlib import Path
 METRICS_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/subagent_metrics.json"
 STATE_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/session.json"
 
-
 def load_json(path: Path) -> dict:
     """Load JSON file safely."""
     if path.exists():
@@ -27,20 +26,18 @@ def load_json(path: Path) -> dict:
             pass
     return {}
 
-
 def save_json(path: Path, data: dict) -> None:
     """Save JSON file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2))
-
 
 def extract_agent_id(output: str) -> str | None:
     """Extract agent_id from Task tool output using regex."""
     # Pattern: agent_id: <id> or "agent_id": "<id>"
     patterns = [
         r'agentId["\']?\s*:\s*["\']?([a-zA-Z0-9_-]+)',
-        r"Agent ID:\s*([a-zA-Z0-9_-]+)",
-        r"Spawned:\s*([a-zA-Z0-9_-]+)",
+        r'Agent ID:\s*([a-zA-Z0-9_-]+)',
+        r'Spawned:\s*([a-zA-Z0-9_-]+)',
     ]
 
     for pattern in patterns:
@@ -50,11 +47,13 @@ def extract_agent_id(output: str) -> str | None:
 
     return None
 
-
-def track_subagent(tool_input: dict, tool_output: str) -> None:
+def track_subagent(tool_input: dict, tool_output) -> None:
     """Track subagent spawn from Task tool."""
-    # Extract agent_id from output
-    agent_id = extract_agent_id(tool_output)
+    # Extract agent_id from output (dict or string)
+    if isinstance(tool_output, dict):
+        agent_id = tool_output.get('agentId', None)
+    else:
+        agent_id = extract_agent_id(str(tool_output))
 
     if not agent_id:
         # No agent_id found, skip silently
@@ -71,11 +70,10 @@ def track_subagent(tool_input: dict, tool_output: str) -> None:
         "spawned_at": datetime.now().isoformat(),
         "agent_type": agent_type,
         "status": "running",
-        "prompt": tool_input.get("prompt", "")[:100],  # First 100 chars
+        "prompt": tool_input.get("prompt", "")[:100]  # First 100 chars
     }
 
     save_json(METRICS_FILE, metrics)
-
 
 def detect_signature_change(tool_name: str, tool_input: dict) -> None:
     """Detect function signature changes and store reminder."""
@@ -87,10 +85,10 @@ def detect_signature_change(tool_name: str, tool_input: dict) -> None:
 
     # Patterns that indicate function/method signatures
     signature_patterns = [
-        r"def\s+\w+\s*\([^)]*\)",  # Python
-        r"function\s+\w+\s*\([^)]*\)",  # JavaScript
-        r"(public|private|protected)?\s*\w+\s+\w+\s*\([^)]*\)",  # Java/TypeScript
-        r"=>\s*\(",  # Arrow functions
+        r'def\s+\w+\s*\([^)]*\)',  # Python
+        r'function\s+\w+\s*\([^)]*\)',  # JavaScript
+        r'(public|private|protected)?\s*\w+\s+\w+\s*\([^)]*\)',  # Java/TypeScript
+        r'=>\s*\(',  # Arrow functions
     ]
 
     has_signature = any(re.search(p, content) for p in signature_patterns)
@@ -107,7 +105,7 @@ def detect_signature_change(tool_name: str, tool_input: dict) -> None:
     reminder = {
         "file": file_path,
         "timestamp": datetime.now().isoformat(),
-        "tool": tool_name,
+        "tool": tool_name
     }
 
     # Avoid duplicates
@@ -116,7 +114,6 @@ def detect_signature_change(tool_name: str, tool_input: dict) -> None:
         # Keep only last 10 reminders
         state["signature_change_reminders"] = reminders[-10:]
         save_json(STATE_FILE, state)
-
 
 def main():
     # Read input from stdin
@@ -129,7 +126,7 @@ def main():
 
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input", {})
-    tool_output = str(input_data.get("tool_output", ""))
+    tool_output = input_data.get("tool_output", {})  # Can be dict or string
 
     # Track subagent spawns
     if tool_name == "Task":
@@ -140,7 +137,6 @@ def main():
 
     # PostToolUse hooks don't need to return anything
     print(json.dumps({}))
-
 
 if __name__ == "__main__":
     main()

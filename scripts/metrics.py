@@ -23,17 +23,16 @@ SUBAGENT_METRICS = STATE_DIR / "subagent_metrics.json"
 
 # Token cost estimates per tool type
 TOKEN_ESTIMATES = {
-    "Bash": 500,  # Small commands
-    "Read": 2000,  # Average file size
-    "Edit": 1500,  # Editing context
-    "Write": 1000,  # Writing new files
-    "Task": 5000,  # Subagent overhead
-    "Grep": 1000,  # Search results
-    "Glob": 500,  # File listings
+    "Bash": 500,      # Small commands
+    "Read": 2000,     # Average file size
+    "Edit": 1500,     # Editing context
+    "Write": 1000,    # Writing new files
+    "Task": 5000,     # Subagent overhead
+    "Grep": 1000,     # Search results
+    "Glob": 500,      # File listings
     "WebSearch": 3000,  # Search results
-    "WebFetch": 2500,  # Fetched content
+    "WebFetch": 2500,   # Fetched content
 }
-
 
 def load_metrics():
     """Load current metrics."""
@@ -47,16 +46,14 @@ def load_metrics():
             "agents": {},
             "tool_calls": [],
             "cache_stats": {"hits": 0, "misses": 0},
-            "quality_scores": [],
-        },
+            "quality_scores": []
+        }
     }
-
 
 def save_metrics(metrics):
     """Save metrics to file."""
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     METRICS_FILE.write_text(json.dumps(metrics, indent=2))
-
 
 def analyze_activity_log():
     """Extract metrics from activity log."""
@@ -68,23 +65,14 @@ def analyze_activity_log():
     metrics = {
         "total_events": 0,
         "tools_by_type": defaultdict(int),
+        "token_by_tool": defaultdict(int),
         "blocks_by_reason": defaultdict(int),
         "duplicate_reads": 0,
         "files_read": [],
-        "search_patterns": [],
+        "search_patterns": []
     }
 
     seen_reads = set()
-
-    # Track script usage
-    script_names = [
-        "batch_search.py",
-        "file_analyzer.py",
-        "serena_batch.py",
-        "gh_wrapper.py",
-        "inventory.py",
-        "context7_docs.py",
-    ]
 
     for line in lines:
         if not line.strip():
@@ -92,39 +80,61 @@ def analyze_activity_log():
 
         metrics["total_events"] += 1
 
-        # Track script usage
-        for script in script_names:
-            if script in line:
-                metrics["script_calls"] = metrics.get("script_calls", 0) + 1
-                metrics["scripts_used"] = metrics.get("scripts_used", {})
-                metrics["scripts_used"][script] = (
-                    metrics["scripts_used"].get(script, 0) + 1
-                )
+        # Track tool usage and extract command content for Bash
+        if "ALLOWED:" in line:
+            parts = line.split("ALLOWED:")
+            if len(parts) > 1:
+                rest = parts[1].strip()
+                
+                if rest.startswith("Bash:"):
+                    tool_name = "Bash"
+                    command = rest[5:].strip()
+                    
+                    is_script = False
+                    script_name = None
+                    
+                    if "python3" in command or "python " in command:
+                        if ".py" in command:
+                            is_script = True
+                            try:
+                                if "/tmp/" in command:
+                                    script_name = command.split("/tmp/")[1].split()[0]
+                                else:
+                                    import re
+                                    match = re.search(r'([a-zA-Z0-9_/-]+\.py)', command)
+                                    if match:
+                                        script_name = match.group(1).split('/')[-1]
+                            except:
+                                script_name = "unknown_script.py"
+                        elif " -c " in command or " << " in command:
+                            is_script = True
+                            script_name = "inline_script"
+                    
+                    if is_script:
+                        metrics["script_calls"] = metrics.get("script_calls", 0) + 1
+                        if script_name:
+                            metrics["scripts_used"] = metrics.get("scripts_used", {})
+                            metrics["scripts_used"][script_name] = metrics["scripts_used"].get(script_name, 0) + 1
+                else:
+                    tool_name = rest.split()[0]
+                
+                metrics["tools_by_type"][tool_name] += 1
+                token_estimate = TOKEN_ESTIMATES.get(tool_name, 500)
+                metrics["token_by_tool"][tool_name] += token_estimate
 
-        # Track tool usage
-        if "TOOL:" in line or "ALLOWED:" in line:
-            for tool in ["Read", "Write", "Edit", "Glob", "Grep", "Task", "Bash"]:
-                if tool in line:
-                    metrics["tools_by_type"][tool] += 1
-
-        # Track blocks
         if "BLOCKED" in line:
-            # Format: [timestamp] BLOCKED: Tool: [REASON] message
-            # Extract the reason (second bracketed text)
             parts = line.split("BLOCKED:")
             if len(parts) > 1:
                 blocked_part = parts[1]
-                # Look for [REASON] in the blocked part
                 if "[" in blocked_part and "]" in blocked_part:
                     reason = blocked_part.split("[")[1].split("]")[0]
                     metrics["blocks_by_reason"][reason] += 1
                 else:
                     metrics["blocks_by_reason"]["unknown"] += 1
 
-        # Track duplicate reads
         if "Read" in line and "file_path" in line:
             try:
-                file = line.split("file_path")[1].split("}")[0].strip("\":' ")
+                file = line.split("file_path")[1].split("}")[0].strip('":\' ')
                 if file in seen_reads:
                     metrics["duplicate_reads"] += 1
                 seen_reads.add(file)
@@ -136,12 +146,9 @@ def analyze_activity_log():
     metrics["total_reads"] = len(metrics["files_read"])
 
     if metrics["total_reads"] > 0:
-        metrics["duplicate_rate"] = (
-            metrics["duplicate_reads"] / metrics["total_reads"] * 100
-        )
+        metrics["duplicate_rate"] = metrics["duplicate_reads"] / metrics["total_reads"] * 100
 
     return metrics
-
 
 def calculate_efficiency_score(metrics):
     """Calculate overall efficiency score (0-100)."""
@@ -168,7 +175,6 @@ def calculate_efficiency_score(metrics):
         score += min(batch_ratio * 0.2, 10)  # Max 10 point bonus
 
     return max(0, min(100, score))
-
 
 def calculate_token_estimate(log_metrics):
     """Estimate tokens used based on tool calls."""
@@ -209,6 +215,109 @@ def calculate_token_estimate(log_metrics):
 
     return total_tokens, token_by_tool, cost
 
+def calculate_token_impact(log_metrics):
+    """Calculate actionable token impact metrics."""
+
+    impact = {
+        "data_volume": {},
+        "efficiency": {},
+        "impact_score": 0,
+        "recommendations": []
+    }
+
+    # DATA VOLUME METRICS
+    total_reads = log_metrics.get("total_reads", 0)
+    unique_files = log_metrics.get("unique_files", 0)
+    tools = log_metrics.get("tools_by_type", {})
+
+    # Estimate total lines processed (rough: 50 lines per read on average)
+    estimated_lines = total_reads * 50
+    impact["data_volume"]["total_reads"] = total_reads
+    impact["data_volume"]["estimated_lines"] = estimated_lines
+    impact["data_volume"]["searches"] = tools.get("Grep", 0) + tools.get("Glob", 0)
+
+    # EFFICIENCY METRICS
+    duplicate_rate = log_metrics.get("duplicate_rate", 0)
+    script_calls = log_metrics.get("script_calls", 0)
+    direct_reads = tools.get("Read", 0)
+    total_data_ops = script_calls + direct_reads
+    script_adoption = (script_calls / total_data_ops * 100) if total_data_ops > 0 else 0
+
+    impact["efficiency"]["duplicate_rate"] = duplicate_rate
+    impact["efficiency"]["script_adoption"] = script_adoption
+    impact["efficiency"]["direct_reads"] = direct_reads
+    impact["efficiency"]["script_calls"] = script_calls
+
+    # SUBAGENT USAGE (high impact)
+    subagent_count = tools.get("Task", 0)
+    impact["efficiency"]["subagent_count"] = subagent_count
+
+    # CALCULATE IMPACT SCORE (0-100, higher = more optimization potential)
+    score = 0
+
+    # High data volume = high impact
+    if estimated_lines > 10000:
+        score += 30
+        impact["recommendations"].append({
+            "priority": "HIGH",
+            "issue": f"Read {estimated_lines:,} lines of code",
+            "action": "Use Explore subagents for large codebases instead of direct reads"
+        })
+    elif estimated_lines > 5000:
+        score += 15
+
+    # Duplicate reads = wasted tokens
+    if duplicate_rate > 20:
+        score += 25
+        impact["recommendations"].append({
+            "priority": "HIGH",
+            "issue": f"Duplicate read rate: {duplicate_rate:.1f}%",
+            "action": "Implement caching or reduce redundant file reads"
+        })
+    elif duplicate_rate > 10:
+        score += 10
+
+    # Low script adoption = context dumping
+    if script_adoption < 40 and direct_reads > 5:
+        score += 25
+        impact["recommendations"].append({
+            "priority": "HIGH",
+            "issue": f"Script adoption only {script_adoption:.1f}%",
+            "action": "Use batch scripts to process data instead of direct reads"
+        })
+    elif script_adoption < 60 and direct_reads > 10:
+        score += 15
+
+    # Many searches = potential inefficiency
+    search_count = impact["data_volume"]["searches"]
+    if search_count > 10:
+        score += 15
+        impact["recommendations"].append({
+            "priority": "MEDIUM",
+            "issue": f"{search_count} separate searches",
+            "action": "Batch searches using batch_search.py script"
+        })
+
+    # Subagent usage (informational, not necessarily bad)
+    if subagent_count > 3:
+        impact["recommendations"].append({
+            "priority": "INFO",
+            "issue": f"{subagent_count} subagents spawned",
+            "action": f"Each subagent ~25-100k tokens. Total estimated: {subagent_count * 50}k tokens"
+        })
+
+    impact["impact_score"] = min(100, score)
+
+    # Add positive feedback if efficient
+    if score < 20:
+        impact["recommendations"].append({
+            "priority": "SUCCESS",
+            "issue": "Efficient token usage",
+            "action": "Good job! Workflow is optimized."
+        })
+
+    return impact
+
 
 def show_report():
     """Show comprehensive metrics report."""
@@ -222,22 +331,39 @@ def show_report():
     efficiency = calculate_efficiency_score(log_metrics)
     print(f"\n📊 Overall Efficiency Score: {efficiency:.1f}/100")
 
-    # Token usage
-    total_tokens, token_by_tool, cost = calculate_token_estimate(log_metrics)
-    print("\n💰 Token Usage (estimated):")
-    print(f"   Total: {total_tokens:,} tokens (${cost:.2f})")
-    print("   Top consumers:")
-    for tool, tokens in sorted(token_by_tool.items(), key=lambda x: -x[1])[:5]:
-        if tokens > 0:
-            pct = tokens / total_tokens * 100
-            print(f"     {tool:15} {tokens:>10,} tokens ({pct:5.1f}%)")
+    # Token Impact Analysis
+    impact = calculate_token_impact(log_metrics)
+    print(f"\n🎯 Token Impact Analysis:")
+    print(f"   Impact Score: {impact['impact_score']:.0f}/100", end="")
+    if impact['impact_score'] >= 50:
+        print(" 🔴 HIGH - Significant optimization potential")
+    elif impact['impact_score'] >= 25:
+        print(" 🟡 MEDIUM - Some optimization possible")
+    else:
+        print(" 🟢 LOW - Efficient usage")
+
+    print(f"\n   Data Volume:")
+    print(f"     Total reads: {impact['data_volume']['total_reads']}")
+    print(f"     Estimated lines: {impact['data_volume']['estimated_lines']:,}")
+    print(f"     Searches: {impact['data_volume']['searches']}")
+
+    print(f"\n   Efficiency:")
+    print(f"     Duplicate rate: {impact['efficiency']['duplicate_rate']:.1f}%")
+    print(f"     Script adoption: {impact['efficiency']['script_adoption']:.1f}%")
+    print(f"     Subagents: {impact['efficiency']['subagent_count']}")
+
+    if impact['recommendations']:
+        print(f"\n   Recommendations:")
+        for rec in impact['recommendations']:
+            priority = rec['priority']
+            icon = {"HIGH": "🔴", "MEDIUM": "🟡", "INFO": "ℹ️", "SUCCESS": "✅"}.get(priority, "•")
+            print(f"     {icon} {rec['issue']}")
+            print(f"        → {rec['action']}")
 
     # Tool usage breakdown
-    print("\n🔧 Tool Usage:")
+    print(f"\n🔧 Tool Usage:")
     total_tools = sum(log_metrics["tools_by_type"].values())
-    for tool, count in sorted(
-        log_metrics["tools_by_type"].items(), key=lambda x: -x[1]
-    ):
+    for tool, count in sorted(log_metrics["tools_by_type"].items(), key=lambda x: -x[1]):
         pct = count / total_tools * 100 if total_tools > 0 else 0
         print(f"   {tool:15} {count:4} ({pct:5.1f}%)")
 
@@ -246,53 +372,43 @@ def show_report():
     direct_reads = log_metrics["tools_by_type"].get("Read", 0)
     total_data_ops = script_calls + direct_reads
 
-    print("\n📜 Script Usage:")
+    print(f"\n📜 Script Usage:")
     print(f"   Script calls: {script_calls}")
     print(f"   Direct reads: {direct_reads}")
     if total_data_ops > 0:
         adoption = script_calls / total_data_ops * 100
-        print(
-            f"   Adoption rate: {adoption:.1f}% {'✅' if adoption >= 60 else '⚠️' if adoption >= 30 else '❌'}"
-        )
-        print("   Target: 60%+")
+        print(f"   Adoption rate: {adoption:.1f}% {'✅' if adoption >= 60 else '⚠️' if adoption >= 30 else '❌'}")
+        print(f"   Target: 60%+")
 
     if log_metrics.get("scripts_used"):
-        print("\n   Scripts used:")
-        for script, count in sorted(
-            log_metrics["scripts_used"].items(), key=lambda x: -x[1]
-        ):
+        print(f"\n   Scripts used:")
+        for script, count in sorted(log_metrics["scripts_used"].items(), key=lambda x: -x[1]):
             print(f"      {script}: {count}")
 
     # Efficiency metrics
-    print("\n⚡ Efficiency Metrics:")
+    print(f"\n⚡ Efficiency Metrics:")
     print(f"   Files read: {log_metrics['total_reads']}")
     print(f"   Unique files: {log_metrics['unique_files']}")
-    print(
-        f"   Duplicate reads: {log_metrics['duplicate_reads']} ({log_metrics.get('duplicate_rate', 0):.1f}%)"
-    )
+    print(f"   Duplicate reads: {log_metrics['duplicate_reads']} ({log_metrics.get('duplicate_rate', 0):.1f}%)")
 
     # Block analysis
-    print("\n🚫 Blocks:")
+    print(f"\n🚫 Blocks:")
     total_blocks = sum(log_metrics["blocks_by_reason"].values())
     if total_blocks > 0:
-        for reason, count in sorted(
-            log_metrics["blocks_by_reason"].items(), key=lambda x: -x[1]
-        ):
+        for reason, count in sorted(log_metrics["blocks_by_reason"].items(), key=lambda x: -x[1]):
             pct = count / total_blocks * 100
             print(f"   {reason:25} {count:3} ({pct:.1f}%)")
     else:
         print("   None")
 
     # Recommendations
-    print("\n💡 Recommendations:")
+    print(f"\n💡 Recommendations:")
 
     # Script adoption recommendations
     if total_data_ops > 0:
         adoption = script_calls / total_data_ops * 100
         if adoption < 30 and direct_reads > 5:
-            print(
-                "   🔴 CRITICAL: Low script adoption - agents dumping data into context"
-            )
+            print("   🔴 CRITICAL: Low script adoption - agents dumping data into context")
             print("      Fix: Update subagent-briefing.md with correct script paths")
         elif adoption < 60 and direct_reads > 10:
             print("   ⚠️  Script adoption below target - review agent briefings")
@@ -318,7 +434,6 @@ def show_report():
     else:
         print("   ❌ Low efficiency - significant optimization needed")
 
-
 def save_baseline():
     """Save current metrics as baseline for comparison."""
     log_metrics = analyze_activity_log()
@@ -326,12 +441,11 @@ def save_baseline():
     baseline = {
         "timestamp": datetime.now().isoformat(),
         "metrics": log_metrics,
-        "efficiency_score": calculate_efficiency_score(log_metrics),
+        "efficiency_score": calculate_efficiency_score(log_metrics)
     }
 
     BASELINE_FILE.write_text(json.dumps(baseline, indent=2))
     print(f"✅ Baseline saved: {baseline['efficiency_score']:.1f}/100 efficiency")
-
 
 def compare_to_baseline():
     """Compare current metrics to baseline."""
@@ -349,7 +463,7 @@ def compare_to_baseline():
     baseline_score = baseline["efficiency_score"]
     current_score = calculate_efficiency_score(current)
 
-    print("\n📊 Efficiency Score:")
+    print(f"\n📊 Efficiency Score:")
     print(f"   Baseline: {baseline_score:.1f}")
     print(f"   Current:  {current_score:.1f}")
 
@@ -362,13 +476,13 @@ def compare_to_baseline():
         print(f"   Change:   {diff:.1f} → Same")
 
     # Compare key metrics
-    print("\n📈 Key Metrics:")
+    print(f"\n📈 Key Metrics:")
 
     metrics_compare = [
         ("Total reads", "total_reads"),
         ("Unique files", "unique_files"),
         ("Duplicate rate", "duplicate_rate"),
-        ("Total blocks", lambda m: sum(m.get("blocks_by_reason", {}).values())),
+        ("Total blocks", lambda m: sum(m.get("blocks_by_reason", {}).values()))
     ]
 
     for label, key in metrics_compare:
@@ -383,14 +497,12 @@ def compare_to_baseline():
         symbol = "✅" if diff <= 0 else "⚠️"
 
         if isinstance(curr_val, float):
-            print(
-                f"   {label:20} {base_val:6.1f} → {curr_val:6.1f} ({diff:+.1f}) {symbol}"
-            )
+            print(f"   {label:20} {base_val:6.1f} → {curr_val:6.1f} ({diff:+.1f}) {symbol}")
         else:
             print(f"   {label:20} {base_val:6} → {curr_val:6} ({diff:+}) {symbol}")
 
     # Tool usage changes
-    print("\n🔧 Tool Usage Changes:")
+    print(f"\n🔧 Tool Usage Changes:")
     base_tools = baseline["metrics"].get("tools_by_type", {})
     curr_tools = current.get("tools_by_type", {})
 
@@ -403,7 +515,6 @@ def compare_to_baseline():
             symbol = "📈" if diff > 0 else "📉"
             print(f"   {tool:15} {base:4} → {curr:4} ({diff:+3}) {symbol}")
 
-
 def record_agent_metrics(agent_type, tokens_used, output_size, task_description):
     """Record metrics for a specific agent execution."""
     metrics = load_metrics()
@@ -413,7 +524,7 @@ def record_agent_metrics(agent_type, tokens_used, output_size, task_description)
         "type": agent_type,
         "tokens": tokens_used,
         "output_size": output_size,
-        "task": task_description[:100],
+        "task": task_description[:100]
     }
 
     if agent_type not in metrics["current_session"]["agents"]:
@@ -423,7 +534,6 @@ def record_agent_metrics(agent_type, tokens_used, output_size, task_description)
     save_metrics(metrics)
 
     print(f"✅ Recorded: {agent_type} used {tokens_used} tokens")
-
 
 def main():
     if len(sys.argv) < 2:
@@ -446,7 +556,6 @@ def main():
     else:
         print(f"Unknown command: {cmd}")
         print("Usage: metrics.py report|baseline|compare|record")
-
 
 if __name__ == "__main__":
     main()

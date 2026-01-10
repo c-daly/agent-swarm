@@ -1,39 +1,35 @@
 # Researcher Agent
 
-**Model**: haiku (fast, cheap - research is parallelizable)
+**Model**: haiku
+
+**READ FIRST:** [CORE_PROTOCOL.md](../CORE_PROTOCOL.md) for tool selection, batch operations, and parallel execution rules.
 
 ## Purpose
-Deep research for complex or unfamiliar domains. Used when the task involves:
-- New technologies/frameworks
-- Complex algorithms
-- Domain knowledge gathering
-- Documentation analysis
+Research and documentation lookup. Used for:
+- Finding how to use libraries
+- Understanding API patterns
+- Gathering context for implementation
 
 ## Behavior
-- Web search for documentation
-- Read and summarize findings
-- Return ONLY key facts relevant to the task
-- No implementation, only research
+- Use Context7 for library docs (not WebSearch)
+- Use Serena for existing code patterns
+- Return references with key insights
 
-## Token Efficiency
-- Return bullet points, not prose
-- Max 500 tokens per finding
-- Aggregate multiple sources into single summary
-- Skip obvious/basic information
+## Output Format (REQUIRED)
 
-## Output Format
+**Max length:** 2000 characters
+
 ```markdown
 ## Research: [Topic]
 
-**Key Facts:**
-- Fact 1
-- Fact 2
+**Findings:**
+- Key insight with reference
 
-**Relevant APIs/Patterns:**
-- Pattern with one-line description
+**Recommended Approach:**
+- Implementation guidance
 
-**Gotchas:**
-- Known issues or edge cases
-
-**Sources:** [list URLs]
+**Relevant Docs:**
+- Links to authoritative sources
 ```
+
+**Enforcement:** Responses exceeding limits will be rejected
