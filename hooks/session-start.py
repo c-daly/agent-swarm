@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
-Session Start Hook - Auto-search episodic memory & reset counters
+Session Start Hook - Auto-search episodic memory & reset counters & inject capabilities
 
 Automatically searches episodic memory at the start of each session
 to recover relevant context from past conversations.
 
 Also resets enforcement counters for the new conversation.
+
+Runs inventory.py to inject available MCP servers, skills, and capabilities.
 """
 
 import json
@@ -43,6 +45,27 @@ def reset_enforcement_counters():
 
     return False
 
+def run_inventory():
+    """Run inventory.py to discover available capabilities."""
+    try:
+        inventory_path = Path(__file__).parent.parent / "scripts" / "inventory.py"
+        if not inventory_path.exists():
+            return None
+
+        result = subprocess.run(
+            ["python3", str(inventory_path), "all"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+
+        if result.returncode == 0:
+            return result.stdout
+        return None
+
+    except Exception:
+        return None
+
 def search_episodic_memory(query_terms):
     """Search episodic memory for relevant past conversations."""
     try:
@@ -72,6 +95,9 @@ def main():
     # Reset enforcement counters for new conversation
     reset_enforcement_counters()
 
+    # Run inventory to discover capabilities
+    inventory_output = run_inventory()
+
     # Read session data from stdin
     try:
         input_data = json.loads(sys.stdin.read())
@@ -94,11 +120,23 @@ def main():
     # Search episodic memory
     results = search_episodic_memory(query_terms)
 
+    # Build output message
+    messages = []
+
+    # Add inventory if available
+    if inventory_output:
+        messages.append("📦 Capability Inventory:\n" + inventory_output[:1000])  # Limit size
+
+    # Add episodic memory suggestion
+    if not results.get("found"):
+        messages.append(results.get("message", ""))
+    else:
+        messages.append(f"✓ Found {len(results.get('conversations', []))} relevant past conversations")
+
     # Return result with suggestion
     output = {
         "hookSpecificOutput": {
-            "message": results.get("message", "") if not results.get("found") else
-                      f"✓ Found {len(results.get('conversations', []))} relevant past conversations"
+            "message": "\n\n".join(messages) if messages else ""
         }
     }
 
