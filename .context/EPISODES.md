@@ -1,3 +1,32 @@
+
+## Session: 2026-01-10 (Part 4) - Infrastructure Recovery
+- **Task**: Discovered and rebuilt missing ~/.claude/lib/ infrastructure
+- **Outcome**: success (critical infrastructure restored)
+- **Actions**:
+  - Investigated missing MCP awareness at session start
+  - Discovered entire ~/.claude/lib/ directory missing
+  - Root cause: lib/ built locally but never committed to git
+  - Rebuilt mcp_bridge.py with native_glob, native_grep, call_mcp
+  - Created batch operation scripts (batch_search.py, batch_glob.py)
+  - Enabled agent-workflow plugin in settings.json
+  - Updated session-start.py to run inventory.py
+  - Documented everything in MISSING_INFRASTRUCTURE.md
+  - Committed to both dotclaude and agent-swarm repos
+- **Learnings**:
+  - CRITICAL: Always commit infrastructure immediately after building
+  - CLAUDE.md can list "verified working" infrastructure that doesn't exist
+  - Enforcement hooks can block operations while referencing non-existent alternatives
+  - MCP servers come from plugins, not global settings.json
+  - Good docstring intentions don't equal actual integration
+  - Git hygiene is critical - uncommitted work is lost on clone
+- **Infrastructure Restored**:
+  - ~/.claude/lib/mcp_bridge.py (13.7KB, tested ✓)
+  - ~/.claude/lib/scripts/ (batch utilities)
+  - agent-workflow plugin enabled
+  - session-start inventory integration
+  - All committed to git and safe
+
+---
 # Episodes
 
 ## Session: 2026-01-10 (Part 3) - Merge & Fixes
