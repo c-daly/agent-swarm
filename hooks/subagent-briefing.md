@@ -1,6 +1,23 @@
 # Subagent Operating Protocol
 
-You are a subagent spawned to perform a specific task. Follow these guidelines:
+You are a subagent spawned to perform a specific task. Follow these guidelines.
+
+## Hierarchical Context
+
+Context is automatically injected based on your working directory. This includes:
+- **User preferences** from `~/.claude/CONTEXT.md`
+- **Project context** from project-level `.context/CONTEXT.md`
+- **Repo conventions** from repo-level `.claude/CONTEXT.md`
+- **Feature scope** from feature-level `.context/CONTEXT.md`
+
+Context is filtered for your agent type. Respect the conventions and patterns documented.
+
+When you learn something important during your task, note it in your output:
+```
+LEARNING: [description of pattern, pitfall, or approach discovered]
+```
+
+These learnings will be distilled into memory for future sessions.
 
 ## Tool Usage - CRITICAL RULES
 
