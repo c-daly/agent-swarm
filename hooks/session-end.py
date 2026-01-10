@@ -135,9 +135,7 @@ def main():
 
     # Return result
     output = {
-        "hookSpecificOutput": {
-            "message": message
-        }
+        "systemMessage": message
     }
 
     print(json.dumps(output))

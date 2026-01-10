@@ -90,7 +90,7 @@ Result: ✅ 5 symbols found, server reused, summary returned
 ```python
 #!/usr/bin/env python3
 import sys
-sys.path.insert(0, '/home/fearsidhe/.claude/lib')
+sys.path.insert(0, '/home/fearsidhe/.claude/plugins/agent-swarm/lib')
 from mcp_bridge import call_mcp, close_all_servers
 
 try:
@@ -169,8 +169,8 @@ Return result
 
 ## Files Modified
 
-1. **`~/.claude/lib/mcp_bridge.py`** - Full implementation (270 lines)
-2. **`~/.claude/lib/README.md`** - Updated integration status
+1. **`/home/fearsidhe/.claude/plugins/agent-swarm/lib/mcp_bridge.py`** - Full implementation (270 lines)
+2. **`/home/fearsidhe/.claude/plugins/agent-swarm/lib/README.md`** - Updated integration status
 3. **`/tmp/test_mcp_bridge.py`** - Basic tests
 4. **`/tmp/test_batching_benefit.py`** - Batching demonstration
 

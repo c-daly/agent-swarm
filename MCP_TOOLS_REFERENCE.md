@@ -115,7 +115,7 @@ Find everywhere a symbol is used.
 **Batching with mcp_bridge:**
 ```python
 import sys
-sys.path.insert(0, '/home/fearsidhe/.claude/lib')
+sys.path.insert(0, '/home/fearsidhe/.claude/plugins/agent-swarm/lib')
 from mcp_bridge import call_mcp, close_all_servers
 
 # Batch multiple symbol lookups
@@ -373,7 +373,7 @@ Call tool 3
 ```python
 python3 << 'EOF'
 import sys
-sys.path.insert(0, '/home/fearsidhe/.claude/lib')
+sys.path.insert(0, '/home/fearsidhe/.claude/plugins/agent-swarm/lib')
 from mcp_bridge import call_mcp, close_all_servers
 
 # Batch all calls
@@ -480,7 +480,7 @@ All MCP tools can be called via mcp_bridge for batching:
 
 ```python
 import sys
-sys.path.insert(0, '/home/fearsidhe/.claude/lib')
+sys.path.insert(0, '/home/fearsidhe/.claude/plugins/agent-swarm/lib')
 from mcp_bridge import call_mcp, close_all_servers
 
 # Example: Batch symbol lookups
@@ -512,6 +512,6 @@ close_all_servers()
 
 ## See Also
 
-- `~/.claude/lib/README.md` - mcp_bridge usage
-- `~/.claude/lib/mcp_bridge.py` - Implementation
+- `/home/fearsidhe/.claude/plugins/agent-swarm/lib/README.md` - mcp_bridge usage
+- `/home/fearsidhe/.claude/plugins/agent-swarm/lib/mcp_bridge.py` - Implementation
 - `/home/fearsidhe/.claude/plugins/agent-swarm/agents/AGENT_RULES.md` - Agent guidelines

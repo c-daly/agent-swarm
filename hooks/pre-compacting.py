@@ -152,10 +152,8 @@ def main():
 
     # Return result
     output = {
-        "hookSpecificOutput": {
-            "message": f"[PRE-COMPACTING] {message}\n"
-                      f"   Context will be compacted - review handoff for preserved state"
-        }
+        "systemMessage": f"[PRE-COMPACTING] {message}\n"
+                        f"   Context will be compacted - review handoff for preserved state"
     }
 
     print(json.dumps(output))

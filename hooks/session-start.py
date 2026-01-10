@@ -17,29 +17,27 @@ from pathlib import Path
 
 def reset_enforcement_counters():
     """Reset enforcement counters and workflow tracking for new conversation."""
-    state_file = Path(__file__).parent.parent / ".state" / "enforcement_state.json"
+    state_file = Path(__file__).parent.parent / ".state" / "session.json"
 
     try:
-        if state_file.exists():
-            with open(state_file) as f:
-                state = json.load(f)
+        # Initialize fresh session state
+        state = {
+            "last_phase": None,
+            "last_tool_time": None,
+            "signature_change_reminders": [],
+            "files_read": [],
+            "read_count": 0,
+            "files_edited_this_session": [],
+            "phase": None,
+            "search_count": 0,
+            "edits_this_response": 0,
+            "memory_search_suggested": 1
+        }
 
-            # Reset token efficiency counters
-            state["search_count"] = 0
-            state["read_count"] = 0
-            state["files_read"] = []
+        with open(state_file, 'w') as f:
+            json.dump(state, f, indent=2)
 
-            # Initialize workflow compliance tracking
-            state["classification_given"] = False
-            state["classification_type"] = None
-            state["workflow_invoked"] = False
-            state["episodic_search_suggested"] = True  # SessionStart always suggests it
-            state["episodic_search_done"] = False
-
-            with open(state_file, 'w') as f:
-                json.dump(state, f, indent=2)
-
-            return True
+        return True
     except Exception:
         pass  # Fail silently, not critical
 
@@ -135,9 +133,7 @@ def main():
 
     # Return result with suggestion
     output = {
-        "hookSpecificOutput": {
-            "message": "\n\n".join(messages) if messages else ""
-        }
+        "systemMessage": "\n\n".join(messages) if messages else ""
     }
 
     print(json.dumps(output))

@@ -45,7 +45,7 @@
         ]
       }
     ],
-    "PreCompacting": [
+    "PreCompact": [
       {
         "matcher": "*",
         "hooks": [
@@ -53,6 +53,28 @@
             "type": "command",
             "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/pre-compacting.py",
             "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/session-start.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/session-end.py",
+            "timeout": 30
           }
         ]
       }

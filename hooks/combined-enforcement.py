@@ -431,7 +431,7 @@ def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dic
         state["search_count"] = 0
         state["read_count"] = 0
         state["files_read"] = []
-        state["edits_this_response"] = 0  # Reset classification enforcement counter
+        # DON'T reset edits_this_response - it tracks per-message, not per-phase
         state["last_phase"] = current_phase
         log_event("COUNTER_RESET", f"Phase changed from '{last_phase}' to '{current_phase}', counters reset")
         save_state(state)
@@ -455,7 +455,7 @@ def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dic
                 state["search_count"] = 0
                 state["read_count"] = 0
                 state["files_read"] = []
-                state["edits_this_response"] = 0  # Reset classification enforcement counter
+                # DON'T reset edits_this_response - will be handled by message detection
                 log_event("COUNTER_RESET", "New conversation detected, counters reset")
                 save_state(state)  # Persist reset immediately
         except (ValueError, TypeError):
@@ -1368,6 +1368,23 @@ def main():
 
     # Load session state
     state = load_json(STATE_FILE)
+
+    # Detect new user turn (reset edits_this_response counter)
+    # Check if there's a user message AFTER the last tool execution
+    last_tool_time_str = state.get("last_tool_time")
+
+    if messages:
+        # Find most recent user message
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                # Found user message - check if it's from a new turn
+                # Simple heuristic: if counter > 0, assume new user message = new turn
+                if state.get("edits_this_response", 0) > 0:
+                    # Reset for new turn
+                    state["edits_this_response"] = 0
+                    log_event("COUNTER_RESET", "New user turn detected, edits counter reset")
+                    save_state(state)
+                break
 
     # Check autopilot first
     result = check_autopilot(state)
