@@ -1,19 +1,19 @@
 ---
-name: context
+name: ctx
 description: View and manage hierarchical context for the current directory
 user_invocable: true
 ---
 
-# /context - Hierarchical Context Viewer
+# /ctx - Hierarchical Context Viewer
 
 Shows the resolved context for the current working directory, aggregated from all levels of the hierarchy.
 
 ## Usage
 
 ```
-/context           # Show resolved context
-/context tree      # Show context hierarchy as tree
-/context edit      # Edit context at current scope
+/ctx           # Show resolved context
+/ctx tree      # Show context hierarchy as tree
+/ctx edit      # Edit context at current scope
 ```
 
 ## What This Shows
@@ -35,12 +35,12 @@ Each level can:
 When invoked, run:
 
 ```bash
-python3 ~/.claude/plugins/agent-swarm/context/resolver.py resolve .
+python3 ~/.claude/plugins/agent-swarm/ctx/resolver.py resolve .
 ```
 
 For tree view:
 ```bash
-python3 ~/.claude/plugins/agent-swarm/context/resolver.py tree .
+python3 ~/.claude/plugins/agent-swarm/ctx/resolver.py tree .
 ```
 
 ## Context File Format
