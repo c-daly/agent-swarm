@@ -77,6 +77,85 @@ class PRState:
     iteration: int = 0               # Current iteration for this PR
 
 
+class TaskQueue:
+    """Queue for managing tasks across PRs."""
+
+    def __init__(self):
+        """Initialize empty queue."""
+        self.tasks: dict[str, Task] = {}      # id -> Task
+        self.prs: dict[str, PRState] = {}     # pr_id -> PRState
+        self.completed: list[str] = []        # completed task IDs
+        self.failed: list[str] = []           # failed task IDs
+
+    def add_task(self, task: Task) -> str:
+        """Add a task to the queue.
+        
+        Creates PRState if pr_id doesn't exist.
+        Returns the task ID.
+        """
+        self.tasks[task.id] = task
+        
+        # Create PR if needed
+        if task.pr_id not in self.prs:
+            self.prs[task.pr_id] = PRState(
+                pr_id=task.pr_id,
+                branch=f"feature/{task.pr_id}",  # Default branch name
+                phase="test_writing",
+                task_ids=[],
+            )
+        
+        # Add task to PR
+        self.prs[task.pr_id].task_ids.append(task.id)
+        
+        return task.id
+
+    def get_task(self, task_id: str) -> Optional[Task]:
+        """Get a task by ID. Returns None if not found."""
+        return self.tasks.get(task_id)
+
+    def mark_running(self, task_id: str, agent_id: str) -> None:
+        """Mark a task as running with assigned agent.
+        
+        Raises ValueError if task is not pending.
+        """
+        task = self.tasks.get(task_id)
+        if not task:
+            raise ValueError(f"Task {task_id} not found")
+        if task.status != TaskStatus.PENDING:
+            raise ValueError(f"Task {task_id} is not pending (status: {task.status})")
+        
+        task.status = TaskStatus.RUNNING
+        task.assigned_agent = agent_id
+
+    def mark_complete(self, task_id: str, result: Optional[dict] = None) -> None:
+        """Mark a task as completed.
+        
+        Optionally stores result in metadata.
+        """
+        task = self.tasks.get(task_id)
+        if not task:
+            raise ValueError(f"Task {task_id} not found")
+        
+        task.status = TaskStatus.COMPLETED
+        task.assigned_agent = None
+        if result:
+            task.metadata["result"] = result
+        
+        self.completed.append(task_id)
+
+    def mark_failed(self, task_id: str, error: str) -> None:
+        """Mark a task as failed with error message."""
+        task = self.tasks.get(task_id)
+        if not task:
+            raise ValueError(f"Task {task_id} not found")
+        
+        task.status = TaskStatus.FAILED
+        task.assigned_agent = None
+        task.metadata["error"] = error
+        
+        self.failed.append(task_id)
+
+
 # =============================================================================
 # State Management
 # =============================================================================
