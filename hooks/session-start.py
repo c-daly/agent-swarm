@@ -27,7 +27,8 @@ except ImportError:
     class StateError(Exception): pass
 def reset_enforcement_counters():
     """Reset enforcement counters but preserve workflow state for new conversation."""
-    state_dir = Path(__file__).parent.parent / ".state"
+    # Use absolute path to match pre-compacting.py
+    state_dir = Path.home() / ".claude/plugins/agent-swarm/.state"
     state_file = state_dir / "session.json"
     compaction_state_file = state_dir / "compaction_state.json"
 
