@@ -14,6 +14,10 @@ from iterate_state import (
     PRIORITY_GREPTILE_WARNING,
     PRIORITY_ORIGINAL,
     PRIORITY_COVERAGE_GAP,
+    Task,
+    PRState,
+    PARALLEL_PHASES,
+    SYNC_PHASES,
 )
 
 
@@ -102,3 +106,132 @@ class TestPriorityConstants:
         assert PRIORITY_GREPTILE_CRITICAL < PRIORITY_GREPTILE_WARNING
         assert PRIORITY_GREPTILE_WARNING < PRIORITY_ORIGINAL
         assert PRIORITY_ORIGINAL < PRIORITY_COVERAGE_GAP
+
+
+class TestPhaseConstants:
+    """Test phase constants."""
+
+    def test_parallel_phases_defined(self):
+        """Parallel phases include test_writing and implement."""
+        assert "test_writing" in PARALLEL_PHASES
+        assert "implement" in PARALLEL_PHASES
+
+    def test_sync_phases_defined(self):
+        """Sync phases include test, coverage, review."""
+        assert "test" in SYNC_PHASES
+        assert "coverage" in SYNC_PHASES
+        assert "review" in SYNC_PHASES
+
+    def test_phases_are_disjoint(self):
+        """Parallel and sync phases don't overlap."""
+        assert PARALLEL_PHASES.isdisjoint(SYNC_PHASES)
+
+
+class TestTaskDataclass:
+    """Test Task dataclass."""
+
+    def test_task_creation_with_required_fields(self):
+        """Task can be created with all required fields."""
+        task = Task(
+            id="task-001",
+            description="Test task",
+            status=TaskStatus.PENDING,
+            priority=PRIORITY_ORIGINAL,
+            source=TaskSource.ORIGINAL,
+            pr_id="pr-001",
+            phase="test_writing",
+            iteration=0,
+            created_at="2026-01-11T00:00:00Z",
+        )
+        assert task.id == "task-001"
+        assert task.description == "Test task"
+        assert task.status == TaskStatus.PENDING
+        assert task.priority == PRIORITY_ORIGINAL
+
+    def test_task_default_values(self):
+        """Task has correct default values."""
+        task = Task(
+            id="task-002",
+            description="Test",
+            status=TaskStatus.PENDING,
+            priority=3,
+            source=TaskSource.ORIGINAL,
+            pr_id="pr-001",
+            phase="test_writing",
+            iteration=0,
+            created_at="2026-01-11T00:00:00Z",
+        )
+        assert task.assigned_agent is None
+        assert task.metadata == {}
+
+    def test_task_with_metadata(self):
+        """Task can store metadata."""
+        task = Task(
+            id="task-003",
+            description="Test",
+            status=TaskStatus.PENDING,
+            priority=3,
+            source=TaskSource.ORIGINAL,
+            pr_id="pr-001",
+            phase="test_writing",
+            iteration=0,
+            created_at="2026-01-11T00:00:00Z",
+            metadata={"file": "test.py", "line": 42},
+        )
+        assert task.metadata["file"] == "test.py"
+        assert task.metadata["line"] == 42
+
+    def test_task_status_transitions(self):
+        """Task status can be updated."""
+        task = Task(
+            id="task-004",
+            description="Test",
+            status=TaskStatus.PENDING,
+            priority=3,
+            source=TaskSource.ORIGINAL,
+            pr_id="pr-001",
+            phase="test_writing",
+            iteration=0,
+            created_at="2026-01-11T00:00:00Z",
+        )
+        assert task.status == TaskStatus.PENDING
+        task.status = TaskStatus.RUNNING
+        assert task.status == TaskStatus.RUNNING
+
+
+class TestPRStateDataclass:
+    """Test PRState dataclass."""
+
+    def test_prstate_creation(self):
+        """PRState can be created with required fields."""
+        pr = PRState(
+            pr_id="pr-001",
+            branch="feature/test",
+            phase="test_writing",
+            task_ids=["task-001", "task-002"],
+        )
+        assert pr.pr_id == "pr-001"
+        assert pr.branch == "feature/test"
+        assert pr.phase == "test_writing"
+        assert pr.task_ids == ["task-001", "task-002"]
+
+    def test_prstate_default_iteration(self):
+        """PRState defaults to iteration 0."""
+        pr = PRState(
+            pr_id="pr-002",
+            branch="feature/test",
+            phase="test_writing",
+            task_ids=[],
+        )
+        assert pr.iteration == 0
+
+    def test_prstate_task_ids_list(self):
+        """PRState task_ids is a list."""
+        pr = PRState(
+            pr_id="pr-003",
+            branch="feature/test",
+            phase="implement",
+            task_ids=["task-a", "task-b", "task-c"],
+        )
+        assert len(pr.task_ids) == 3
+        assert "task-b" in pr.task_ids

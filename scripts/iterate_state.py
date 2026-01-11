@@ -12,6 +12,7 @@ Usage:
 import argparse
 import json
 import sys
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -43,6 +44,37 @@ PRIORITY_GREPTILE_CRITICAL = 1
 PRIORITY_GREPTILE_WARNING = 2
 PRIORITY_ORIGINAL = 3
 PRIORITY_COVERAGE_GAP = 4
+
+
+# Phase execution model
+PARALLEL_PHASES = {"test_writing", "implement"}  # Tasks run independently
+SYNC_PHASES = {"test", "coverage", "review"}     # Tasks sync per-PR
+
+
+@dataclass
+class Task:
+    """A task in the queue."""
+    id: str                          # UUID, e.g., "task-a1b2c3d4"
+    description: str                 # Human-readable task description
+    status: TaskStatus               # Enum: pending, running, completed, failed
+    priority: int                    # 0=highest (test_failure), 4=lowest (coverage_gap)
+    source: TaskSource               # Enum: original, greptile, test_failure, coverage_gap
+    pr_id: str                       # Which PR this task belongs to
+    phase: str                       # Current phase: test_writing, implement, test, coverage, review
+    iteration: int                   # Which iteration this task was created in
+    created_at: str                  # ISO timestamp
+    assigned_agent: Optional[str] = None  # Agent ID if currently running
+    metadata: dict = field(default_factory=dict)  # Flexible storage
+
+
+@dataclass
+class PRState:
+    """State of a PR in the queue."""
+    pr_id: str                       # PR identifier
+    branch: str                      # Git branch name
+    phase: str                       # Current PR phase: test_writing, implement, test, coverage, review, done
+    task_ids: list[str]              # All task IDs in this PR
+    iteration: int = 0               # Current iteration for this PR
 
 
 # =============================================================================
