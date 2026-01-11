@@ -228,6 +228,26 @@ MCP_SCRIPT_REQUIRED = {
 }
 
 
+def _normalize_shell_command(cmd: str) -> str:
+    """Normalize shell command by removing common obfuscation patterns.
+
+    Prevents bypasses like: .sta""te, .sta''te, $'.state', \\s escapes
+    """
+    import re
+    # Remove empty string concatenations: "" and ''
+    cmd = re.sub(r'""', '', cmd)
+    cmd = re.sub(r"''", '', cmd)
+    # Remove backslash escapes for non-special chars (keep \n \t \r \\)
+    cmd = re.sub(r'\\([^nrt\\])', r'\1', cmd)
+    # Remove $'' ANSI-C quoting wrapper (common obfuscation)
+    cmd = re.sub(r"\$'([^']*)'", r'\1', cmd)
+    # Remove backtick empty commands
+    cmd = re.sub(r'`\s*`', '', cmd)
+    # Collapse multiple spaces
+    cmd = re.sub(r'\s+', ' ', cmd)
+    return cmd
+
+
 def _validate_inputs(tool_name: str = None, tool_input: dict = None, state: dict = None) -> tuple:
     """Validate and normalize inputs. Returns (tool_input, state) with defaults."""
     if tool_input is None:
@@ -306,7 +326,9 @@ def check_phase_restrictions(tool_name: str, state: dict, tool_input: dict = Non
     # Only block WRITES to state files, allow reads (ls, cat, grep, etc.)
     if tool_name == "Bash" and tool_input:
         command = tool_input.get("command", "").strip()
-        if '.state' in command or 'session.json' in command:
+        # Normalize to prevent obfuscation bypasses like .sta""te or $'.state'
+        normalized_cmd = _normalize_shell_command(command)
+        if '.state' in normalized_cmd or 'session.json' in normalized_cmd:
             # Block write operations
             write_patterns = [
                 r'\brm\s+',  # rm
@@ -318,7 +340,7 @@ def check_phase_restrictions(tool_name: str, state: dict, tool_input: dict = Non
                 r'\becho\s+.*>',  # echo redirect
                 r'\bcat\s+>',  # cat redirect
             ]
-            if any(re.search(pattern, command) for pattern in write_patterns):
+            if any(re.search(pattern, normalized_cmd) for pattern in write_patterns):
                 return block(
                     "[BLOCKED] Cannot write to .state/ directory.\n\n"
                     "REQUIRED ACTION: Read from .state/ only, never write\n"
