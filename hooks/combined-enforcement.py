@@ -37,6 +37,7 @@ except ImportError:
 
 # Configuration
 STATE_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/session.json"
+STATE_DIR = STATE_FILE.parent
 CONFIG_FILE = Path.home() / ".claude/plugins/agent-swarm/config/workflow.json"
 LOG_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/activity.log"
 STATS_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/stats.json"
