@@ -318,6 +318,38 @@ The key is:
 - Clean handoffs between repos
 - Enforcement to stay on workflow
 
+### Design Principle: Autonomous Loop with Visibility
+
+**The workflow should run autonomously until the user decides to stop it.**
+
+Not:
+- Constant approval seeking ("Here's what I found, want me to continue?")
+- Silent operation with big dumps at the end
+
+But:
+- **Clear state at all times** - what phase, what's pending, what's blocked
+- **Progress indicators** - issues fixed, coverage %, PRs in flight, agents running
+- **Keeps running** - no stopping to ask permission for each step
+- **User can check in anytime** - see status, redirect if needed, or let it continue
+
+The user kicks it off and can walk away. When they come back, they see:
+```
+[ITERATE] Running - Iteration 3/5
+  PR #42 (logos-core): awaiting review
+  PR #17 (logos-api): 2 agents implementing
+  PR #8 (logos-ui): review complete, 0 issues remaining
+
+  Progress: 47/50 issues resolved
+  Coverage: 78% → 91%
+  Time elapsed: 32 min
+```
+
+They can:
+- Let it continue (`/iterate continue`)
+- Pause and review (`/iterate pause`)
+- Stop and checkpoint (`/iterate stop`)
+- Redirect focus (`/iterate focus logos-api`)
+
 ---
 
 ## Files Changed This Session
