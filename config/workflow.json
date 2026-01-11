@@ -75,6 +75,17 @@
       ]
     }
   },
+  "iteration_modes": {
+    "iterate": {
+      "description": "Tight implement-test-review loop for rapid iteration",
+      "optional_phases": ["intake", "design"],
+      "loop_phases": ["implement", "test", "review"],
+      "max_iterations": 3,
+      "checkpoint_after_loop": true,
+      "exit_conditions": ["tests_pass", "review_approved", "max_reached"],
+      "agents": ["implementer", "reviewer"]
+    }
+  },
   "execution": {
     "prefer_parallel": true,
     "max_concurrent_subagents": 3,
