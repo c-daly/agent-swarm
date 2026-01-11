@@ -111,6 +111,10 @@ def call_monitor_agent(tool_name: str, tool_input: dict, state: dict) -> Optiona
 
 def _build_monitor_prompt(tool_name: str, tool_input: dict, state: dict) -> str:
     """Build prompt for monitor agent based on context."""
+    if tool_input is None:
+        tool_input = {}
+    if state is None:
+        state = {}
 
     # Git commit validation
     if tool_name == "Bash" and "git commit" in tool_input.get("command", ""):

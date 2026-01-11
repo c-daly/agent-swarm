@@ -227,6 +227,15 @@ MCP_SCRIPT_REQUIRED = {
     "mcp__filesystem__search_files",
 }
 
+
+def _validate_inputs(tool_name: str = None, tool_input: dict = None, state: dict = None) -> tuple:
+    """Validate and normalize inputs. Returns (tool_input, state) with defaults."""
+    if tool_input is None:
+        tool_input = {}
+    if state is None:
+        state = {}
+    return tool_input, state
+
 def load_json(path: Path) -> dict:
     """Load JSON file safely with logging."""
     if not path.exists():
@@ -291,6 +300,7 @@ def check_autopilot(state: dict) -> dict | None:
 
 def check_phase_restrictions(tool_name: str, state: dict, tool_input: dict = None) -> dict | None:
     """Enforce phase-specific tool restrictions."""
+    tool_input, state = _validate_inputs(tool_input=tool_input, state=state)
     
     # FIRST: State file protection (always enforced, regardless of phase)
     # Only block WRITES to state files, allow reads (ls, cat, grep, etc.)
@@ -416,6 +426,7 @@ def check_phase_restrictions(tool_name: str, state: dict, tool_input: dict = Non
 
 def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dict | None:
     """Enforce token-saving measures."""
+    tool_input, state = _validate_inputs(tool_input=tool_input, state=state)
     from datetime import datetime, timedelta
 
     # CHECK COMPLIANCE: If previously blocked, agent MUST use Task/Write
@@ -625,6 +636,7 @@ def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dic
 
 def check_scope_discipline(tool_name: str, tool_input: dict, state: dict) -> dict | None:
     """Prevent off-task exploration."""
+    tool_input, state = _validate_inputs(tool_input=tool_input, state=state)
     phase = state.get("phase") or ""
     task_summary = state.get("task_summary", "")
 
@@ -689,6 +701,7 @@ def check_mcp_script_requirement(tool_name: str, tool_input: dict, state: dict) 
 
 def check_smart_tool_usage(tool_name: str, tool_input: dict, state: dict) -> dict | None:
     """Block dumb methods when smarter alternatives exist."""
+    tool_input, state = _validate_inputs(tool_input=tool_input, state=state)
 
     # WebSearch for library docs → use Context7
     if tool_name == "WebSearch":
@@ -812,6 +825,7 @@ def check_smart_tool_usage(tool_name: str, tool_input: dict, state: dict) -> dic
 
 def check_checkpoint_approval(tool_name: str, tool_input: dict, state: dict) -> dict | None:
     """Enforce checkpoint approval requirement before critical operations."""
+    tool_input, state = _validate_inputs(tool_input=tool_input, state=state)
     phase = state.get("phase") or ""
     if not phase:
         return None
@@ -861,6 +875,7 @@ def check_checkpoint_approval(tool_name: str, tool_input: dict, state: dict) -> 
 
 def check_git_safety(tool_name: str, tool_input: dict, state: dict) -> dict | None:
     """Prevent dangerous git operations."""
+    tool_input, state = _validate_inputs(tool_input=tool_input, state=state)
     if tool_name != "Bash":
         return None
 
@@ -1053,6 +1068,7 @@ def check_git_approval_layers(tool_name: str, tool_input: dict, state: dict, mes
 
 def check_verify_required(tool_name: str, tool_input: dict, state: dict) -> dict | None:
     """Block git commit unless verify has passed."""
+    tool_input, state = _validate_inputs(tool_input=tool_input, state=state)
     if tool_name != "Bash":
         return None
 
@@ -1081,6 +1097,7 @@ def check_verify_required(tool_name: str, tool_input: dict, state: dict) -> dict
 
 def reset_verify_on_edit(tool_name: str, tool_input: dict, state: dict) -> None:
     """Reset verify_passed flag when files are edited."""
+    tool_input, state = _validate_inputs(tool_input=tool_input, state=state)
     if tool_name not in WRITE_TOOLS:
         return
 
@@ -1093,6 +1110,7 @@ def reset_verify_on_edit(tool_name: str, tool_input: dict, state: dict) -> None:
 
 def check_subagent_model(tool_name: str, tool_input: dict, state: dict) -> dict | None:
     """Enforce correct model usage when spawning subagents."""
+    tool_input, state = _validate_inputs(tool_input=tool_input, state=state)
     if tool_name != "Task":
         return None
     
@@ -1129,6 +1147,7 @@ def check_subagent_model(tool_name: str, tool_input: dict, state: dict) -> dict 
 
 def check_episodic_memory_suggestion(tool_name: str, tool_input: dict, state: dict):
     """Stronger suggestion for episodic memory search at key moments"""
+    tool_input, state = _validate_inputs(tool_input=tool_input, state=state)
 
     # Track suggestion count (allow multiple, but limit spam)
     suggestion_count = state.get("memory_search_suggested", 0)
