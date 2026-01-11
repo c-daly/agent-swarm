@@ -98,7 +98,8 @@ def check_new_plugins():
 
     try:
         count = int(state_file.read_text()) if state_file.exists() else 0
-    except Exception:
+    except (ValueError, IOError) as e:
+        log_debug(f"Failed to read plugin check count: {e}")
         count = 0
 
     count += 1

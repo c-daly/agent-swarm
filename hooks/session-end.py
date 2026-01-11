@@ -113,7 +113,7 @@ def main():
     # Read session data from stdin (if any)
     try:
         input_data = json.loads(sys.stdin.read())
-    except:
+    except json.JSONDecodeError:
         input_data = {}
 
     # Generate dashboard

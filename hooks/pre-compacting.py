@@ -34,7 +34,8 @@ def extract_session_info():
             session = json.loads(session_file.read_text())
             phase = session.get("phase", "unknown")
             task = session.get("task_summary", "No task specified")
-        except Exception:
+        except (json.JSONDecodeError, IOError) as e:
+            log_debug(f"Failed to load session file: {e}")
             phase = "unknown"
             task = "No task specified"
     else:
