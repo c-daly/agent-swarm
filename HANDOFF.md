@@ -1,84 +1,79 @@
 # Session Handoff - 2026-01-10
 
-**Status:** ✅ COMPLETED - Hook output format fixes
+**Status:** COMPLETE - Ready for restart
 
 ---
 
-## Summary
+## Completed This Session
 
-Fixed critical hook output format errors in session-start.py, session-end.py, and pre-compacting.py that were causing JSON validation failures.
+### 1. Adversarial Test Agent (commit `7164280`)
+Created new agent for iterate workflow that evaluates test quality:
+- `agents/adversary.md` - Agent definition (model: sonnet)
+- `scripts/adversary_analyze.py` - Coverage analysis with `--scope commit|pr|codebase`
+- `config/workflow.json` - Added adversary config with Greptile queries
+- `skills/iterate/SKILL.md` - Updated flow: implement → adversary → review
+
+### 2. Compaction State Persistence (commit `7164280`)
+Fixed approval flags being lost on context compaction:
+- `hooks/pre-compacting.py` - Saves `user_approved_commit`, `tests_executed`, `verify_signal_given` to `.state/compaction_state.json`
+- `hooks/session-start.py` - Restores from compaction state file, then deletes it
+- Fresh sessions start clean, compacted sessions preserve approval
+
+### 3. Hook Bug Fixes (commit `7c1230f`)
+Fixed three bugs in `hooks/combined-enforcement.py`:
+
+| Bug | Fix |
+|-----|-----|
+| Classification not detected | Persist `classification_given` to state on first edit |
+| `poetry run pytest` not detected | Added pattern `r'poetry\s+run\s+pytest'` |
+| VERIFY signal not detected | Check command description for "verified"/"\[verify\]" |
+
+All fixes synced to 6 cached hook locations.
 
 ---
 
-## What Was Done
+## Key Files Modified
 
-1. **Diagnosed hook errors** - SessionStart and SessionEnd hooks were failing with JSON validation errors
-2. **Researched schema** - Used claude-code-guide agent to find correct hook output format
-3. **Fixed three hooks**:
-   - `session-start.py` - Changed from `hookSpecificOutput.message` to `systemMessage`
-   - `session-end.py` - Changed from `hookSpecificOutput.message` to `systemMessage`
-   - `pre-compacting.py` - Changed from `hookSpecificOutput.message` to `systemMessage`
-4. **Validated fixes** - All hooks now produce valid JSON matching expected schema
-
----
-
-## Key Learning: Hook Output Schema
-
-**CRITICAL:** SessionStart, SessionEnd, and PreCompact hooks use different output format than PreToolUse/PostToolUse hooks.
-
-### Correct Format for SessionStart/SessionEnd/PreCompact:
-```json
-{
-  "systemMessage": "Message shown to user"
-}
+```
+hooks/combined-enforcement.py  # Main enforcement (3 bug fixes)
+hooks/pre-compacting.py        # Save approval state before compaction
+hooks/session-start.py         # Restore from compaction state
+agents/adversary.md            # New adversary agent
+scripts/adversary_analyze.py   # Coverage analysis helper
+config/workflow.json           # Adversary config
+skills/iterate/SKILL.md        # Updated iterate flow
 ```
 
-### WRONG (what we had):
-```json
-{
-  "hookSpecificOutput": {
-    "message": "..."  // This field doesn't exist in schema
-  }
-}
-```
-
-### Context from documentation:
-- SessionStart can use `hookSpecificOutput.additionalContext` to inject context into Claude's conversation
-- SessionEnd/PreCompact only use `systemMessage` for user-facing messages
-- These hooks cannot block execution (unlike PreToolUse hooks)
-
 ---
 
-## Gotchas Encountered
+## Architecture Decisions
 
-1. **Initial assumption was wrong** - Tried to pattern-match from other hooks without reading schema first
-2. **Agent output was too large** - Had to extract specific parts from 295KB output file
-3. **Confused hookSpecificOutput vs systemMessage** - Different hook types use different fields
-4. **Should have checked docs first** - Would have saved time to use claude-code-guide or context7 immediately
+1. **Compaction state uses separate file** - `compaction_state.json` is written by pre-compacting and consumed (deleted) by session-start. One-time handoff.
 
----
+2. **Command description for signal detection** - When checking for signals in current response ([SIMPLE], [VERIFY]), check the Bash command description since response text isn't in messages yet.
 
-## Files Modified
-
-- `/home/fearsidhe/.claude/plugins/agent-swarm/hooks/session-start.py`
-- `/home/fearsidhe/.claude/plugins/agent-swarm/hooks/session-end.py`
-- `/home/fearsidhe/.claude/plugins/agent-swarm/hooks/pre-compacting.py`
+3. **State persistence on first edit** - Classification is assumed valid on first edit and persisted to state so subsequent edits in same response also pass.
 
 ---
 
 ## Verification
 
-All hooks tested and producing valid JSON:
+All 62 tests pass:
 ```bash
-python3 hooks/session-start.py <<< '{}' | python3 -m json.tool  # ✓
-python3 hooks/session-end.py <<< '{}' | python3 -m json.tool    # ✓
-python3 hooks/pre-compacting.py <<< '{}' | python3 -m json.tool # ✓
+poetry run pytest tests/ -q
 ```
+
+Two commits on branch `feature/greptile-query-iterate-mode`:
+- `7164280` - Adversary agent + compaction persistence
+- `7c1230f` - Hook bug fixes
 
 ---
 
-## Next Session Notes
+## Ready for Testing
 
-- Hooks are now working correctly
-- No pending issues with hook infrastructure
-- All hook output schemas validated
+The iterate workflow with adversary agent is ready to test:
+```bash
+/iterate "Fix a bug or add a small feature"
+```
+
+This will run: implement → adversary (coverage analysis + Greptile queries) → review → checkpoint
