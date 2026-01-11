@@ -12,11 +12,11 @@ Usage:
 
 import json
 import sys
-import subprocess
 from pathlib import Path
 
 CLAUDE_DIR = Path.home() / ".claude"
 PLUGINS_DIR = CLAUDE_DIR / "plugins"
+
 
 def get_mcp_servers() -> dict:
     """Get configured MCP servers from settings."""
@@ -26,6 +26,7 @@ def get_mcp_servers() -> dict:
         return settings.get("mcpServers", {})
     return {}
 
+
 def get_enabled_plugins() -> list:
     """Get list of enabled plugins."""
     settings_path = CLAUDE_DIR / "settings.json"
@@ -34,6 +35,7 @@ def get_enabled_plugins() -> list:
         enabled = settings.get("enabledPlugins", {})
         return [k for k, v in enabled.items() if v]
     return []
+
 
 def find_skills(plugin_path: Path) -> list:
     """Find skills in a plugin directory."""
@@ -56,6 +58,7 @@ def find_skills(plugin_path: Path) -> list:
                     skills.append({"name": name, "description": desc[:100]})
     return skills
 
+
 def find_agents(plugin_path: Path) -> list:
     """Find agent definitions in a plugin."""
     agents = []
@@ -69,11 +72,9 @@ def find_agents(plugin_path: Path) -> list:
                     model_line = [l for l in content.split("\n") if "**Model**:" in l]
                     if model_line:
                         model = model_line[0].split(":")[-1].strip()
-                agents.append({
-                    "name": agent_file.stem,
-                    "model": model
-                })
+                agents.append({"name": agent_file.stem, "model": model})
     return agents
+
 
 def find_scripts(plugin_path: Path) -> list:
     """Find utility scripts in a plugin."""
@@ -90,6 +91,7 @@ def find_scripts(plugin_path: Path) -> list:
             scripts.append({"name": script.name, "description": desc})
     return scripts
 
+
 def get_known_mcp_tools() -> dict:
     """Known MCP tool categories."""
     return {
@@ -99,17 +101,17 @@ def get_known_mcp_tools() -> dict:
                 "find_symbol - Locate definitions",
                 "find_references - Find usages",
                 "get_definition - Get signature/docs",
-                "list_dir - Code structure"
+                "list_dir - Code structure",
             ],
-            "use_instead_of": "Read tool for code understanding"
+            "use_instead_of": "Read tool for code understanding",
         },
         "context7": {
             "purpose": "Documentation lookup",
             "tools": [
                 "resolve-library-id - Get library ID",
-                "query-docs - Get specific docs"
+                "query-docs - Get specific docs",
             ],
-            "use_instead_of": "WebSearch for library docs"
+            "use_instead_of": "WebSearch for library docs",
         },
         "filesystem": {
             "purpose": "File operations",
@@ -117,22 +119,25 @@ def get_known_mcp_tools() -> dict:
                 "read_text_file - Read file content",
                 "write_file - Create/overwrite file",
                 "edit_file - Make line edits",
-                "directory_tree - Get structure"
+                "directory_tree - Get structure",
             ],
-            "use_instead_of": "Bash cat/echo"
+            "use_instead_of": "Bash cat/echo",
         },
         "memory": {
             "purpose": "Knowledge graph",
             "tools": [
                 "create_entities - Add nodes",
                 "create_relations - Link nodes",
-                "search_nodes - Query graph"
+                "search_nodes - Query graph",
             ],
-            "use_instead_of": "Repeated context passing"
-        }
+            "use_instead_of": "Repeated context passing",
+        },
     }
 
-def format_inventory(include_mcp=True, include_skills=True, include_agents=True, include_scripts=True) -> str:
+
+def format_inventory(
+    include_mcp=True, include_skills=True, include_agents=True, include_scripts=True
+) -> str:
     """Format full inventory."""
     lines = ["# Capability Inventory\n"]
 
@@ -177,22 +182,29 @@ def format_inventory(include_mcp=True, include_skills=True, include_agents=True,
                         if include_skills:
                             skills = find_skills(plugin_path)
                             if skills:
-                                lines.append(f"  Skills: {', '.join(s['name'] for s in skills)}")
+                                lines.append(
+                                    f"  Skills: {', '.join(s['name'] for s in skills)}"
+                                )
 
                         if include_agents:
                             agents = find_agents(plugin_path)
                             if agents:
-                                agent_strs = [f"{a['name']}({a['model']})" for a in agents]
+                                agent_strs = [
+                                    f"{a['name']}({a['model']})" for a in agents
+                                ]
                                 lines.append(f"  Agents: {', '.join(agent_strs)}")
 
                         if include_scripts:
                             scripts = find_scripts(plugin_path)
                             if scripts:
-                                lines.append(f"  Scripts: {', '.join(s['name'] for s in scripts)}")
+                                lines.append(
+                                    f"  Scripts: {', '.join(s['name'] for s in scripts)}"
+                                )
 
                         lines.append("")
 
     return "\n".join(lines)
+
 
 def find_tool_for(query: str) -> str:
     """Suggest the right tool for a need."""
@@ -201,16 +213,36 @@ def find_tool_for(query: str) -> str:
     suggestions = []
 
     # Code analysis
-    if any(w in query_lower for w in ["find", "symbol", "definition", "reference", "code", "function", "class"]):
-        suggestions.append("→ Use Serena: mcp__plugin_serena_serena__find_symbol / get_definition")
+    if any(
+        w in query_lower
+        for w in [
+            "find",
+            "symbol",
+            "definition",
+            "reference",
+            "code",
+            "function",
+            "class",
+        ]
+    ):
+        suggestions.append(
+            "→ Use Serena: mcp__plugin_serena_serena__find_symbol / get_definition"
+        )
 
     # Documentation
-    if any(w in query_lower for w in ["docs", "documentation", "api", "how to", "example", "library"]):
-        suggestions.append("→ Use Context7: mcp__context7__query-docs (after resolve-library-id)")
+    if any(
+        w in query_lower
+        for w in ["docs", "documentation", "api", "how to", "example", "library"]
+    ):
+        suggestions.append(
+            "→ Use Context7: mcp__context7__query-docs (after resolve-library-id)"
+        )
 
     # Search
     if any(w in query_lower for w in ["search", "grep", "find text", "pattern"]):
-        suggestions.append("→ Use batch_search.py for multiple patterns, or Grep for single")
+        suggestions.append(
+            "→ Use batch_search.py for multiple patterns, or Grep for single"
+        )
 
     # GitHub
     if any(w in query_lower for w in ["pr", "issue", "github", "pull request"]):
@@ -221,9 +253,12 @@ def find_tool_for(query: str) -> str:
         suggestions.append("→ Use mcp__filesystem__directory_tree or Serena list_dir")
 
     if not suggestions:
-        suggestions.append("No specific suggestion. Check full inventory with: inventory.py all")
+        suggestions.append(
+            "No specific suggestion. Check full inventory with: inventory.py all"
+        )
 
     return f"Tool suggestions for '{query}':\n" + "\n".join(suggestions)
+
 
 def main():
     if len(sys.argv) < 2:
@@ -235,13 +270,22 @@ def main():
     if cmd == "all":
         print(format_inventory())
     elif cmd == "mcp":
-        print(format_inventory(include_skills=False, include_agents=False, include_scripts=False))
+        print(
+            format_inventory(
+                include_skills=False, include_agents=False, include_scripts=False
+            )
+        )
     elif cmd == "skills":
-        print(format_inventory(include_mcp=False, include_agents=False, include_scripts=False))
+        print(
+            format_inventory(
+                include_mcp=False, include_agents=False, include_scripts=False
+            )
+        )
     elif cmd == "tools" and len(sys.argv) >= 3:
         print(find_tool_for(" ".join(sys.argv[2:])))
     else:
         print(f"Unknown command: {cmd}")
+
 
 if __name__ == "__main__":
     main()

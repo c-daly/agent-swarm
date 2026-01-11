@@ -1,5 +1,5 @@
 #!/bin/bash
-# Injects subagent briefing into Task tool prompts
+# Injects subagent briefing AND hierarchical context into Task tool prompts
 # Hook: PreToolUse for Task tool
 
 # Read input from stdin
@@ -14,20 +14,52 @@ if [ -z "$ORIGINAL_PROMPT" ]; then
     exit 0
 fi
 
-# Read the briefing from the plugin directory (not ~/.claude/hooks)
+# Get plugin root and working directory
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/agent-swarm}"
-BRIEFING_FILE="$PLUGIN_ROOT/hooks/subagent-briefing.md"
+WORKING_DIR=$(echo "$INPUT" | jq -r '.cwd // "."')
+AGENT_TYPE=$(echo "$INPUT" | jq -r '.tool_input.subagent_type // "general-purpose"')
 
-if [ ! -f "$BRIEFING_FILE" ]; then
-    # Briefing doesn't exist, just allow without modification
-    echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}'
-    exit 0
+# Read the briefing
+BRIEFING_FILE="$PLUGIN_ROOT/hooks/subagent-briefing.md"
+if [ -f "$BRIEFING_FILE" ]; then
+    BRIEFING=$(cat "$BRIEFING_FILE")
+else
+    BRIEFING=""
 fi
 
-BRIEFING=$(cat "$BRIEFING_FILE")
+# Get hierarchical context via Python
+CONTEXT_SCRIPT="$PLUGIN_ROOT/hooks/context-injection.py"
+if [ -f "$CONTEXT_SCRIPT" ]; then
+    # Map subagent_type to agent type for context filtering
+    case "$AGENT_TYPE" in
+        "Explore") CONTEXT_AGENT="explorer" ;;
+        "Plan") CONTEXT_AGENT="architect" ;;
+        "general-purpose") CONTEXT_AGENT="implementer" ;;
+        *) CONTEXT_AGENT="$AGENT_TYPE" ;;
+    esac
 
-# Create modified prompt with briefing prepended
-MODIFIED_PROMPT="# SUBAGENT OPERATING PROTOCOL
+    HIERARCHICAL_CONTEXT=$(python3 "$CONTEXT_SCRIPT" inject "$CONTEXT_AGENT" "$WORKING_DIR" 2>/dev/null)
+else
+    HIERARCHICAL_CONTEXT=""
+fi
+
+# Build the modified prompt
+if [ -n "$HIERARCHICAL_CONTEXT" ] && [ -n "$BRIEFING" ]; then
+    MODIFIED_PROMPT="# SUBAGENT OPERATING PROTOCOL
+
+$BRIEFING
+
+---
+
+$HIERARCHICAL_CONTEXT
+
+---
+
+# YOUR TASK
+
+$ORIGINAL_PROMPT"
+elif [ -n "$BRIEFING" ]; then
+    MODIFIED_PROMPT="# SUBAGENT OPERATING PROTOCOL
 
 $BRIEFING
 
@@ -36,8 +68,11 @@ $BRIEFING
 # YOUR TASK
 
 $ORIGINAL_PROMPT"
+else
+    MODIFIED_PROMPT="$ORIGINAL_PROMPT"
+fi
 
-# Escape the modified prompt for JSON (escape quotes and newlines)
+# Escape the modified prompt for JSON
 ESCAPED_PROMPT=$(echo "$MODIFIED_PROMPT" | jq -Rs .)
 
 # Output modified tool input

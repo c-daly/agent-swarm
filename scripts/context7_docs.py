@@ -7,8 +7,8 @@ Usage:
     python3 context7_docs.py query "/vercel/next.js" "app router setup"
 """
 
-import json
 import sys
+
 
 def resolve_library(query: str) -> str:
     """Resolve library name to Context7 ID."""
@@ -21,6 +21,7 @@ Returns: Context7 library ID like "/vercel/next.js"
 
 THEN use query-docs with that ID"""
 
+
 def query_docs(library_id: str, query: str) -> str:
     """Query documentation for a library."""
     return f"""Use Context7 tool:
@@ -32,9 +33,11 @@ Returns: Relevant docs + code examples
 
 DO NOT use WebSearch for library documentation - Context7 has it."""
 
+
 def main():
     if len(sys.argv) < 3:
-        print("""Usage: context7_docs.py <command> <args>
+        print(
+            """Usage: context7_docs.py <command> <args>
 
 Commands:
   resolve "<library name>"           - Get Context7 library ID
@@ -49,7 +52,8 @@ ALWAYS use Context7 instead of WebSearch for:
 - API references
 - Framework guides
 - Code examples
-""")
+"""
+        )
         sys.exit(1)
 
     cmd = sys.argv[1]
@@ -60,6 +64,7 @@ ALWAYS use Context7 instead of WebSearch for:
         print(query_docs(sys.argv[2], sys.argv[3]))
     else:
         print(f"Unknown command or missing args: {cmd}")
+
 
 if __name__ == "__main__":
     main()

@@ -2,6 +2,8 @@
 
 **Model**: haiku (fast exploration, many parallel searches)
 
+**READ FIRST:** [CORE_PROTOCOL.md](../CORE_PROTOCOL.md) for tool selection, batch operations, and parallel execution rules.
+
 ## Purpose
 Codebase exploration for understanding existing code. Used for:
 - Finding relevant files
@@ -10,72 +12,10 @@ Codebase exploration for understanding existing code. Used for:
 - Mapping dependencies
 
 ## Behavior
-- Use Glob/Grep efficiently (batch patterns)
+- Use Glob/Grep efficiently (batch patterns when 3+)
 - Read only relevant sections of files
 - Return file:line references, not full content
 - Summarize patterns found
-
-## Parallel Execution (CRITICAL!)
-
-**ALWAYS make independent tool calls in parallel - single message with multiple tools.**
-
-**Example (GOOD):**
-```
-[Tool: Grep] pattern="auth" glob="*.py"
-[Tool: Grep] pattern="session" glob="*.py"
-[Tool: Grep] pattern="token" glob="*.py"
-```
-All 3 searches execute in parallel = 3x faster!
-
-**Example (BAD):**
-```
-[Tool: Grep] pattern="auth"
-[Waits for result...]
-[Tool: Grep] pattern="session"
-[Waits for result...]
-```
-Sequential = 3x slower!
-
-## Token Efficiency
-
-**BEFORE any file operations, check available scripts:**
-
-| Your Need | Use This Script | NOT This |
-|-----------|----------------|----------|
-| Find files matching 3+ patterns | `batch_search.py` | Multiple Grep/Glob |
-| Analyze structure of 3+ files | `file_analyzer.py` | Read each file |
-| Look up multiple symbols | `serena_batch.py` | Repeated find_symbol |
-| Get library docs | `context7_docs.py` | WebSearch |
-
-**Scripts location:** `~/.claude/plugins/agent-swarm/scripts/`
-
-### Decision Process:
-1. **Need info from 1-2 files?** → Direct Read is fine
-2. **Need info from 3+ sources?**
-   - Check: Does existing script fit? → Use it
-   - No fit? → Write custom processing script
-   - NEVER: Read 3+ files into context raw
-
-### Script Examples:
-```bash
-# Multiple pattern search
-python3 ~/.claude/plugins/agent-swarm/scripts/batch_search.py '{
-  "patterns": ["auth", "login"],
-  "path": "src"
-}'
-
-# Analyze files with summary
-python3 ~/.claude/plugins/agent-swarm/scripts/file_analyzer.py '{
-  "files": ["file1.ts", "file2.ts"],
-  "summarize": true
-}'
-```
-
-### Output Rules:
-- Return references, not content: `src/auth/login.ts:45 - handleLogin function`
-- Limit file reads to 100 lines around target
-- Aggregate findings, don't repeat
-- Scripts return summaries (5K tokens) vs raw (500K+ tokens)
 
 ## Output Format (REQUIRED)
 

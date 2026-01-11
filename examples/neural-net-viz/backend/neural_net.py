@@ -1,7 +1,8 @@
 import numpy as np
 
+
 class Layer:
-    def __init__(self, n_inputs, n_outputs, activation='relu'):
+    def __init__(self, n_inputs, n_outputs, activation="relu"):
         self.n_inputs = n_inputs
         self.n_outputs = n_outputs
         self.activation = activation
@@ -22,9 +23,9 @@ class Layer:
         self.inputs = inputs
         self.z = np.dot(inputs, self.weights) + self.biases
 
-        if self.activation == 'relu':
+        if self.activation == "relu":
             self.activations = np.maximum(0, self.z)
-        elif self.activation == 'softmax':
+        elif self.activation == "softmax":
             exp_z = np.exp(self.z - np.max(self.z, axis=1, keepdims=True))
             self.activations = exp_z / np.sum(exp_z, axis=1, keepdims=True)
         else:
@@ -33,7 +34,7 @@ class Layer:
         return self.activations
 
     def backward(self, grad_output):
-        if self.activation == 'relu':
+        if self.activation == "relu":
             grad_output = grad_output * (self.z > 0)
 
         batch_size = self.inputs.shape[0]
@@ -45,10 +46,14 @@ class Layer:
 
     def get_viz_data(self):
         return {
-            'weights': self.weights.copy(),
-            'biases': self.biases.copy(),
-            'activations': self.activations.mean(axis=0) if self.activations is not None else None,
-            'gradients': self.grad_weights.copy() if self.grad_weights is not None else None
+            "weights": self.weights.copy(),
+            "biases": self.biases.copy(),
+            "activations": (
+                self.activations.mean(axis=0) if self.activations is not None else None
+            ),
+            "gradients": (
+                self.grad_weights.copy() if self.grad_weights is not None else None
+            ),
         }
 
 
@@ -58,7 +63,7 @@ class Network:
         self.layers = []
 
         for i in range(len(layer_sizes) - 1):
-            activation = 'softmax' if i == len(layer_sizes) - 2 else 'relu'
+            activation = "softmax" if i == len(layer_sizes) - 2 else "relu"
             layer = Layer(layer_sizes[i], layer_sizes[i + 1], activation)
             self.layers.append(layer)
 
@@ -99,7 +104,7 @@ class Network:
             layer_data = layer.get_viz_data()
 
             # Sample top 500 weights by magnitude for visualization
-            weights = layer_data['weights']
+            weights = layer_data["weights"]
             n_inputs, n_outputs = weights.shape
 
             if n_inputs * n_outputs > 500:
@@ -111,29 +116,39 @@ class Network:
                 for idx in top_indices:
                     input_idx = idx // n_outputs
                     output_idx = idx % n_outputs
-                    sampled_edges.append({
-                        'from': int(input_idx),
-                        'to': int(output_idx),
-                        'weight': float(weights[input_idx, output_idx])
-                    })
+                    sampled_edges.append(
+                        {
+                            "from": int(input_idx),
+                            "to": int(output_idx),
+                            "weight": float(weights[input_idx, output_idx]),
+                        }
+                    )
             else:
                 sampled_edges = []
                 for input_idx in range(n_inputs):
                     for output_idx in range(n_outputs):
-                        sampled_edges.append({
-                            'from': int(input_idx),
-                            'to': int(output_idx),
-                            'weight': float(weights[input_idx, output_idx])
-                        })
+                        sampled_edges.append(
+                            {
+                                "from": int(input_idx),
+                                "to": int(output_idx),
+                                "weight": float(weights[input_idx, output_idx]),
+                            }
+                        )
 
-            viz_data.append({
-                'layer_index': i,
-                'n_inputs': n_inputs,
-                'n_outputs': n_outputs,
-                'edges': sampled_edges,
-                'activations': layer_data['activations'].tolist() if layer_data['activations'] is not None else None,
-                'biases': layer_data['biases'].tolist()
-            })
+            viz_data.append(
+                {
+                    "layer_index": i,
+                    "n_inputs": n_inputs,
+                    "n_outputs": n_outputs,
+                    "edges": sampled_edges,
+                    "activations": (
+                        layer_data["activations"].tolist()
+                        if layer_data["activations"] is not None
+                        else None
+                    ),
+                    "biases": layer_data["biases"].tolist(),
+                }
+            )
 
         return viz_data
 

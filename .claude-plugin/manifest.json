@@ -5,6 +5,10 @@
   "author": {
     "name": "fearsidhe"
   },
+  "skills": [
+    "orchestrate",
+    "spawn"
+  ],
   "hooks": {
     "preToolUse": {
       "script": "../hooks/combined-enforcement.py",
@@ -12,7 +16,19 @@
     },
     "postToolUse": {
       "script": "../hooks/post-task-tracking.py",
-      "description": "Track subagent completion and token usage"
+      "description": "Track subagent completion, token usage, and auto-detect new plugins"
+    },
+    "SessionStart": {
+      "script": "../hooks/session-start.py",
+      "description": "Auto-search episodic memory for relevant past conversations"
+    },
+    "SessionEnd": {
+      "script": "../hooks/session-end.py",
+      "description": "Auto-generate metrics dashboard at session end"
+    },
+    "preCompacting": {
+      "script": "../hooks/pre-compacting.py",
+      "description": "Auto-write handoff before context compacting to preserve state"
     }
   }
 }

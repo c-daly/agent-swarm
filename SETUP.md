@@ -4,20 +4,20 @@
 
 ### 1. MCP Bridge Infrastructure
 
-Agent-swarm relies on `~/.claude/lib/mcp_bridge.py` for token-efficient batch operations.
+Agent-swarm relies on `/home/fearsidhe/.claude/plugins/agent-swarm/lib/mcp_bridge.py` for token-efficient batch operations.
 
 **Installation:**
 ```bash
 # The mcp_bridge.py file should already exist at:
-ls -la ~/.claude/lib/mcp_bridge.py
+ls -la /home/fearsidhe/.claude/plugins/agent-swarm/lib/mcp_bridge.py
 
 # If missing, copy from this repo's reference:
-# (Note: mcp_bridge.py is maintained separately in ~/.claude/lib/)
+# (Note: mcp_bridge.py is maintained separately in /home/fearsidhe/.claude/plugins/agent-swarm/lib/)
 ```
 
 **Verify installation:**
 ```bash
-python3 -c "import sys; sys.path.insert(0, '/home/fearsidhe/.claude/lib'); from mcp_bridge import native_glob; print('✅ mcp_bridge installed')"
+python3 -c "import sys; sys.path.insert(0, '/home/fearsidhe/.claude/plugins/agent-swarm/lib'); from mcp_bridge import native_glob; print('✅ mcp_bridge installed')"
 ```
 
 ### 2. Dependencies
@@ -86,7 +86,7 @@ When you need to perform 3+ similar operations, use a script with mcp_bridge:
 **Good Example:**
 ```python
 import sys
-sys.path.insert(0, '/home/fearsidhe/.claude/lib')
+sys.path.insert(0, '/home/fearsidhe/.claude/plugins/agent-swarm/lib')
 from mcp_bridge import native_glob
 
 # Batch 5 patterns into one script
@@ -136,11 +136,11 @@ python3 scripts/diagnose.py --recent 100
 
 ### "ModuleNotFoundError: No module named 'mcp_bridge'"
 
-Ensure `~/.claude/lib/` is in your Python path:
+Ensure `/home/fearsidhe/.claude/plugins/agent-swarm/lib/` is in your Python path:
 
 ```python
 import sys
-sys.path.insert(0, '/home/fearsidhe/.claude/lib')
+sys.path.insert(0, '/home/fearsidhe/.claude/plugins/agent-swarm/lib')
 from mcp_bridge import native_glob
 ```
 
@@ -161,5 +161,5 @@ Check `config/workflow.json` - checkpoints must be enabled (`true`).
 ## See Also
 
 - `~/.claude/CLAUDE.md` - Global agent operating protocol
-- `~/.claude/lib/README.md` - MCP bridge documentation
+- `/home/fearsidhe/.claude/plugins/agent-swarm/lib/README.md` - MCP bridge documentation
 - `ENFORCEMENT_FIXES.md` - Enforcement system changelog
