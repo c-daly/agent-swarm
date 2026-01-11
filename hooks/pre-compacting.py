@@ -174,8 +174,8 @@ def save_compaction_state():
             return True
         
         return False
-    except Exception:
-        return False
+    except (IOError, json.JSONDecodeError):
+        return False  # Silent fallback - state save is best-effort
 
 def main():
     """Pre-compacting hook entry point."""
@@ -183,8 +183,8 @@ def main():
     # Read hook input
     try:
         input_data = json.loads(sys.stdin.read())
-    except Exception:
-        input_data = {}
+    except json.JSONDecodeError:
+        input_data = {}  # Empty input is acceptable
 
     # Save persistent flags before compaction
     flags_saved = save_compaction_state()

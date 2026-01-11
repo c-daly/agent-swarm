@@ -987,6 +987,14 @@ def check_git_approval_layers(tool_name: str, tool_input: dict, state: dict, mes
     if user_approved:
         return None  # Already approved
 
+    # Check persistent state file (survives state resets)
+    try:
+        persistent_state = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
+        if persistent_state.get("user_approved_commit"):
+            return None  # Already approved in persistent state
+    except Exception:
+        pass
+
     if not user_approved:
         # Check Bash command description first (for orchestrators)
         cmd_desc = tool_input.get("description", "").lower()
@@ -1002,7 +1010,15 @@ def check_git_approval_layers(tool_name: str, tool_input: dict, state: dict, mes
             log_event("GIT_APPROVAL_DEBUG", f"Scanning {len(recent_messages)} recent messages")
             for msg in reversed(recent_messages):
                 if msg.get("role") == "user":
-                    msg_content = msg.get("content", "").lower()
+                    # Handle both string content and list of content blocks
+                    raw_content = msg.get("content", "")
+                    if isinstance(raw_content, list):
+                        msg_content = " ".join(
+                            block.get("text", "") if isinstance(block, dict) else str(block)
+                            for block in raw_content
+                        ).lower()
+                    else:
+                        msg_content = str(raw_content).lower()
                     if any(keyword in msg_content for keyword in approval_keywords):
                         state["user_approved_commit"] = True
                         save_state(state)
@@ -1409,8 +1425,8 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
             with open(activity_file, "a") as f:
                 timestamp = datetime.now().isoformat()
                 f.write(f"[{timestamp}] SUBAGENT: {subagent_type} - {description}\n")
-        except Exception:
-            log_warning("Caught exception, continuing")
+        except Exception as e:
+            log_warning(f"Failed to log activity: {e}")
 
         # Update subagent_metrics.json
         metrics_file = STATE_DIR / "subagent_metrics.json"
@@ -1427,8 +1443,8 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
             })
 
             metrics_file.write_text(json.dumps(metrics, indent=2))
-        except Exception:
-            log_warning("Caught exception, continuing")
+        except Exception as e:
+            log_warning(f"Failed to update metrics: {e}")
 
 
 
