@@ -94,7 +94,25 @@ When Greptile identifies N issues:
 - Each agent works independently on its issue
 - Wait for all to complete before testing/committing
 - Single push triggers single Greptile review
-- **Never push while Greptile is reviewing**
+- **Never push to same PR while Greptile is reviewing it**
+
+### Multi-PR Interleaving
+
+When working multiple PRs/branches, interleave to avoid idle waiting:
+```
+PR A: implement → push → [Greptile reviewing A]
+                              ↓ switch to B
+PR B: implement → push → [Greptile reviewing B]
+                              ↓ switch to A
+PR A: check review (complete) → address issues → push
+                              ↓ switch to B
+PR B: check review (complete) → address issues → push
+```
+
+**Benefits:**
+- Never idle waiting for reviews
+- Each PR gets clean, sequential Greptile feedback
+- Context switch cost is low (each PR is independent)
 
 ### Exit Conditions
 
