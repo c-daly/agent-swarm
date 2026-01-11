@@ -2,26 +2,53 @@
 
 **User-Invocable:** Yes (`/iterate`)
 
-A tight development loop for rapid iteration with adversarial testing. The adversary agent evaluates test quality, writes missing tests, and uses Greptile to validate coverage before final review.
+Autonomous development loop with tight feedback. Works independently until exit conditions met.
 
 ## When to Use
 
-- Small to medium feature work
-- Bug fixes with test verification
-- Refactoring with continuous validation
-- Any task where you want robust test coverage
+- Clear requirements, ready for implementation
+- Want autonomous work with minimal checkpoints
+- Need Greptile validation and coverage enforcement
+- Granting long-running autonomy
 
 ## Flow
 
 ```
-[intake?] → [design?] → IMPLEMENT (parallel) → commit → push → WAIT FOR GREPTILE → review → [checkpoint]
-                              ↑                                                      |fail
-                              └──────────────────────────────────────────────────────┘
+test_writing → implement → test → coverage check → Greptile review → [loop or done]
 ```
 
-**Parallel implementation:** When multiple issues exist, spawn parallel implementer agents
-**Greptile pacing:** Push once, wait for review to complete, then evaluate
-**Exit conditions:** Greptile approves, tests pass, or max iterations reached
+Tests are written FIRST as the spec. Coverage becomes "did we only write code the tests required?"
+
+## Flow Diagram
+
+**TDD Flow:**
+```
+┌─────────────────────────────────────────────────────────┐
+│  TEST_WRITING (define expected behavior)                 │
+│    ↓                                                    │
+│  IMPLEMENT (make tests pass)                             │
+│    ↓                                                    │
+│  TEST (run tests)                                        │
+│    ├─ FAIL → back to TEST_WRITING (fix the spec)        │
+│    ↓ PASS                                               │
+│  COVERAGE CHECK (contract enforcement)                   │
+│    ├─ Uncovered code → back to TEST_WRITING or remove   │
+│    ↓ All code covered                                   │
+│  GREPTILE REVIEW                                         │
+│    ├─ Issues found → back to IMPLEMENT                  │
+│    ↓ Approved                                           │
+│  EXIT (checkpoint for user)                              │
+└─────────────────────────────────────────────────────────┘
+```
+
+
+## Exit Conditions
+
+| Condition | Trigger |
+|-----------|---------|
+| `tests_pass` | All tests green, coverage met, no type/lint errors |
+| `review_approved` | Greptile approves with no blocking issues |
+| `max_reached` | Hit `max_iterations` limit (default: 5) |
 
 ## Configuration
 
@@ -29,106 +56,85 @@ Load from `~/.claude/plugins/agent-swarm/config/workflow.json`:
 
 ```json
 {
-  "iteration_modes": {
-    "iterate": {
-      "optional_phases": ["intake", "design"],
-      "loop_phases": ["implement", "test", "review"],
-      "max_iterations": 3,
-      "checkpoint_after_loop": true,
-      "exit_conditions": ["tests_pass", "review_approved", "max_reached"]
-    }
+  "iterate": {
+    "max_iterations": 5,
+    "coverage_threshold": 80,
+    "exit_conditions": ["tests_pass", "review_approved", "max_reached"],
+    "tdd_mode": true
   }
 }
 ```
 
 ## Usage
 
-### Quick Start (skip intake/design)
 ```bash
-/iterate "Fix the bug in auth validation"
-```
-
-### With Design Phase
-```bash
-/iterate --design "Add caching to the API layer"
+/iterate "Add user validation feature"
 ```
 
 ### Custom Iterations
 ```bash
-/iterate --max-iter 5 "Optimize database queries"
+/iterate --max-iter 10 "Refactor the API layer"
 ```
 
-## Loop Behavior
+## Kick-back Logic
 
-### Each Iteration
+### Hard Gates (automatic)
 
-1. **IMPLEMENT** (parallel): Make code changes
-   - Parse Greptile issues into discrete tasks
-   - Spawn parallel `implementer` agents (one per issue)
-   - Wait for all agents to complete
-   - Run tests locally to verify fixes
-   - Commit all changes together
+| Condition | Action |
+|-----------|--------|
+| Tests fail | → TEST_WRITING |
+| Type check fails | → IMPLEMENT |
+| Lint errors | → IMPLEMENT |
+| Coverage < 80% for new code | → TEST_WRITING (add missing tests) |
 
-2. **PUSH & WAIT**: Single push, wait for Greptile
-   - Push all commits at once
-   - **Do not check stale reviews** - wait for new review to complete
-   - Greptile reviews the consolidated changes
+### Greptile Review
 
-3. **REVIEW**: Evaluate Greptile feedback
-   - Check latest review (not stale ones)
-   - Decision: APPROVED, NEEDS_WORK, or BLOCKED
-   - If NEEDS_WORK → parse new issues → back to IMPLEMENT (parallel)
+| Condition | Action |
+|-----------|--------|
+| Issues found | → IMPLEMENT |
+| Approved | → EXIT |
 
-### Parallel Implementation Pattern
+### Coverage as Contract (TDD mode)
 
-When Greptile identifies N issues:
-```
-┌─ Task(implementer): "Fix issue 1: <description>" ─┐
-│─ Task(implementer): "Fix issue 2: <description>" ─│→ wait all → test → commit → push
-│─ Task(adversary): "Coverage for changed files"   ─│
-└─ Task(implementer): "Fix issue N: <description>" ─┘
-```
+In TDD mode, coverage check asks: "Did we only write code the tests required?"
 
-**Key rules:**
-- Spawn all implementation agents in a **single message** with multiple Task tool calls
-- Each agent works independently on its issue
-- Wait for all to complete before testing/committing
-- Single push triggers single Greptile review
-- **Never push to same PR while Greptile is reviewing it**
+- **Uncovered code exists** → Either:
+  - Missing test case → add test in TEST_WRITING
+  - Over-engineering → remove the code
 
-### Multi-PR Interleaving
+## Phase Details
 
-When working multiple PRs/branches, interleave to avoid idle waiting:
-```
-PR A: implement → push → [Greptile reviewing A]
-                              ↓ switch to B
-PR B: implement → push → [Greptile reviewing B]
-                              ↓ switch to A
-PR A: check review (complete) → address issues → push
-                              ↓ switch to B
-PR B: check review (complete) → address issues → push
-```
+### TEST_WRITING
+- Write tests BEFORE implementation
+- Tests define expected behavior (the spec)
+- Same agent handles both test writing and implementation
 
-**Benefits:**
-- Never idle waiting for reviews
-- Each PR gets clean, sequential Greptile feedback
-- Context switch cost is low (each PR is independent)
+### IMPLEMENT
+- Make code changes to pass tests (TDD) or meet requirements (default)
+- Commit changes locally
 
-### Exit Conditions
+### TEST
+- Run pytest
+- Run type check (mypy/pyright)
+- Run linter (ruff)
 
-| Condition | Trigger |
-|-----------|---------|
-| `tests_pass` | All tests green, no type/lint errors |
-| `review_approved` | Reviewer approves with no blocking issues |
-| `max_reached` | Hit `max_iterations` limit |
+### COVERAGE CHECK
+- Run `pytest --cov`
+- Check threshold (80%) for changed files
+- Use `scripts/adversary_analyze.py` for analysis
 
-### On Exit
+### GREPTILE REVIEW
+- Push to remote
+- Wait for Greptile review to complete
+- Parse review for issues
+
+## On Exit
 
 - Checkpoint for user approval
-- Summary of all iterations
-- List of files changed
+- Summary of iterations completed
+- Files changed
 - Test results
-- Review findings
+- Coverage metrics
 
 ## Implementation Commands
 
@@ -390,9 +396,9 @@ User: /iterate "Fix the N+1 query in user list endpoint"
 
 | Aspect | Orchestrate | Iterate |
 |--------|-------------|---------|
-| Phases | Full workflow (8 phases) | Tight loop (3 phases) |
-| Checkpoints | Per-phase configurable | Single at end |
-| Research | Included | Skip (requirements known) |
-| Design | Full architecture | Optional quick plan |
-| Focus | Complex/unknown tasks | Rapid iteration |
-| Feedback | Per-phase summary | Per-iteration summary |
+| Autonomy | Interactive, checkpoints | Autonomous, minimal intervention |
+| User involvement | High (approve each phase) | Low (approve at end) |
+| Discovery phases | intake → design | Skip (requirements known) |
+| Validation | User review | Greptile + tests |
+| Use when | Need to figure out what to build | Know what to build |
+| Exit | User approval per phase | Auto-exit on conditions met |

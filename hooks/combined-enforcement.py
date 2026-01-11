@@ -35,6 +35,14 @@ try:
 except ImportError:
     MONITOR_AVAILABLE = False
 
+# Import Workflow class for state management
+try:
+    sys.path.insert(0, str(Path.home() / ".claude/plugins/agent-swarm/lib"))
+    from workflow import Workflow
+    WORKFLOW_AVAILABLE = True
+except ImportError:
+    WORKFLOW_AVAILABLE = False
+
 # Configuration
 STATE_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/session.json"
 STATE_DIR = STATE_FILE.parent
@@ -252,7 +260,7 @@ def _validate_inputs(tool_name: str = None, tool_input: dict = None, state: dict
 def load_json(path: Path) -> dict:
     """Load JSON file safely with logging."""
     if not path.exists():
-        log_debug(f"Config file not found (using defaults)", file=str(path))
+        log_debug("Config file not found (using defaults)", file=str(path))
         return {}
     try:
         return json.loads(path.read_text())
@@ -400,13 +408,13 @@ def check_phase_restrictions(tool_name: str, state: dict, tool_input: dict = Non
 
         # Block all other Bash commands in intake
         return block(
-            f"[PHASE: intake] Bash restricted to Python execution only.\n"
-            f"Allowed patterns:\n"
-            f"  - python3 -c \"...\"\n"
-            f"  - cat > /tmp/script.py << 'EOF'\n"
-            f"  - python3 /tmp/script.py\n"
-            f"  - rm /tmp/*.py\n"
-            f"For other operations, use allowed tools: Read, Glob, Grep, AskUserQuestion"
+            "[PHASE: intake] Bash restricted to Python execution only.\n"
+            "Allowed patterns:\n"
+            "  - python3 -c \"...\"\n"
+            "  - cat > /tmp/script.py << 'EOF'\n"
+            "  - python3 /tmp/script.py\n"
+            "  - rm /tmp/*.py\n"
+            "For other operations, use allowed tools: Read, Glob, Grep, AskUserQuestion"
         )
 
     # Check phase restrictions
@@ -442,7 +450,7 @@ def check_phase_restrictions(tool_name: str, state: dict, tool_input: dict = Non
 def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dict | None:
     """Enforce token-saving measures."""
     tool_input, state = _validate_inputs(tool_input=tool_input, state=state)
-    from datetime import datetime, timedelta
+    from datetime import datetime
 
     # CHECK COMPLIANCE: If previously blocked, agent MUST use Task/Write
     # BUT: Allow git commands and script execution even when blocked
@@ -492,26 +500,10 @@ def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dic
         state["last_phase"] = current_phase
         save_state(state)
 
-    # Detect new conversation and reset counters
-    # If more than 30 minutes since last tool use, consider it a new conversation
-    last_tool_time = state.get("last_tool_time")
+    # NOTE: 30-minute idle detection REMOVED
+    # Session reset is now handled by SessionStart hook which fires when Claude Code starts
+    # This is more accurate than a time-based heuristic
     current_time = datetime.now().isoformat()
-
-    if last_tool_time:
-        try:
-            last_time = datetime.fromisoformat(last_tool_time)
-            time_since_last = datetime.now() - last_time
-
-            # Reset counters if been idle for 30+ minutes (new conversation)
-            if time_since_last > timedelta(minutes=30):
-                state["search_count"] = 0
-                state["read_count"] = 0
-                state["files_read"] = []
-                # DON'T reset edits_this_response - will be handled by message detection
-                log_event("COUNTER_RESET", "New conversation detected, counters reset")
-                save_state(state)  # Persist reset immediately
-        except (ValueError, TypeError) as e:
-            log_debug(f"Invalid timestamp in state, skipping idle check: {e}")
 
     # Update last tool time
     state["last_tool_time"] = current_time
@@ -664,8 +656,8 @@ def check_scope_discipline(tool_name: str, tool_input: dict, state: dict) -> dic
         prompt = tool_input.get("prompt", "")
         if len(prompt) < 20:
             return block(
-                f"[SCOPE] Subagent prompt too vague. "
-                f"Provide clear, specific instructions for the subagent."
+                "[SCOPE] Subagent prompt too vague. "
+                "Provide clear, specific instructions for the subagent."
             )
 
     return None
@@ -732,10 +724,10 @@ def check_smart_tool_usage(tool_name: str, tool_input: dict, state: dict) -> dic
         if any(ind in query for ind in doc_indicators):
             if any(lib in query for lib in known_libs):
                 return block(
-                    f"[SMART TOOLS] Use Context7 instead of WebSearch for docs:\n"
-                    f"  1. mcp__context7__resolve-library-id\n"
-                    f"  2. mcp__context7__query-docs\n"
-                    f"Context7 has curated, up-to-date docs. WebSearch wastes tokens on noise."
+                    "[SMART TOOLS] Use Context7 instead of WebSearch for docs:\n"
+                    "  1. mcp__context7__resolve-library-id\n"
+                    "  2. mcp__context7__query-docs\n"
+                    "Context7 has curated, up-to-date docs. WebSearch wastes tokens on noise."
                 )
 
     # Read for code understanding → use Serena
@@ -1258,14 +1250,30 @@ def check_episodic_memory_suggestion(tool_name: str, tool_input: dict, state: di
 
 def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, messages: list) -> dict | None:
     """Enforce CLAUDE.md workflow compliance."""
-    
+
+    # EARLY EXIT: Always allow workflow initialization commands (before any other checks)
+    if tool_name == "Bash":
+        command = tool_input.get("command", "")
+        workflow_patterns = ["lib/workflow.py", "workflow.py iterate", "workflow.py orchestrate",
+                            "workflow.py status", "workflow.py advance", "workflow.py reset"]
+        if any(pattern in command for pattern in workflow_patterns):
+            return None  # Always allow workflow commands
+
     # Parse messages to detect classification and workflow invocation
-    classification_pattern = r'\[(TRIVIAL|SIMPLE|COMPLEX|RESEARCH|CONVERSATION)\]'
+    classification_pattern = r'\[(TRIVIAL|CONVERSATION|RESEARCH)\]'
     
     for msg in messages:
         if msg.get("role") == "assistant":
-            content = msg.get("content", "")
-            
+            raw_content = msg.get("content", "")
+            # Handle both string and list content formats
+            if isinstance(raw_content, list):
+                content = " ".join(
+                    block.get("text", "") if isinstance(block, dict) else str(block)
+                    for block in raw_content
+                )
+            else:
+                content = str(raw_content)
+
             # Check for classification
             match = re.search(classification_pattern, content)
             if match:
@@ -1283,8 +1291,16 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
                     state["classification_type"] = new_classification
                     save_state(state)
 #             
-            # Check for workflow invocation
-            if '"skill": "agent-swarm:orchestrate"' in content or 'Skill(skill="agent-swarm:orchestrate")' in content:
+            # Check for workflow invocation (/orchestrate or /iterate)
+            workflow_patterns = [
+                '"skill": "agent-swarm:orchestrate"',
+                'Skill(skill="agent-swarm:orchestrate")',
+                '"skill": "iterate"',
+                'Skill(skill="iterate")',
+                '/orchestrate',
+                '/iterate',
+            ]
+            if any(pattern in content for pattern in workflow_patterns):
                 state["workflow_invoked"] = True
                 save_state(state)
             
@@ -1293,35 +1309,52 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
                 state["episodic_search_done"] = True
                 save_state(state)
 
-    # Track file edits per session for multi-file COMPLEX enforcement
-    if tool_name in {"Write", "Edit", "mcp__plugin_serena_serena__replace_symbol_body",
-                     "mcp__plugin_serena_serena__create_text_file",
-                     "mcp__plugin_serena_serena__replace_content"}:
+    # Block editing tools in CONVERSATION/RESEARCH mode unless workflow invoked
+    edit_tools = {"Write", "Edit", "NotebookEdit",
+                  "mcp__plugin_serena_serena__replace_symbol_body",
+                  "mcp__plugin_serena_serena__create_text_file",
+                  "mcp__plugin_serena_serena__replace_content",
+                  "mcp__plugin_serena_serena__insert_after_symbol",
+                  "mcp__plugin_serena_serena__insert_before_symbol"}
 
-        if "files_edited_this_session" not in state:
-            state["files_edited_this_session"] = []
+    classification = state.get("classification_type")
+    # Use Workflow class if available, fallback to state
+    workflow_invoked = Workflow.is_active() if WORKFLOW_AVAILABLE else state.get("workflow_invoked", False)
 
-        file_path = tool_input.get("file_path") or tool_input.get("relative_path")
-        if file_path:
-            # Block 2nd+ file with SIMPLE classification BEFORE adding to list
-            if file_path not in state["files_edited_this_session"] and len(state["files_edited_this_session"]) >= 1:
-                classification = state.get("classification_type")
-                if classification == "SIMPLE":
-                    return block(
-                        "[WORKFLOW VIOLATION] Multi-file edit detected.\n"
-                        f"   Files edited: {', '.join(sorted(state['files_edited_this_session']))}\n"
-                        f"   Current classification: [SIMPLE]\n"
-                        "\n"
-                        "Multi-file edits require [COMPLEX] classification.\n"
-                        "Either:\n"
-                        "1. Reclassify as [COMPLEX] and invoke workflow:orchestrate\n"
-                        "2. Complete current file, then handle second file separately"
-                    )
+    # TRIVIAL allows editing without workflow
+    if classification == "TRIVIAL":
+        pass  # Allow all tools
 
-            # Add file to tracking list if not already there
-            if file_path not in state["files_edited_this_session"]:
-                state["files_edited_this_session"].append(file_path)
-                save_state(state)
+    # CONVERSATION and RESEARCH block editing unless workflow invoked
+    elif classification in ("CONVERSATION", "RESEARCH") and tool_name in edit_tools:
+        if not workflow_invoked:
+            # Allow /tmp/ utility scripts
+            file_path = tool_input.get("file_path", "")
+            if not file_path.startswith("/tmp/"):
+                return block(
+                    f"[BLOCKED] Editing tools blocked in [{classification}] mode.\n\n"
+                    "To edit files, invoke a workflow first:\n"
+                    "  /iterate    - For autonomous implementation with Greptile review\n"
+                    "  /orchestrate - For discovery/design with user checkpoints\n\n"
+                    "Or use [TRIVIAL] for one-liner fixes."
+                )
+
+    # Block Bash in CONVERSATION/RESEARCH (except gh_wrapper)
+    # Note: workflow.py commands are handled by early exit at function start
+    if tool_name == "Bash" and classification in ("CONVERSATION", "RESEARCH", None):
+        if not workflow_invoked:
+            command = tool_input.get("command", "")
+            # Allow gh_wrapper calls
+            if "gh_wrapper.py" not in command:
+                return block(
+                    f"[BLOCKED] Bash blocked in [{classification or 'no classification'}] mode.\n\n"
+                    "For git/gh commands, use the wrapper:\n"
+                    "  python3 scripts/gh_wrapper.py git status\n"
+                    "  python3 scripts/gh_wrapper.py git log -5\n"
+                    "  python3 scripts/gh_wrapper.py pr list\n\n"
+                    "For other shell operations, invoke a workflow first:\n"
+                    "  /iterate or /orchestrate"
+                )
 
     # Monitor agent for classification validation
     if MONITOR_AVAILABLE and needs_monitoring(tool_name, tool_input, state):
@@ -1365,28 +1398,13 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
             return block(
                 "[BLOCKED] Classification required before editing code.\n\n"
                 "REQUIRED ACTION: Output classification tag as first line of your response\n"
-                "✓ DO: Start response with [SIMPLE] or [COMPLEX] before any tool use\n"
+                "✓ DO: Start response with [TRIVIAL], [CONVERSATION], or [RESEARCH]\n"
                 "✗ DON'T: Try Edit, Write, or other tools without classification first\n\n"
-                "Classification format: [TRIVIAL|SIMPLE|COMPLEX|RESEARCH|CONVERSATION]\n\n"
+                "Classification format: [TRIVIAL|CONVERSATION|RESEARCH]\n\n"
                 "Criteria:\n"
-                "- TRIVIAL: One-liner fix\n"
-                "- SIMPLE: Single file, <50 lines, clear requirements\n"
-                "- COMPLEX: Multiple files OR architectural decisions OR unclear scope\n"
-                "- RESEARCH: Exploring/reading, no code changes\n"
-                "- CONVERSATION: Discussion only"
-            )
-
-        # Rule 2: COMPLEX tasks must invoke workflow
-        if state.get("classification_type") == "COMPLEX" and not state.get("workflow_invoked"):
-            return block(
-                "[BLOCKED] [COMPLEX] tasks require workflow orchestration.\n\n"
-                "REQUIRED ACTION: Invoke the orchestrator NOW\n"
-                "✓ DO: Skill(skill='agent-swarm:orchestrate', args='<full task description>')\n\n"
-                "✗ DON'T: Skip because you 'already know what to do'\n"
-                "✗ DON'T: Rationalize that it's not really complex\n"
-                "✗ DON'T: Start coding without workflow approval\n\n"
-                "From CLAUDE.md: 'Invoke workflow:orchestrate BEFORE any work'\n"
-                "Why: Complex tasks need planning, checkpoints, and review phases."
+                "- TRIVIAL: One-liner fix (editing allowed)\n"
+                "- CONVERSATION: Default mode (invoke workflow to edit)\n"
+                "- RESEARCH: Exploring/reading (no code changes)"
             )
 
     # Parallelism advisory for Task tool

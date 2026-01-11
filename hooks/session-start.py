@@ -26,7 +26,7 @@ except ImportError:
     class ConfigError(Exception): pass
     class StateError(Exception): pass
 def reset_enforcement_counters():
-    """Reset enforcement counters and workflow tracking for new conversation."""
+    """Reset enforcement counters but preserve workflow state for new conversation."""
     state_dir = Path(__file__).parent.parent / ".state"
     state_file = state_dir / "session.json"
     compaction_state_file = state_dir / "compaction_state.json"
@@ -43,7 +43,9 @@ def reset_enforcement_counters():
             except (json.JSONDecodeError, IOError) as e:
                 log_warning(f"Caught exception: {e}")
 
-        # Initialize fresh session state
+        # Initialize fresh session state for counters
+        # NOTE: blocked_at and mcp_counts are intentionally NOT included
+        # This clears any blocking state from previous sessions
         state = {
             "last_phase": None,
             "last_tool_time": None,
@@ -54,8 +56,13 @@ def reset_enforcement_counters():
             "phase": None,
             "search_count": 0,
             "edits_this_response": 0,
-            "memory_search_suggested": 1
+            "memory_search_suggested": 1,
+            "mcp_counts": {},  # Reset MCP tool counts
+            "classification_given": False,  # Reset classification state
+            "classification_type": None,
+            "workflow_invoked": False,  # Reset workflow state
         }
+        # NOTE: blocked_at is NOT set, which clears it
 
         # Restore flags preserved from compaction
         state.update(compaction_flags)

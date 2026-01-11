@@ -147,6 +147,15 @@ PERSISTENT_FLAGS = [
     "user_approved_commit",
     "tests_executed",
     "verify_signal_given",
+    "phase",  # Preserve workflow phase
+]
+
+# Flags that must be CLEARED on compaction (depend on message history)
+MESSAGE_DEPENDENT_FLAGS = [
+    "classification_given",
+    "classification_type",
+    "workflow_invoked",
+    "edits_this_response",
 ]
 
 def save_compaction_state():
