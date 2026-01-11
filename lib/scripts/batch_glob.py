@@ -1,5 +1,5 @@
-from pathlib import Path
 #!/usr/bin/env python3
+from pathlib import Path
 """
 Batch glob utility - find files matching multiple patterns.
 
