@@ -34,7 +34,7 @@ def extract_session_info():
             session = json.loads(session_file.read_text())
             phase = session.get("phase", "unknown")
             task = session.get("task_summary", "No task specified")
-        except:
+        except Exception:
             phase = "unknown"
             task = "No task specified"
     else:
@@ -183,7 +183,7 @@ def main():
     # Read hook input
     try:
         input_data = json.loads(sys.stdin.read())
-    except:
+    except Exception:
         input_data = {}
 
     # Save persistent flags before compaction

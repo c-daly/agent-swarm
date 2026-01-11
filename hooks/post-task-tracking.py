@@ -98,7 +98,7 @@ def check_new_plugins():
 
     try:
         count = int(state_file.read_text()) if state_file.exists() else 0
-    except:
+    except Exception:
         count = 0
 
     count += 1
@@ -129,7 +129,7 @@ def main():
     try:
         # Read hook input
         input_data = json.loads(sys.stdin.read())
-    except:
+    except Exception:
         # No input or invalid JSON - allow
         print(json.dumps({"hookSpecificOutput": {}}))
         return
