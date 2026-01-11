@@ -1304,19 +1304,16 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
             if file_path not in state["files_edited_this_session"] and len(state["files_edited_this_session"]) >= 1:
                 classification = state.get("classification_type")
                 if classification == "SIMPLE":
-                    return {
-                        "allowed": False,
-                        "message": (
-                            "[WORKFLOW VIOLATION] Multi-file edit detected.\n"
-                            f"   Files edited: {', '.join(sorted(state['files_edited_this_session']))}\n"
-                            f"   Current classification: [SIMPLE]\n"
-                            "\n"
-                            "Multi-file edits require [COMPLEX] classification.\n"
-                            "Either:\n"
-                            "1. Reclassify as [COMPLEX] and invoke workflow:orchestrate\n"
-                            "2. Complete current file, then handle second file separately"
-                        )
-                    }
+                    return block(
+                        "[WORKFLOW VIOLATION] Multi-file edit detected.\n"
+                        f"   Files edited: {', '.join(sorted(state['files_edited_this_session']))}\n"
+                        f"   Current classification: [SIMPLE]\n"
+                        "\n"
+                        "Multi-file edits require [COMPLEX] classification.\n"
+                        "Either:\n"
+                        "1. Reclassify as [COMPLEX] and invoke workflow:orchestrate\n"
+                        "2. Complete current file, then handle second file separately"
+                    )
 
             # Add file to tracking list if not already there
             if file_path not in state["files_edited_this_session"]:
