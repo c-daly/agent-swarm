@@ -15,6 +15,16 @@ import sys
 import subprocess
 from pathlib import Path
 
+try:
+    from hook_logging import log_error, log_warning, log_info, log_debug, ConfigError, StateError
+except ImportError:
+    # Fallback: define minimal logging functions
+    def log_error(msg, **kw): pass
+    def log_warning(msg, **kw): pass
+    def log_info(msg, **kw): pass
+    def log_debug(msg, **kw): pass
+    class ConfigError(Exception): pass
+    class StateError(Exception): pass
 def reset_enforcement_counters():
     """Reset enforcement counters and workflow tracking for new conversation."""
     state_dir = Path(__file__).parent.parent / ".state"
@@ -30,8 +40,8 @@ def reset_enforcement_counters():
                 compaction_flags = compaction_data.get("flags", {})
                 # Delete after reading - one-time use
                 compaction_state_file.unlink()
-            except (json.JSONDecodeError, IOError):
-                pass
+            except (json.JSONDecodeError, IOError) as e:
+                log_warning(f"Caught exception: {e}")
 
         # Initialize fresh session state
         state = {
@@ -54,8 +64,8 @@ def reset_enforcement_counters():
             json.dump(state, f, indent=2)
 
         return True
-    except Exception:
-        pass  # Fail silently, not critical
+    except Exception as e:
+        log_warning(f"Caught Exception: {e}")  # Fail silently, not critical
 
     return False
 

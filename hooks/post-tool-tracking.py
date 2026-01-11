@@ -13,6 +13,16 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+try:
+    from hook_logging import log_error, log_warning, log_info, log_debug, ConfigError, StateError
+except ImportError:
+    # Fallback: define minimal logging functions
+    def log_error(msg, **kw): pass
+    def log_warning(msg, **kw): pass
+    def log_info(msg, **kw): pass
+    def log_debug(msg, **kw): pass
+    class ConfigError(Exception): pass
+    class StateError(Exception): pass
 # Configuration
 METRICS_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/subagent_metrics.json"
 STATE_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/session.json"
@@ -22,8 +32,8 @@ def load_json(path: Path) -> dict:
     if path.exists():
         try:
             return json.loads(path.read_text())
-        except (json.JSONDecodeError, IOError):
-            pass
+        except (json.JSONDecodeError, IOError) as e:
+            log_warning(f"Caught exception: {e}")
     return {}
 
 def save_json(path: Path, data: dict) -> None:

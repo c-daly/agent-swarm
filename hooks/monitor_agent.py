@@ -11,6 +11,16 @@ import json
 import re
 from typing import Dict, Optional, Any
 
+try:
+    from hook_logging import log_error, log_warning, log_info, log_debug, ConfigError, StateError
+except ImportError:
+    # Fallback: define minimal logging functions
+    def log_error(msg, **kw): pass
+    def log_warning(msg, **kw): pass
+    def log_info(msg, **kw): pass
+    def log_debug(msg, **kw): pass
+    class ConfigError(Exception): pass
+    class StateError(Exception): pass
 # Try to import anthropic, gracefully degrade if not available
 try:
     import anthropic
@@ -280,8 +290,8 @@ def detect_batch_need(tool_name: str, tool_input: dict, state: dict, recent_mess
             try:
                 if match.lastindex and match.lastindex >= 1:
                     num = int(match.group(1))
-            except (ValueError, IndexError):
-                pass
+            except (ValueError, IndexError) as e:
+                log_warning(f"Caught exception: {e}")
             
             # If explicit number > 5, or qualitative indicator ("all", "every", etc.)
             if num and num > 5:

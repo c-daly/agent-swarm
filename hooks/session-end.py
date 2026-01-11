@@ -10,7 +10,6 @@ import json
 import sys
 import subprocess
 from pathlib import Path
-
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 CHARTS_SCRIPT = SCRIPTS_DIR / "charts.py"
 STATE_DIR = Path(__file__).parent.parent / ".state"

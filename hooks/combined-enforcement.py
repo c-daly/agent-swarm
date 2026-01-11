@@ -16,6 +16,25 @@ import re
 from datetime import datetime, timedelta
 from pathlib import Path
 
+try:
+    from hook_logging import log_error, log_warning, log_info, log_debug, ConfigError, StateError
+except ImportError:
+    # Fallback: define minimal logging functions
+    def log_error(msg, **kw): pass
+    def log_warning(msg, **kw): pass
+    def log_info(msg, **kw): pass
+    def log_debug(msg, **kw): pass
+    class ConfigError(Exception): pass
+    class StateError(Exception): pass
+
+
+except ImportError:
+    # Fallback: define minimal logging functions
+    def log_error(msg, **kw): pass
+    def log_warning(msg, **kw): pass
+    def log_info(msg, **kw): pass
+    def log_debug(msg, **kw): pass
+
 # Try to import monitor agent (optional dependency)
 try:
     from monitor_agent import needs_monitoring, call_monitor_agent, format_monitor_result
@@ -42,8 +61,10 @@ def update_stats(allowed: bool, reason: str = None, tool_name: str = None):
     if STATS_FILE.exists():
         try:
             stats = json.loads(STATS_FILE.read_text())
-        except:
-            pass
+        except json.JSONDecodeError as e:
+            log_warning(f"Corrupted stats file, resetting: {e}", file=str(STATS_FILE))
+        except IOError as e:
+            log_warning(f"Cannot read stats file: {e}", file=str(STATS_FILE))
 
     if allowed:
         stats["tools_allowed"] = stats.get("tools_allowed", 0) + 1
@@ -207,13 +228,18 @@ MCP_SCRIPT_REQUIRED = {
 }
 
 def load_json(path: Path) -> dict:
-    """Load JSON file safely."""
-    if path.exists():
-        try:
-            return json.loads(path.read_text())
-        except (json.JSONDecodeError, IOError):
-            pass
-    return {}
+    """Load JSON file safely with logging."""
+    if not path.exists():
+        log_debug(f"Config file not found (using defaults)", file=str(path))
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except json.JSONDecodeError as e:
+        log_error(f"Malformed JSON in config file: {e}", file=str(path))
+        return {}
+    except IOError as e:
+        log_error(f"Cannot read config file: {e}", file=str(path))
+        return {}
 
 def save_state(state: dict) -> None:
     """Save session state."""
@@ -458,8 +484,8 @@ def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dic
                 # DON'T reset edits_this_response - will be handled by message detection
                 log_event("COUNTER_RESET", "New conversation detected, counters reset")
                 save_state(state)  # Persist reset immediately
-        except (ValueError, TypeError):
-            pass  # Invalid timestamp, ignore
+        except (ValueError, TypeError) as e:
+            log_debug(f"Invalid timestamp in state, skipping idle check: {e}")
 
     # Update last tool time
     state["last_tool_time"] = current_time
@@ -1349,7 +1375,7 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
                 timestamp = datetime.now().isoformat()
                 f.write(f"[{timestamp}] SUBAGENT: {subagent_type} - {description}\n")
         except Exception:
-            pass
+            log_warning("Caught exception, continuing")
 
         # Update subagent_metrics.json
         metrics_file = STATE_DIR / "subagent_metrics.json"
@@ -1367,7 +1393,7 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
 
             metrics_file.write_text(json.dumps(metrics, indent=2))
         except Exception:
-            pass
+            log_warning("Caught exception, continuing")
 
 
 

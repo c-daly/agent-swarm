@@ -11,6 +11,16 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+try:
+    from hook_logging import log_error, log_warning, log_info, log_debug, ConfigError, StateError
+except ImportError:
+    # Fallback: define minimal logging functions
+    def log_error(msg, **kw): pass
+    def log_warning(msg, **kw): pass
+    def log_info(msg, **kw): pass
+    def log_debug(msg, **kw): pass
+    class ConfigError(Exception): pass
+    class StateError(Exception): pass
 HANDOFF_FILE = Path(__file__).parent.parent / "HANDOFF.md"
 STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
 
@@ -37,8 +47,8 @@ def extract_session_info():
     if metrics_file.exists():
         try:
             metrics = json.loads(metrics_file.read_text())
-        except:
-            pass
+        except Exception as e:
+            log_warning(f"Caught exception: {e}")
 
     return {
         "phase": phase,
