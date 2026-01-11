@@ -1205,8 +1205,9 @@ def check_episodic_memory_suggestion(tool_name: str, tool_input: dict, state: di
 
             return {
                 "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
                     "permissionDecision": "allow",
-                    "message": "\n============================================================\n"
+                    "permissionDecisionWarning": "\n============================================================\n"
                     "🧠 EPISODIC MEMORY SUGGESTION\n"
                     "============================================================\n"
                     "Before exploring, consider searching past conversations.\n"
@@ -1237,8 +1238,9 @@ def check_episodic_memory_suggestion(tool_name: str, tool_input: dict, state: di
 
         return {
             "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
                 "permissionDecision": "allow",
-                "message": "\n============================================================\n"
+                "permissionDecisionWarning": "\n============================================================\n"
                 "🧠 EPISODIC MEMORY SUGGESTION\n"
                 "============================================================\n"
                 "You're exploring unfamiliar code.\n"
