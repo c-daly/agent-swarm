@@ -317,7 +317,7 @@ def check_phase_restrictions(tool_name: str, state: dict, tool_input: dict = Non
         if filename in CRITICAL_FILES:
             return None  # Allow handoff writes from any phase
 
-    phase = state.get("phase", "").lower()
+    phase = (state.get("phase") or "").lower()
 
     # No phase = no restrictions
     if not phase:
@@ -423,7 +423,7 @@ def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dic
                 f"YOU MUST USE: Task (spawn subagent) or Write (create script)"
             )
     # Detect phase changes and reset counters
-    current_phase = state.get("phase", "")
+    current_phase = state.get("phase") or ""
     last_phase = state.get("last_phase", "")
     
     if current_phase != last_phase and last_phase:
@@ -598,7 +598,7 @@ def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dic
 
 def check_scope_discipline(tool_name: str, tool_input: dict, state: dict) -> dict | None:
     """Prevent off-task exploration."""
-    phase = state.get("phase", "")
+    phase = state.get("phase") or ""
     task_summary = state.get("task_summary", "")
 
     # Only enforce during active phases
@@ -691,7 +691,7 @@ def check_smart_tool_usage(tool_name: str, tool_input: dict, state: dict) -> dic
 
         if any(file_path.endswith(ext) for ext in code_exts):
             # Check if this looks like exploration vs targeted read
-            phase = state.get("phase", "")
+            phase = state.get("phase") or ""
             read_count = state.get("read_count", 0)
 
             # First read is usually OK, but suggest Serena after that
@@ -785,7 +785,7 @@ def check_smart_tool_usage(tool_name: str, tool_input: dict, state: dict) -> dic
 
 def check_checkpoint_approval(tool_name: str, tool_input: dict, state: dict) -> dict | None:
     """Enforce checkpoint approval requirement before critical operations."""
-    phase = state.get("phase", "")
+    phase = state.get("phase") or ""
     if not phase:
         return None
     
