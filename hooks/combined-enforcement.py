@@ -859,6 +859,15 @@ def check_git_safety(tool_name: str, tool_input: dict, state: dict) -> dict | No
     # Note: git commit --amend checks are in CLAUDE.md, not enforced here
     # Message-only amends (fixing typos, removing attribution) are safe
 
+    # Block attribution in commit messages - hooks should NOT add Co-Authored-By
+    if "git commit" in command and "Co-Authored-By" in command:
+        return block(
+            "[GIT SAFETY] Attribution not allowed in commit messages.\n\n"
+            "REMOVE 'Co-Authored-By' from your commit message.\n"
+            "Hooks handle attribution automatically via post-commit.\n\n"
+            "Just use a clean commit message without attribution."
+        )
+
     # Monitor agent for commit message validation
     if MONITOR_AVAILABLE and "git commit" in command:
         if needs_monitoring("Bash", tool_input, state):
