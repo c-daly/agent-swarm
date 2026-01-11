@@ -128,6 +128,45 @@ cat ~/.claude/plugins/agent-swarm/.state/session.json
 
     return handoff
 
+
+COMPACTION_STATE_FILE = STATE_DIR / "compaction_state.json"
+
+# Flags that should persist across compaction (same conversation)
+PERSISTENT_FLAGS = [
+    "user_approved_commit",
+    "tests_executed",
+    "verify_signal_given",
+]
+
+def save_compaction_state():
+    """Save persistent flags before compaction so they survive session reset."""
+    session_file = STATE_DIR / "session.json"
+    
+    if not session_file.exists():
+        return False
+    
+    try:
+        session = json.loads(session_file.read_text())
+        
+        # Extract only persistent flags that are set
+        compaction_state = {
+            "saved_at": datetime.now().isoformat(),
+            "flags": {}
+        }
+        
+        for flag in PERSISTENT_FLAGS:
+            if session.get(flag):
+                compaction_state["flags"][flag] = session[flag]
+        
+        # Only write if there are flags to preserve
+        if compaction_state["flags"]:
+            COMPACTION_STATE_FILE.write_text(json.dumps(compaction_state, indent=2))
+            return True
+        
+        return False
+    except Exception:
+        return False
+
 def main():
     """Pre-compacting hook entry point."""
 
@@ -136,6 +175,9 @@ def main():
         input_data = json.loads(sys.stdin.read())
     except:
         input_data = {}
+
+    # Save persistent flags before compaction
+    flags_saved = save_compaction_state()
 
     # Extract session information
     session_info = extract_session_info()
@@ -150,10 +192,15 @@ def main():
     except Exception as e:
         message = f"⚠️ Failed to write handoff: {e}"
 
+    # Build status message
+    status_parts = [f"[PRE-COMPACTING] {message}"]
+    if flags_saved:
+        status_parts.append("   ✓ Approval state preserved for session continuity")
+    status_parts.append("   Context will be compacted - review handoff for preserved state")
+
     # Return result
     output = {
-        "systemMessage": f"[PRE-COMPACTING] {message}\n"
-                        f"   Context will be compacted - review handoff for preserved state"
+        "systemMessage": "\n".join(status_parts)
     }
 
     print(json.dumps(output))

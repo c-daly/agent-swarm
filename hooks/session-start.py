@@ -17,9 +17,22 @@ from pathlib import Path
 
 def reset_enforcement_counters():
     """Reset enforcement counters and workflow tracking for new conversation."""
-    state_file = Path(__file__).parent.parent / ".state" / "session.json"
+    state_dir = Path(__file__).parent.parent / ".state"
+    state_file = state_dir / "session.json"
+    compaction_state_file = state_dir / "compaction_state.json"
 
     try:
+        # Check for compaction state (preserved across context compaction)
+        compaction_flags = {}
+        if compaction_state_file.exists():
+            try:
+                compaction_data = json.loads(compaction_state_file.read_text())
+                compaction_flags = compaction_data.get("flags", {})
+                # Delete after reading - one-time use
+                compaction_state_file.unlink()
+            except (json.JSONDecodeError, IOError):
+                pass
+
         # Initialize fresh session state
         state = {
             "last_phase": None,
@@ -33,6 +46,9 @@ def reset_enforcement_counters():
             "edits_this_response": 0,
             "memory_search_suggested": 1
         }
+
+        # Restore flags preserved from compaction
+        state.update(compaction_flags)
 
         with open(state_file, 'w') as f:
             json.dump(state, f, indent=2)

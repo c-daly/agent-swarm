@@ -2,24 +2,25 @@
 
 **User-Invocable:** Yes (`/iterate`)
 
-A tight development loop for rapid iteration on code changes. Unlike the full `orchestrate` workflow, this focuses on quick cycles of implement → test → review.
+A tight development loop for rapid iteration with adversarial testing. The adversary agent evaluates test quality, writes missing tests, and uses Greptile to validate coverage before final review.
 
 ## When to Use
 
 - Small to medium feature work
 - Bug fixes with test verification
 - Refactoring with continuous validation
-- Any task where you want rapid feedback loops
+- Any task where you want robust test coverage
 
 ## Flow
 
 ```
-[intake?] → [design?] → (implement → test → review) × N → [checkpoint] → done
+[intake?] → [design?] → implement → ADVERSARY LOOP → Greptile review → [checkpoint] → done
+                              ↑____________|fail
 ```
 
 **Optional phases:** intake, design (skip if requirements are clear)
-**Loop phases:** implement → test → review (repeat until exit condition)
-**Exit conditions:** tests pass, review approved, or max iterations reached
+**Adversary loop:** Runs until Greptile confirms coverage is solid
+**Exit conditions:** Greptile approves coverage, or max iterations reached
 
 ## Configuration
 
@@ -65,17 +66,21 @@ Load from `~/.claude/plugins/agent-swarm/config/workflow.json`:
    - Focused, incremental changes
    - Track what was modified
 
-2. **TEST**: Run verification
-   - Execute test suite
-   - Check type errors
-   - Run linter
-   - Report: PASS or FAIL with details
+2. **ADVERSARY**: Evaluate and strengthen tests
+   - Use `adversary` agent (sonnet)
+   - Run `pytest --cov` to collect coverage
+   - Query Greptile: "Should passing tests give confidence?"
+   - If gaps exist:
+     - Write tests targeting blind spots
+     - Query Greptile: "Are these tests legitimate and fair?"
+     - Run tests
+     - If fail → back to IMPLEMENT
+   - Loop until Greptile says coverage is solid
 
-3. **REVIEW**: Evaluate changes
-   - Use `reviewer` agent (sonnet)
-   - Check against requirements
-   - Identify remaining issues
+3. **REVIEW**: Final code review via Greptile
+   - Query: "Tests are solid. Review implementation for bugs, security, maintainability."
    - Decision: APPROVED, NEEDS_WORK, or BLOCKED
+   - If NEEDS_WORK → back to IMPLEMENT
 
 ### Exit Conditions
 
@@ -221,20 +226,75 @@ ruff check src/
 }
 ```
 
-## Greptile Integration
+## Adversary Agent
 
-For AI-powered code review during the review phase:
+The adversary agent is the core differentiator of the iterate workflow. It acts as an adversarial tester that:
+
+1. **Analyzes coverage** - Runs `pytest --cov` and parses results
+2. **Questions confidence** - Asks Greptile if passing tests mean anything
+3. **Finds blind spots** - Identifies untested code paths, weak assertions, missing edge cases
+4. **Writes tests** - Creates tests targeting identified weaknesses
+5. **Validates tests** - Submits new tests to Greptile for fairness check
+6. **Routes failures** - Sends back to implementer if tests fail
+
+### Scopes
+
+| Scope | Trigger | What It Analyzes |
+|-------|---------|------------------|
+| `commit` | default | Files changed in HEAD commit |
+| `pr` | `--scope pr` | Files changed vs base branch |
+| `codebase` | `--scope codebase` | Full coverage analysis |
+
+### Usage
 
 ```bash
-# Quick review of current changes
-python3 ~/.claude/plugins/agent-swarm/scripts/greptile_query.py \
-  "Review the recent changes for bugs, security issues, and code quality" \
-  --genius
+# Default (commit scope)
+/iterate "Fix the auth bug"
 
-# Targeted review
-python3 ~/.claude/plugins/agent-swarm/scripts/greptile_query.py \
-  "Check if these changes follow SOLID principles" \
-  --repo owner/repo --branch feature-branch
+# PR scope
+/iterate --scope pr "Add user validation"
+
+# Full codebase analysis
+/iterate --scope codebase "Improve test coverage"
+```
+
+### Coverage Analysis Script
+
+```bash
+# Get coverage for commit scope
+python3 scripts/adversary_analyze.py --scope commit --run-coverage
+
+# Format for Greptile query
+python3 scripts/adversary_analyze.py --scope pr --greptile
+
+# JSON output
+python3 scripts/adversary_analyze.py --scope codebase --json
+```
+
+## Greptile Integration
+
+Greptile is used at three points in the adversary loop:
+
+### 1. Gap Discovery
+```
+Review tests for [files]. Coverage: [X]%. Uncovered: [lines].
+Should passing tests give confidence this code is strong? What's missing?
+```
+
+### 2. Test Validation
+```
+Review these new tests. Are they:
+1. Testing real behavior (not trivial)?
+2. Fair (not gaming coverage)?
+3. Following project test patterns?
+```
+
+### 3. Final Code Review
+```
+Tests are solid. Review the implementation for:
+- Bugs and logic errors
+- Security vulnerabilities
+- Maintainability issues
 ```
 
 ## Example Session
@@ -242,32 +302,46 @@ python3 ~/.claude/plugins/agent-swarm/scripts/greptile_query.py \
 ```
 User: /iterate "Fix the N+1 query in user list endpoint"
 
-[ITERATE] Initialized - max 3 iterations
+[ITERATE] Initialized - max 5 iterations
 [ITERATE] Skipping intake/design (requirements clear)
 
 --- Iteration 1 ---
 [IMPLEMENT] Adding eager loading to user query
   Modified: src/api/users.py
+
+[ADVERSARY] Analyzing coverage (commit scope)
+  Coverage: 78% overall | 45% for changed files
   
-[TEST] Running verification
-  pytest: PASS (12 tests)
-  mypy: PASS
+  Greptile: "Should passing tests give confidence?"
+  → No. Missing: error handling path, empty result case, pagination edge case
   
-[REVIEW] Checking changes
-  ✓ N+1 query fixed
-  ⚠ Could add query count assertion to tests
-  Decision: NEEDS_WORK
+  Writing tests for gaps...
+  Added: tests/test_users.py:45 - test_empty_user_list
+  Added: tests/test_users.py:52 - test_user_list_pagination_boundary
+  
+  Greptile: "Are these tests fair?"
+  → Yes. Tests cover real behavior and follow project patterns.
+  
+  Running tests...
+  pytest: FAIL (test_user_list_pagination_boundary)
+  
+[ADVERSARY] → IMPLEMENTER (test failure)
 
 --- Iteration 2 ---
-[IMPLEMENT] Adding query count test
-  Modified: tests/test_users.py
+[IMPLEMENT] Fixing pagination boundary condition
+  Modified: src/api/users.py:34
   
-[TEST] Running verification
-  pytest: PASS (13 tests)
-  mypy: PASS
+[ADVERSARY] Analyzing coverage
+  Coverage: 78% overall | 82% for changed files
   
-[REVIEW] Checking changes
-  ✓ N+1 fixed with test coverage
+  Greptile: "Should passing tests give confidence?"
+  → Yes. Critical paths covered. Edge cases handled.
+  
+  Verdict: SOLID
+
+[REVIEW] Final Greptile review
+  "Tests are solid. Review implementation..."
+  → No issues found. Code is clean and maintainable.
   Decision: APPROVED
 
 [ITERATE] EXIT: review_approved
@@ -275,7 +349,8 @@ User: /iterate "Fix the N+1 query in user list endpoint"
   
 [CHECKPOINT] Ready for user approval
   Files changed: src/api/users.py, tests/test_users.py
-  All tests passing
+  Coverage: 45% → 82% for scope
+  Tests added: 2
   Review: APPROVED
 ```
 
