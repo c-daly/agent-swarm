@@ -897,3 +897,346 @@ class TestLoadQueue:
         assert "pr-001" in q2.prs
         assert q2.completed == ["old-task-001"]
         assert q2.failed == ["old-task-002"]
+
+
+class TestQueueAddCLI:
+    """Test queue add CLI command."""
+
+    def test_queue_add_creates_task(self, tmp_path, monkeypatch, capsys):
+        """queue add creates a new task."""
+        from iterate_state import main, load_queue
+
+        state_dir = tmp_path / ".state"
+        state_dir.mkdir()
+        state_file = state_dir / "session.json"
+        state_file.write_text('{}')
+
+        monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
+        monkeypatch.setattr("iterate_state.STATE_DIR", state_dir)
+        monkeypatch.setattr("sys.argv", ["iterate_state.py", "queue", "add", "Test task description"])
+
+        main()
+
+        q = load_queue()
+        assert len(q.tasks) == 1
+        task = list(q.tasks.values())[0]
+        assert task.description == "Test task description"
+        assert task.status == TaskStatus.PENDING
+
+    def test_queue_add_with_pr(self, tmp_path, monkeypatch):
+        """queue add --pr creates task in specific PR."""
+        from iterate_state import main, load_queue
+
+        state_dir = tmp_path / ".state"
+        state_dir.mkdir()
+        state_file = state_dir / "session.json"
+        state_file.write_text('{}')
+
+        monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
+        monkeypatch.setattr("iterate_state.STATE_DIR", state_dir)
+        monkeypatch.setattr("sys.argv", ["iterate_state.py", "queue", "add", "Task", "--pr", "pr-001"])
+
+        main()
+
+        q = load_queue()
+        task = list(q.tasks.values())[0]
+        assert task.pr_id == "pr-001"
+
+    def test_queue_add_with_priority(self, tmp_path, monkeypatch):
+        """queue add --priority sets task priority."""
+        from iterate_state import main, load_queue
+
+        state_dir = tmp_path / ".state"
+        state_dir.mkdir()
+        state_file = state_dir / "session.json"
+        state_file.write_text('{}')
+
+        monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
+        monkeypatch.setattr("iterate_state.STATE_DIR", state_dir)
+        monkeypatch.setattr("sys.argv", ["iterate_state.py", "queue", "add", "Task", "--priority", "1"])
+
+        main()
+
+        q = load_queue()
+        task = list(q.tasks.values())[0]
+        assert task.priority == 1
+
+
+class TestQueueListCLI:
+    """Test queue list CLI command."""
+
+    def test_queue_list_shows_tasks(self, tmp_path, monkeypatch, capsys):
+        """queue list displays tasks."""
+        from iterate_state import main, save_queue, TaskQueue, Task, TaskStatus, TaskSource
+        from decomposer import TaskPriority
+
+        state_dir = tmp_path / ".state"
+        state_dir.mkdir()
+        state_file = state_dir / "session.json"
+        state_file.write_text('{}')
+
+        monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
+        monkeypatch.setattr("iterate_state.STATE_DIR", state_dir)
+
+        # Create queue with tasks
+        q = TaskQueue()
+        q.add_task(Task(
+            id="task-001",
+            description="First task",
+            status=TaskStatus.PENDING,
+            priority=TaskPriority.ORIGINAL,
+            source=TaskSource.ORIGINAL,
+            pr_id="pr-001",
+            phase="test_writing",
+            iteration=0,
+            created_at="2026-01-11T10:00:00Z",
+            metadata={}
+        ))
+        save_queue(q)
+
+        monkeypatch.setattr("sys.argv", ["iterate_state.py", "queue", "list"])
+        main()
+
+        captured = capsys.readouterr()
+        assert "task-001" in captured.out
+        assert "First task" in captured.out
+
+    def test_queue_list_filters_by_status(self, tmp_path, monkeypatch, capsys):
+        """queue list --status filters tasks."""
+        from iterate_state import main, save_queue, TaskQueue, Task, TaskStatus, TaskSource
+        from decomposer import TaskPriority
+
+        state_dir = tmp_path / ".state"
+        state_dir.mkdir()
+        state_file = state_dir / "session.json"
+        state_file.write_text('{}')
+
+        monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
+        monkeypatch.setattr("iterate_state.STATE_DIR", state_dir)
+
+        q = TaskQueue()
+        q.add_task(Task(
+            id="task-pending",
+            description="Pending task",
+            status=TaskStatus.PENDING,
+            priority=TaskPriority.ORIGINAL,
+            source=TaskSource.ORIGINAL,
+            pr_id="pr-001",
+            phase="test_writing",
+            iteration=0,
+            created_at="2026-01-11T10:00:00Z",
+            metadata={}
+        ))
+        q.add_task(Task(
+            id="task-running",
+            description="Running task",
+            status=TaskStatus.RUNNING,
+            priority=TaskPriority.ORIGINAL,
+            source=TaskSource.ORIGINAL,
+            pr_id="pr-001",
+            phase="implement",
+            iteration=0,
+            created_at="2026-01-11T10:00:00Z",
+            metadata={}
+        ))
+        save_queue(q)
+
+        monkeypatch.setattr("sys.argv", ["iterate_state.py", "queue", "list", "--status", "pending"])
+        main()
+
+        captured = capsys.readouterr()
+        assert "task-pending" in captured.out
+        assert "task-running" not in captured.out
+
+
+class TestQueueShowCLI:
+    """Test queue show CLI command."""
+
+    def test_queue_show_displays_task(self, tmp_path, monkeypatch, capsys):
+        """queue show displays task details."""
+        from iterate_state import main, save_queue, TaskQueue, Task, TaskStatus, TaskSource
+        from decomposer import TaskPriority
+
+        state_dir = tmp_path / ".state"
+        state_dir.mkdir()
+        state_file = state_dir / "session.json"
+        state_file.write_text('{}')
+
+        monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
+        monkeypatch.setattr("iterate_state.STATE_DIR", state_dir)
+
+        q = TaskQueue()
+        q.add_task(Task(
+            id="task-001",
+            description="Detailed task",
+            status=TaskStatus.PENDING,
+            priority=TaskPriority.ORIGINAL,
+            source=TaskSource.ORIGINAL,
+            pr_id="pr-001",
+            phase="test_writing",
+            iteration=0,
+            created_at="2026-01-11T10:00:00Z",
+            metadata={"key": "value"}
+        ))
+        save_queue(q)
+
+        monkeypatch.setattr("sys.argv", ["iterate_state.py", "queue", "show", "task-001"])
+        main()
+
+        captured = capsys.readouterr()
+        assert "task-001" in captured.out
+        assert "Detailed task" in captured.out
+        assert "pending" in captured.out.lower()
+
+
+class TestQueueRemoveCLI:
+    """Test queue remove CLI command."""
+
+    def test_queue_remove_removes_pending_task(self, tmp_path, monkeypatch):
+        """queue remove removes a pending task."""
+        from iterate_state import main, save_queue, load_queue, TaskQueue, Task, TaskStatus, TaskSource
+        from decomposer import TaskPriority
+
+        state_dir = tmp_path / ".state"
+        state_dir.mkdir()
+        state_file = state_dir / "session.json"
+        state_file.write_text('{}')
+
+        monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
+        monkeypatch.setattr("iterate_state.STATE_DIR", state_dir)
+
+        q = TaskQueue()
+        q.add_task(Task(
+            id="task-001",
+            description="To remove",
+            status=TaskStatus.PENDING,
+            priority=TaskPriority.ORIGINAL,
+            source=TaskSource.ORIGINAL,
+            pr_id="default",
+            phase="test_writing",
+            iteration=0,
+            created_at="2026-01-11T10:00:00Z",
+            metadata={}
+        ))
+        save_queue(q)
+
+        monkeypatch.setattr("sys.argv", ["iterate_state.py", "queue", "remove", "task-001"])
+        main()
+
+        q2 = load_queue()
+        assert "task-001" not in q2.tasks
+
+
+class TestQueueEligibleCLI:
+    """Test queue eligible CLI command."""
+
+    def test_queue_eligible_shows_eligible_tasks(self, tmp_path, monkeypatch, capsys):
+        """queue eligible shows tasks ready for work."""
+        from iterate_state import main, save_queue, TaskQueue, Task, TaskStatus, TaskSource
+        from decomposer import TaskPriority
+
+        state_dir = tmp_path / ".state"
+        state_dir.mkdir()
+        state_file = state_dir / "session.json"
+        state_file.write_text('{}')
+
+        monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
+        monkeypatch.setattr("iterate_state.STATE_DIR", state_dir)
+
+        q = TaskQueue()
+        q.add_task(Task(
+            id="task-eligible",
+            description="Eligible",
+            status=TaskStatus.PENDING,
+            priority=TaskPriority.ORIGINAL,
+            source=TaskSource.ORIGINAL,
+            pr_id="pr-001",
+            phase="test_writing",
+            iteration=0,
+            created_at="2026-01-11T10:00:00Z",
+            metadata={}
+        ))
+        save_queue(q)
+
+        monkeypatch.setattr("sys.argv", ["iterate_state.py", "queue", "eligible"])
+        main()
+
+        captured = capsys.readouterr()
+        assert "task-eligible" in captured.out
+
+
+class TestPRListCLI:
+    """Test pr list CLI command."""
+
+    def test_pr_list_shows_prs(self, tmp_path, monkeypatch, capsys):
+        """pr list shows all PRs."""
+        from iterate_state import main, save_queue, TaskQueue, Task, TaskStatus, TaskSource
+        from decomposer import TaskPriority
+
+        state_dir = tmp_path / ".state"
+        state_dir.mkdir()
+        state_file = state_dir / "session.json"
+        state_file.write_text('{}')
+
+        monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
+        monkeypatch.setattr("iterate_state.STATE_DIR", state_dir)
+
+        q = TaskQueue()
+        q.add_task(Task(
+            id="task-001",
+            description="Task",
+            status=TaskStatus.PENDING,
+            priority=TaskPriority.ORIGINAL,
+            source=TaskSource.ORIGINAL,
+            pr_id="pr-001",
+            phase="test_writing",
+            iteration=0,
+            created_at="2026-01-11T10:00:00Z",
+            metadata={}
+        ))
+        save_queue(q)
+
+        monkeypatch.setattr("sys.argv", ["iterate_state.py", "pr", "list"])
+        main()
+
+        captured = capsys.readouterr()
+        assert "pr-001" in captured.out
+
+
+class TestPRShowCLI:
+    """Test pr show CLI command."""
+
+    def test_pr_show_displays_pr(self, tmp_path, monkeypatch, capsys):
+        """pr show displays PR details."""
+        from iterate_state import main, save_queue, TaskQueue, Task, TaskStatus, TaskSource
+        from decomposer import TaskPriority
+
+        state_dir = tmp_path / ".state"
+        state_dir.mkdir()
+        state_file = state_dir / "session.json"
+        state_file.write_text('{}')
+
+        monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
+        monkeypatch.setattr("iterate_state.STATE_DIR", state_dir)
+
+        q = TaskQueue()
+        q.add_task(Task(
+            id="task-001",
+            description="Task",
+            status=TaskStatus.PENDING,
+            priority=TaskPriority.ORIGINAL,
+            source=TaskSource.ORIGINAL,
+            pr_id="pr-001",
+            phase="test_writing",
+            iteration=0,
+            created_at="2026-01-11T10:00:00Z",
+            metadata={}
+        ))
+        save_queue(q)
+
+        monkeypatch.setattr("sys.argv", ["iterate_state.py", "pr", "show", "pr-001"])
+        main()
+
+        captured = capsys.readouterr()
+        assert "pr-001" in captured.out
+        assert "task-001" in captured.out

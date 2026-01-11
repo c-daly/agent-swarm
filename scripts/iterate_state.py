@@ -553,6 +553,56 @@ def main():
     # show command
     subparsers.add_parser("show", help="Show full state")
 
+    # -------------------------------------------------------------------------
+    # Queue commands
+    # -------------------------------------------------------------------------
+    queue_parser = subparsers.add_parser("queue", help="Task queue operations")
+    queue_subparsers = queue_parser.add_subparsers(dest="queue_command", help="Queue subcommand")
+
+    # queue add
+    queue_add = queue_subparsers.add_parser("add", help="Add a task to the queue")
+    queue_add.add_argument("description", help="Task description")
+    queue_add.add_argument("--pr", default="default", help="PR ID (default: default)")
+    queue_add.add_argument("--priority", type=int, default=PRIORITY_ORIGINAL, help="Priority (0=highest)")
+    queue_add.add_argument("--branch", help="Branch name (creates PR if needed)")
+
+    # queue list
+    queue_list = queue_subparsers.add_parser("list", help="List tasks")
+    queue_list.add_argument("--status", choices=["pending", "running", "completed", "failed"],
+                           help="Filter by status")
+    queue_list.add_argument("--pr", help="Filter by PR ID")
+
+    # queue show
+    queue_show = queue_subparsers.add_parser("show", help="Show task details")
+    queue_show.add_argument("task_id", help="Task ID to show")
+
+    # queue remove
+    queue_remove = queue_subparsers.add_parser("remove", help="Remove a pending task")
+    queue_remove.add_argument("task_id", help="Task ID to remove")
+
+    # queue eligible
+    queue_eligible = queue_subparsers.add_parser("eligible", help="Show eligible tasks")
+    queue_eligible.add_argument("--count", type=int, default=10, help="Max tasks to show")
+
+    # -------------------------------------------------------------------------
+    # PR commands
+    # -------------------------------------------------------------------------
+    pr_parser = subparsers.add_parser("pr", help="PR operations")
+    pr_subparsers = pr_parser.add_subparsers(dest="pr_command", help="PR subcommand")
+
+    # pr list
+    pr_subparsers.add_parser("list", help="List all PRs")
+
+    # pr show
+    pr_show = pr_subparsers.add_parser("show", help="Show PR details")
+    pr_show.add_argument("pr_id", help="PR ID to show")
+
+    # pr create
+    pr_create = pr_subparsers.add_parser("create", help="Create a PR grouping tasks")
+    pr_create.add_argument("pr_id", help="PR ID to create")
+    pr_create.add_argument("--branch", required=True, help="Branch name")
+    pr_create.add_argument("--tasks", nargs="+", required=True, help="Task IDs to include")
+
     args = parser.parse_args()
 
     if args.command == "init":
@@ -565,9 +615,243 @@ def main():
         mark_exit(args.reason)
     elif args.command == "show":
         show_state()
+    elif args.command == "queue":
+        handle_queue_command(args)
+    elif args.command == "pr":
+        handle_pr_command(args)
     else:
         parser.print_help()
         sys.exit(1)
+
+
+def handle_queue_command(args) -> None:
+    """Handle queue subcommands."""
+    if args.queue_command == "add":
+        cmd_queue_add(args.description, args.pr, args.priority, args.branch)
+    elif args.queue_command == "list":
+        cmd_queue_list(args.status, args.pr)
+    elif args.queue_command == "show":
+        cmd_queue_show(args.task_id)
+    elif args.queue_command == "remove":
+        cmd_queue_remove(args.task_id)
+    elif args.queue_command == "eligible":
+        cmd_queue_eligible(args.count)
+    else:
+        print("Usage: iterate_state.py queue {add|list|show|remove|eligible}")
+        sys.exit(1)
+
+
+def handle_pr_command(args) -> None:
+    """Handle pr subcommands."""
+    if args.pr_command == "list":
+        cmd_pr_list()
+    elif args.pr_command == "show":
+        cmd_pr_show(args.pr_id)
+    elif args.pr_command == "create":
+        cmd_pr_create(args.pr_id, args.branch, args.tasks)
+    else:
+        print("Usage: iterate_state.py pr {list|show|create}")
+        sys.exit(1)
+
+
+# =============================================================================
+# Queue CLI Commands
+# =============================================================================
+
+def cmd_queue_add(description: str, pr_id: str, priority: int, branch: str | None) -> None:
+    """Add a task to the queue."""
+    import uuid
+    from datetime import datetime, timezone
+
+    queue = load_queue()
+
+    task_id = f"task-{uuid.uuid4().hex[:8]}"
+    task = Task(
+        id=task_id,
+        description=description,
+        status=TaskStatus.PENDING,
+        priority=priority,
+        source=TaskSource.ORIGINAL,
+        pr_id=pr_id,
+        assigned_agent=None,
+        phase="test_writing",
+        iteration=0,
+        created_at=datetime.now(timezone.utc).isoformat(),
+        metadata={},
+    )
+
+    queue.add_task(task)
+
+    # If branch provided and PR doesn't exist, update PR branch
+    if branch and pr_id in queue.prs:
+        queue.prs[pr_id].branch = branch
+
+    save_queue(queue)
+    print(f"Added task: {task_id}")
+
+
+def cmd_queue_list(status_filter: str | None, pr_filter: str | None) -> None:
+    """List tasks with optional filters."""
+    queue = load_queue()
+
+    tasks = list(queue.tasks.values())
+
+    # Apply filters
+    if status_filter:
+        tasks = [t for t in tasks if t.status.value == status_filter]
+    if pr_filter:
+        tasks = [t for t in tasks if t.pr_id == pr_filter]
+
+    if not tasks:
+        print("No tasks found.")
+        return
+
+    # Print header
+    print(f"{'ID':<16} {'Status':<10} {'Pri':<4} {'Phase':<14} {'PR':<12} Description")
+    print("-" * 80)
+
+    for task in sorted(tasks, key=lambda t: (t.priority, t.created_at)):
+        desc = task.description[:30] + "..." if len(task.description) > 30 else task.description
+        print(f"{task.id:<16} {task.status.value:<10} {task.priority:<4} {task.phase:<14} {task.pr_id:<12} {desc}")
+
+
+def cmd_queue_show(task_id: str) -> None:
+    """Show detailed task information."""
+    queue = load_queue()
+    task = queue.get_task(task_id)
+
+    if not task:
+        print(f"Task not found: {task_id}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"ID:          {task.id}")
+    print(f"Description: {task.description}")
+    print(f"Status:      {task.status.value}")
+    print(f"Priority:    {task.priority}")
+    print(f"Source:      {task.source.value}")
+    print(f"PR ID:       {task.pr_id}")
+    print(f"Agent:       {task.assigned_agent or 'None'}")
+    print(f"Phase:       {task.phase}")
+    print(f"Iteration:   {task.iteration}")
+    print(f"Created:     {task.created_at}")
+    if task.metadata:
+        print(f"Metadata:    {json.dumps(task.metadata, indent=2)}")
+
+
+def cmd_queue_remove(task_id: str) -> None:
+    """Remove a pending task."""
+    queue = load_queue()
+    task = queue.get_task(task_id)
+
+    if not task:
+        print(f"Task not found: {task_id}", file=sys.stderr)
+        sys.exit(1)
+
+    if task.status != TaskStatus.PENDING:
+        print(f"Cannot remove task with status: {task.status.value}", file=sys.stderr)
+        sys.exit(1)
+
+    # Remove from queue
+    del queue.tasks[task_id]
+
+    # Remove from PR task list
+    if task.pr_id in queue.prs:
+        pr = queue.prs[task.pr_id]
+        if task_id in pr.task_ids:
+            pr.task_ids.remove(task_id)
+
+    save_queue(queue)
+    print(f"Removed task: {task_id}")
+
+
+def cmd_queue_eligible(count: int) -> None:
+    """Show tasks eligible for work."""
+    queue = load_queue()
+    eligible = queue.get_eligible_tasks(count)
+
+    if not eligible:
+        print("No eligible tasks.")
+        return
+
+    print(f"{'ID':<16} {'Pri':<4} {'Phase':<14} {'PR':<12} Description")
+    print("-" * 70)
+
+    for task in eligible:
+        desc = task.description[:30] + "..." if len(task.description) > 30 else task.description
+        print(f"{task.id:<16} {task.priority:<4} {task.phase:<14} {task.pr_id:<12} {desc}")
+
+
+# =============================================================================
+# PR CLI Commands
+# =============================================================================
+
+def cmd_pr_list() -> None:
+    """List all PRs."""
+    queue = load_queue()
+
+    if not queue.prs:
+        print("No PRs found.")
+        return
+
+    print(f"{'PR ID':<16} {'Phase':<14} {'Tasks':<8} Branch")
+    print("-" * 60)
+
+    for pr_id, pr in queue.prs.items():
+        print(f"{pr.pr_id:<16} {pr.phase:<14} {len(pr.task_ids):<8} {pr.branch}")
+
+
+def cmd_pr_show(pr_id: str) -> None:
+    """Show PR details."""
+    queue = load_queue()
+    pr = queue.get_pr(pr_id)
+
+    if not pr:
+        print(f"PR not found: {pr_id}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"PR ID:     {pr.pr_id}")
+    print(f"Branch:    {pr.branch}")
+    print(f"Phase:     {pr.phase}")
+    print(f"Iteration: {pr.iteration}")
+    print(f"\nTasks ({len(pr.task_ids)}):")
+
+    for task_id in pr.task_ids:
+        task = queue.get_task(task_id)
+        if task:
+            print(f"  {task.id}: [{task.status.value}] {task.description[:40]}")
+
+
+def cmd_pr_create(pr_id: str, branch: str, task_ids: list[str]) -> None:
+    """Create a PR grouping existing tasks."""
+    queue = load_queue()
+
+    # Verify all tasks exist
+    for task_id in task_ids:
+        if task_id not in queue.tasks:
+            print(f"Task not found: {task_id}", file=sys.stderr)
+            sys.exit(1)
+
+    # Create or update PR
+    if pr_id in queue.prs:
+        pr = queue.prs[pr_id]
+        pr.branch = branch
+        pr.task_ids = task_ids
+    else:
+        pr = PRState(
+            pr_id=pr_id,
+            branch=branch,
+            phase="test_writing",
+            task_ids=task_ids,
+            iteration=0,
+        )
+        queue.prs[pr_id] = pr
+
+    # Update task PR IDs
+    for task_id in task_ids:
+        queue.tasks[task_id].pr_id = pr_id
+
+    save_queue(queue)
+    print(f"Created PR: {pr_id} with {len(task_ids)} tasks")
 
 
 if __name__ == "__main__":
