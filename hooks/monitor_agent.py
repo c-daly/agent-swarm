@@ -238,19 +238,25 @@ def format_monitor_result(decision: Dict[str, Any]) -> dict:
     """
     if decision["allowed"]:
         return {
-            "allowed": True,
-            "message": f"[MONITOR] Approved: {decision['reason']}"
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+                "permissionDecisionReason": f"[MONITOR] Approved: {decision['reason']}"
+            }
         }
     else:
         return {
-            "allowed": False,
-            "message": (
-                f"[MONITOR AGENT] {decision['reason']}\n"
-                f"Confidence: {decision['confidence']:.0%}\n"
-                "\n"
-                "The monitor agent identified a potential policy violation.\n"
-                "Please review and correct before proceeding."
-            )
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": (
+                    f"[MONITOR AGENT] {decision['reason']}\n"
+                    f"Confidence: {decision['confidence']:.0%}\n"
+                    "\n"
+                    "The monitor agent identified a potential policy violation.\n"
+                    "Please review and correct before proceeding."
+                )
+            }
         }
 
 

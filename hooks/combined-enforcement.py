@@ -1325,11 +1325,10 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
         decision = call_monitor_agent(tool_name, tool_input, state)
         if decision:
             result = format_monitor_result(decision)
-            if not result.get("allowed", True):
-                return {
-                    "allowed": False,
-                    "message": result["message"]
-                }
+            # format_monitor_result returns proper hook format with hookSpecificOutput
+            hook_output = result.get("hookSpecificOutput", {})
+            if hook_output.get("permissionDecision") == "deny":
+                return result  # Return the properly formatted hook response
 
     # Enforce rules for code-editing tools
     code_tools = ["Edit", "Write", "mcp__plugin_serena_serena__replace_symbol_body",
