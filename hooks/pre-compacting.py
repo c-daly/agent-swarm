@@ -148,13 +148,13 @@ PERSISTENT_FLAGS = [
     "tests_executed",
     "verify_signal_given",
     "phase",  # Preserve workflow phase
+    "workflow_invoked",  # Workflow should persist across compaction
 ]
 
 # Flags that must be CLEARED on compaction (depend on message history)
 MESSAGE_DEPENDENT_FLAGS = [
     "classification_given",
     "classification_type",
-    "workflow_invoked",
     "edits_this_response",
 ]
 
