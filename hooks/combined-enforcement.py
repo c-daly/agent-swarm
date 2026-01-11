@@ -227,7 +227,6 @@ def _normalize_shell_command(cmd: str) -> str:
 
     Prevents bypasses like: .sta""te, .sta''te, $'.state', \\s escapes
     """
-    import re
     # Remove empty string concatenations: "" and ''
     cmd = re.sub(r'""', '', cmd)
     cmd = re.sub(r"''", '', cmd)
@@ -1265,7 +1264,6 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
             content = msg.get("content", "")
             
             # Check for classification
-            import re
             match = re.search(classification_pattern, content)
             if match:
                 new_classification = match.group(1)
