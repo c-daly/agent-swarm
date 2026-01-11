@@ -1,5 +1,6 @@
 """Tests for TaskQueue infrastructure in iterate_state.py."""
 
+import json
 import pytest
 from pathlib import Path
 import sys
@@ -590,3 +591,309 @@ class TestTaskQueuePRManagement:
         ready = q.get_prs_ready_for_sync("test")
         assert "pr-ready" in ready
         assert "pr-notready" not in ready
+
+
+class TestSaveQueue:
+    """Test save_queue persistence function."""
+
+    def test_save_queue_creates_queue_key(self, tmp_path, monkeypatch):
+        """save_queue creates 'queue' key in session state."""
+        from decomposer import TaskPriority
+        from iterate_state import save_queue, TaskQueue, Task, TaskStatus, TaskSource
+
+        state_dir = tmp_path / ".state"
+        state_dir.mkdir()
+        state_file = state_dir / "session.json"
+        state_file.write_text('{"mode": "iterate-tdd"}')
+
+        monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
+
+        q = TaskQueue()
+        q.add_task(Task(
+            id="task-001",
+            description="Test task",
+            status=TaskStatus.PENDING,
+            priority=TaskPriority.ORIGINAL,
+            source=TaskSource.ORIGINAL,
+            pr_id="pr-001",
+            phase="test_writing",
+            iteration=0,
+            created_at="2026-01-11T10:00:00Z",
+            metadata={}
+        ))
+        save_queue(q)
+
+        saved = json.loads(state_file.read_text())
+        assert "queue" in saved
+        assert "tasks" in saved["queue"]
+        assert "task-001" in saved["queue"]["tasks"]
+
+    def test_save_queue_preserves_existing_state(self, tmp_path, monkeypatch):
+        """save_queue doesn't overwrite other state keys."""
+        from iterate_state import save_queue, TaskQueue
+
+        state_dir = tmp_path / ".state"
+        state_dir.mkdir()
+        state_file = state_dir / "session.json"
+        state_file.write_text('{"mode": "iterate-tdd", "iterate_phase": "test_writing", "other_key": "preserved"}')
+
+        monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
+
+        q = TaskQueue()
+        save_queue(q)
+
+        saved = json.loads(state_file.read_text())
+        assert saved["mode"] == "iterate-tdd"
+        assert saved["iterate_phase"] == "test_writing"
+        assert saved["other_key"] == "preserved"
+        assert "queue" in saved
+
+    def test_save_queue_serializes_prs(self, tmp_path, monkeypatch):
+        """save_queue includes PR state."""
+        from decomposer import TaskPriority
+        from iterate_state import save_queue, TaskQueue, Task, TaskStatus, TaskSource
+
+        state_dir = tmp_path / ".state"
+        state_dir.mkdir()
+        state_file = state_dir / "session.json"
+        state_file.write_text('{}')
+
+        monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
+
+        q = TaskQueue()
+        q.add_task(Task(
+            id="task-001",
+            description="Test",
+            status=TaskStatus.PENDING,
+            priority=TaskPriority.ORIGINAL,
+            source=TaskSource.ORIGINAL,
+            pr_id="pr-001",
+            phase="test_writing",
+            iteration=0,
+            created_at="2026-01-11T10:00:00Z",
+            metadata={}
+        ))
+        save_queue(q)
+
+        saved = json.loads(state_file.read_text())
+        assert "prs" in saved["queue"]
+        assert "pr-001" in saved["queue"]["prs"]
+
+    def test_save_queue_serializes_completed_failed(self, tmp_path, monkeypatch):
+        """save_queue includes completed and failed lists."""
+        from iterate_state import save_queue, TaskQueue
+
+        state_dir = tmp_path / ".state"
+        state_dir.mkdir()
+        state_file = state_dir / "session.json"
+        state_file.write_text('{}')
+
+        monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
+
+        q = TaskQueue()
+        q.completed = ["task-001", "task-002"]
+        q.failed = ["task-003"]
+        save_queue(q)
+
+        saved = json.loads(state_file.read_text())
+        assert saved["queue"]["completed"] == ["task-001", "task-002"]
+        assert saved["queue"]["failed"] == ["task-003"]
+
+
+class TestLoadQueue:
+    """Test load_queue persistence function."""
+
+    def test_load_queue_returns_empty_if_no_queue_key(self, tmp_path, monkeypatch):
+        """load_queue returns empty TaskQueue if no queue state."""
+        from iterate_state import load_queue, TaskQueue
+
+        state_dir = tmp_path / ".state"
+        state_dir.mkdir()
+        state_file = state_dir / "session.json"
+        state_file.write_text('{"mode": "iterate-tdd"}')
+
+        monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
+
+        q = load_queue()
+        assert isinstance(q, TaskQueue)
+        assert len(q.tasks) == 0
+        assert len(q.prs) == 0
+
+    def test_load_queue_returns_empty_if_no_file(self, tmp_path, monkeypatch):
+        """load_queue returns empty TaskQueue if no session file."""
+        from iterate_state import load_queue, TaskQueue
+
+        state_file = tmp_path / ".state" / "session.json"
+        monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
+
+        q = load_queue()
+        assert isinstance(q, TaskQueue)
+        assert len(q.tasks) == 0
+
+    def test_load_queue_restores_tasks(self, tmp_path, monkeypatch):
+        """load_queue restores task data."""
+        from iterate_state import load_queue, TaskStatus
+
+        state_dir = tmp_path / ".state"
+        state_dir.mkdir()
+        state_file = state_dir / "session.json"
+        state_file.write_text(json.dumps({
+            "queue": {
+                "tasks": {
+                    "task-001": {
+                        "id": "task-001",
+                        "description": "Test task",
+                        "status": "pending",
+                        "priority": 3,
+                        "source": "original",
+                        "pr_id": "pr-001",
+                        "assigned_agent": None,
+                        "phase": "test_writing",
+                        "iteration": 0,
+                        "created_at": "2026-01-11T10:00:00Z",
+                        "metadata": {}
+                    }
+                },
+                "prs": {
+                    "pr-001": {
+                        "pr_id": "pr-001",
+                        "branch": "feature/test",
+                        "phase": "test_writing",
+                        "task_ids": ["task-001"],
+                        "iteration": 0
+                    }
+                },
+                "completed": [],
+                "failed": []
+            }
+        }))
+
+        monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
+
+        q = load_queue()
+        assert "task-001" in q.tasks
+        task = q.tasks["task-001"]
+        assert task.description == "Test task"
+        assert task.status == TaskStatus.PENDING
+        assert task.pr_id == "pr-001"
+
+    def test_load_queue_restores_prs(self, tmp_path, monkeypatch):
+        """load_queue restores PR state."""
+        from iterate_state import load_queue
+
+        state_dir = tmp_path / ".state"
+        state_dir.mkdir()
+        state_file = state_dir / "session.json"
+        state_file.write_text(json.dumps({
+            "queue": {
+                "tasks": {},
+                "prs": {
+                    "pr-001": {
+                        "pr_id": "pr-001",
+                        "branch": "feature/test",
+                        "phase": "implement",
+                        "task_ids": ["task-001"],
+                        "iteration": 2
+                    }
+                },
+                "completed": [],
+                "failed": []
+            }
+        }))
+
+        monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
+
+        q = load_queue()
+        assert "pr-001" in q.prs
+        pr = q.prs["pr-001"]
+        assert pr.branch == "feature/test"
+        assert pr.phase == "implement"
+        assert pr.iteration == 2
+
+    def test_load_queue_restores_completed_failed(self, tmp_path, monkeypatch):
+        """load_queue restores completed and failed lists."""
+        from iterate_state import load_queue
+
+        state_dir = tmp_path / ".state"
+        state_dir.mkdir()
+        state_file = state_dir / "session.json"
+        state_file.write_text(json.dumps({
+            "queue": {
+                "tasks": {},
+                "prs": {},
+                "completed": ["task-001", "task-002"],
+                "failed": ["task-003"]
+            }
+        }))
+
+        monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
+
+        q = load_queue()
+        assert q.completed == ["task-001", "task-002"]
+        assert q.failed == ["task-003"]
+
+    def test_load_queue_handles_malformed_data(self, tmp_path, monkeypatch):
+        """load_queue handles missing fields gracefully."""
+        from iterate_state import load_queue
+
+        state_dir = tmp_path / ".state"
+        state_dir.mkdir()
+        state_file = state_dir / "session.json"
+        # Malformed: missing required fields in task
+        state_file.write_text(json.dumps({
+            "queue": {
+                "tasks": {
+                    "task-bad": {"id": "task-bad"}  # Missing most fields
+                },
+                "prs": {}
+            }
+        }))
+
+        monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
+
+        # Should not raise, returns what it can
+        q = load_queue()
+        assert isinstance(q, TaskQueue)
+
+    def test_save_load_roundtrip(self, tmp_path, monkeypatch):
+        """save then load preserves queue state."""
+        from decomposer import TaskPriority
+        from iterate_state import save_queue, load_queue, TaskQueue, Task, TaskStatus, TaskSource
+
+        state_dir = tmp_path / ".state"
+        state_dir.mkdir()
+        state_file = state_dir / "session.json"
+        state_file.write_text('{}')
+
+        monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
+
+        # Create queue with data
+        q1 = TaskQueue()
+        q1.add_task(Task(
+            id="task-001",
+            description="First task",
+            status=TaskStatus.PENDING,
+            priority=TaskPriority.ORIGINAL,
+            source=TaskSource.ORIGINAL,
+            pr_id="pr-001",
+            phase="test_writing",
+            iteration=0,
+            created_at="2026-01-11T10:00:00Z",
+            metadata={"key": "value"}
+        ))
+        q1.completed = ["old-task-001"]
+        q1.failed = ["old-task-002"]
+
+        # Save
+        save_queue(q1)
+
+        # Load
+        q2 = load_queue()
+
+        # Verify
+        assert "task-001" in q2.tasks
+        assert q2.tasks["task-001"].description == "First task"
+        assert q2.tasks["task-001"].metadata == {"key": "value"}
+        assert "pr-001" in q2.prs
+        assert q2.completed == ["old-task-001"]
+        assert q2.failed == ["old-task-002"]

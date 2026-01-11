@@ -259,6 +259,7 @@ class TaskQueue:
 
 STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
 SESSION_FILE = STATE_DIR / "session.json"
+STATE_FILE = SESSION_FILE  # Alias for queue persistence tests
 
 # Phase order for each mode
 DEFAULT_PHASES = ["implement", "test", "coverage", "review"]
@@ -281,6 +282,123 @@ def save_state(state: dict) -> None:
     """Save session state."""
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     SESSION_FILE.write_text(json.dumps(state, indent=2) + "\n")
+
+
+def save_queue(queue: "TaskQueue") -> None:
+    """Save queue state to session.json under 'queue' key.
+
+    Merges with existing state (doesn't overwrite other keys).
+    """
+    state = load_state()
+
+    # Serialize tasks
+    tasks_data = {}
+    for task_id, task in queue.tasks.items():
+        tasks_data[task_id] = {
+            "id": task.id,
+            "description": task.description,
+            "status": task.status.value if hasattr(task.status, 'value') else str(task.status),
+            "priority": task.priority,
+            "source": task.source.value if hasattr(task.source, 'value') else str(task.source),
+            "pr_id": task.pr_id,
+            "assigned_agent": task.assigned_agent,
+            "phase": task.phase,
+            "iteration": task.iteration,
+            "created_at": task.created_at,
+            "metadata": task.metadata,
+        }
+
+    # Serialize PRs
+    prs_data = {}
+    for pr_id, pr in queue.prs.items():
+        prs_data[pr_id] = {
+            "pr_id": pr.pr_id,
+            "branch": pr.branch,
+            "phase": pr.phase,
+            "task_ids": pr.task_ids,
+            "iteration": pr.iteration,
+        }
+
+    state["queue"] = {
+        "tasks": tasks_data,
+        "prs": prs_data,
+        "completed": queue.completed,
+        "failed": queue.failed,
+    }
+
+    save_state(state)
+
+
+def load_queue() -> "TaskQueue":
+    """Load queue from session.json.
+
+    Returns empty TaskQueue if no queue state exists.
+    Handles missing/malformed data gracefully.
+    """
+    state = load_state()
+    queue = TaskQueue()
+
+    queue_data = state.get("queue")
+    if not queue_data:
+        return queue
+
+    # Restore tasks
+    tasks_data = queue_data.get("tasks", {})
+    for task_id, task_dict in tasks_data.items():
+        try:
+            # Convert status string to enum
+            status_str = task_dict.get("status", "pending")
+            try:
+                status = TaskStatus(status_str)
+            except ValueError:
+                status = TaskStatus.PENDING
+
+            # Convert source string to enum
+            source_str = task_dict.get("source", "original")
+            try:
+                source = TaskSource(source_str)
+            except ValueError:
+                source = TaskSource.ORIGINAL
+
+            task = Task(
+                id=task_dict.get("id", task_id),
+                description=task_dict.get("description", ""),
+                status=status,
+                priority=task_dict.get("priority", PRIORITY_ORIGINAL),
+                source=source,
+                pr_id=task_dict.get("pr_id", "default"),
+                assigned_agent=task_dict.get("assigned_agent"),
+                phase=task_dict.get("phase", "test_writing"),
+                iteration=task_dict.get("iteration", 0),
+                created_at=task_dict.get("created_at", ""),
+                metadata=task_dict.get("metadata", {}),
+            )
+            queue.tasks[task_id] = task
+        except Exception:
+            # Skip malformed tasks
+            continue
+
+    # Restore PRs
+    prs_data = queue_data.get("prs", {})
+    for pr_id, pr_dict in prs_data.items():
+        try:
+            pr = PRState(
+                pr_id=pr_dict.get("pr_id", pr_id),
+                branch=pr_dict.get("branch", ""),
+                phase=pr_dict.get("phase", "test_writing"),
+                task_ids=pr_dict.get("task_ids", []),
+                iteration=pr_dict.get("iteration", 0),
+            )
+            queue.prs[pr_id] = pr
+        except Exception:
+            # Skip malformed PRs
+            continue
+
+    # Restore completed/failed lists
+    queue.completed = queue_data.get("completed", [])
+    queue.failed = queue_data.get("failed", [])
+
+    return queue
 
 
 def init_iterate(tdd: bool = True, max_iter: int = 5) -> None:
