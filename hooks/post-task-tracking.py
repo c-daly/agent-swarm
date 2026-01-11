@@ -32,11 +32,18 @@ def save_metrics(metrics):
 
 def extract_agent_info(tool_output):
     """Extract agent ID and type from Task tool output."""
-    # Look for agent ID in output (format: "Agent <id>: ...")
-    # Or task ID from system messages
+    # Look for agent ID in output
+    # Formats:
+    #   - "agentId: abc1234" (async agents)
+    #   - "Agent abc1234: ..." (older format)
+    #   - "task_id: abc1234" (task output format)
 
-    # Try to find agent ID
-    agent_id_match = re.search(r'Agent ([a-f0-9]{7,})', tool_output)
+    # Try agentId: format first (most common)
+    agent_id_match = re.search(r'agentId:\s*([a-f0-9]{7,})', tool_output, re.IGNORECASE)
+    
+    # Fall back to other formats
+    if not agent_id_match:
+        agent_id_match = re.search(r'Agent\s+([a-f0-9]{7,})', tool_output)
     if not agent_id_match:
         agent_id_match = re.search(r'task_id["\s:]+([a-f0-9-]+)', tool_output)
 
@@ -45,28 +52,28 @@ def extract_agent_info(tool_output):
 
     agent_id = agent_id_match.group(1)
 
-    # Try to find agent type
-    type_match = re.search(r'subagent[_\s]type["\s:]+([a-zA-Z0-9_-]+)', tool_output, re.IGNORECASE)
+    # Try to find agent type (not in output, will be set from tool_input)
+    type_match = re.search(r'subagent[_\s]type["\s:]+([a-zA-Z0-9_:-]+)', tool_output, re.IGNORECASE)
     agent_type = type_match.group(1) if type_match else "unknown"
 
     return agent_id, agent_type
 
-def track_subagent(agent_id, agent_type):
+def track_subagent(agent_id, agent_type, prompt=""):
     """Track a completed subagent."""
     metrics = load_metrics()
 
-    # Create entry for this agent
+    # Create/update entry for this agent with correct schema
     if agent_id not in metrics:
         metrics[agent_id] = {
+            "spawned_at": datetime.now().isoformat(),
             "agent_type": agent_type,
-            "first_seen": datetime.now().isoformat(),
-            "last_updated": datetime.now().isoformat(),
-            "completions": 0
+            "status": "completed",
+            "prompt": prompt[:100] if prompt else "No description"
         }
-
-    # Update
-    metrics[agent_id]["last_updated"] = datetime.now().isoformat()
-    metrics[agent_id]["completions"] += 1
+    else:
+        # Update existing entry
+        metrics[agent_id]["status"] = "completed"
+        metrics[agent_id]["last_updated"] = datetime.now().isoformat()
 
     save_metrics(metrics)
 
@@ -118,20 +125,83 @@ def main():
         return
 
     tool_name = input_data.get("tool_name", "")
-    tool_output = input_data.get("tool_output", {})
+    tool_input = input_data.get("tool_input", {})
+    tool_output_raw = input_data.get("tool_response", {})
+
+    # DEBUG: Log full structure to understand format
+    debug_file = STATE_DIR / "post_task_debug.log"
+    try:
+        with open(debug_file, "a") as f:
+            f.write(f"\n[{datetime.now().isoformat()}] FULL INPUT DUMP\n")
+            f.write(f"  tool_name: {tool_name}\n")
+            f.write(f"  input_data keys: {list(input_data.keys())}\n")
+            f.write(f"  tool_output type: {type(tool_output_raw)}\n")
+            f.write(f"  tool_output repr: {repr(tool_output_raw)[:500]}\n")
+            if isinstance(tool_output_raw, dict):
+                f.write(f"  tool_output keys: {list(tool_output_raw.keys())}\n")
+                # Check for common fields
+                for key in ['agentId', 'agent_id', 'task_id', 'id', 'result', 'output']:
+                    if key in tool_output_raw:
+                        f.write(f"  Found {key}: {tool_output_raw[key]}\n")
+    except Exception as e:
+        # Log the exception
+        try:
+            with open(debug_file, "a") as f:
+                f.write(f"  ERROR in debug logging: {e}\n")
+        except:
+            pass
+
+    tool_output = tool_output_raw
 
     # Track Task tool completions
     if tool_name == "Task":
-        # Extract agent info from output
-        output_str = json.dumps(tool_output)
-        agent_id, agent_type = extract_agent_info(output_str)
+        # DEBUG: Log to see if hook is running
+        debug_file = STATE_DIR / "post_task_debug.log"
+        try:
+            with open(debug_file, "a") as f:
+                f.write(f"[{datetime.now().isoformat()}] Task tool detected\n")
+                f.write(f"  tool_input keys: {list(tool_input.keys())}\n")
+                f.write(f"  tool_response type: {type(tool_output)} keys: {list(tool_output.keys()) if isinstance(tool_output, dict) else len(tool_output)}\n")
+        except:
+            pass
 
-        if agent_id and agent_type:
+        # Extract agent info from input and output
+        # subagent_type is in tool_input, agent_id is in tool_output
+        subagent_type = tool_input.get("subagent_type", "unknown")
+        
+        # Extract agent_id from tool_response
+        if isinstance(tool_output, dict):
+            # Modern format: dict with 'agentId' field
+            agent_id = tool_output.get('agentId', None)
+        else:
+            # Legacy format: string that needs parsing
+            agent_id, _ = extract_agent_info(str(tool_output))
+
+        # DEBUG: Log extraction result
+        try:
+            with open(debug_file, "a") as f:
+                f.write(f"  agent_id extracted: {agent_id}\n")
+                f.write(f"  subagent_type: {subagent_type}\n")
+        except:
+            pass
+
+        if agent_id:
             try:
-                track_subagent(agent_id, agent_type)
+                prompt = tool_input.get("prompt", "")
+                track_subagent(agent_id, subagent_type, prompt)
+                # DEBUG: Confirm tracking
+                try:
+                    with open(debug_file, "a") as f:
+                        f.write(f"  ✅ Tracked successfully\n")
+                except:
+                    pass
             except Exception as e:
                 # Don't fail the hook if tracking fails
-                pass
+                try:
+                    with open(debug_file, "a") as f:
+                        f.write(f"  ❌ Tracking failed: {e}\n")
+                except:
+                    pass
 
     # Check for new plugins periodically
     plugin_msg = None

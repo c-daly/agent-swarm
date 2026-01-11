@@ -18,6 +18,7 @@ STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
 SUBAGENT_METRICS = STATE_DIR / "subagent_metrics.json"
 TASK_OUTPUT_DIR = Path("/tmp/claude/-home-fearsidhe/tasks")
 
+
 def load_subagent_metrics():
     """Load existing subagent metrics."""
     if SUBAGENT_METRICS.exists():
@@ -29,9 +30,10 @@ def load_subagent_metrics():
             "total_agents": 0,
             "total_tokens": 0,
             "avg_tokens": 0,
-            "by_type": {}
-        }
+            "by_type": {},
+        },
     }
+
 
 def extract_token_usage(agent_id):
     """Extract token usage from agent output."""
@@ -46,7 +48,7 @@ def extract_token_usage(agent_id):
 
         # Look for token usage in system reminders
         # Pattern: "Agent <id> progress: X new tools used, Y new tokens"
-        matches = re.findall(r'(\d+) new tokens', content)
+        matches = re.findall(r"(\d+) new tokens", content)
 
         if matches:
             # Sum all token increments
@@ -54,8 +56,9 @@ def extract_token_usage(agent_id):
             return total
 
         return None
-    except Exception as e:
+    except Exception:
         return None
+
 
 def track_agent(agent_id, agent_type):
     """Track a completed subagent."""
@@ -68,7 +71,7 @@ def track_agent(agent_id, agent_type):
         "type": agent_type,
         "timestamp": datetime.now().isoformat(),
         "tokens": tokens if tokens else "unknown",
-        "status": "timeout" if tokens and tokens > 3000000 else "completed"
+        "status": "timeout" if tokens and tokens > 3000000 else "completed",
     }
 
     metrics["agents"].append(agent_record)
@@ -85,7 +88,7 @@ def track_agent(agent_id, agent_type):
                 "count": 0,
                 "total_tokens": 0,
                 "avg_tokens": 0,
-                "max_tokens": 0
+                "max_tokens": 0,
             }
 
         type_stats = metrics["summary"]["by_type"][agent_type]
@@ -95,18 +98,25 @@ def track_agent(agent_id, agent_type):
         type_stats["max_tokens"] = max(type_stats["max_tokens"], tokens)
 
     # Overall average
-    completed_with_tokens = [a for a in metrics["agents"] if isinstance(a.get("tokens"), int)]
+    completed_with_tokens = [
+        a for a in metrics["agents"] if isinstance(a.get("tokens"), int)
+    ]
     if completed_with_tokens:
-        metrics["summary"]["avg_tokens"] = sum(a["tokens"] for a in completed_with_tokens) / len(completed_with_tokens)
+        metrics["summary"]["avg_tokens"] = sum(
+            a["tokens"] for a in completed_with_tokens
+        ) / len(completed_with_tokens)
 
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     SUBAGENT_METRICS.write_text(json.dumps(metrics, indent=2))
 
     # Print alert if excessive
     if tokens and tokens > 500000:
-        print(f"⚠️  HIGH TOKEN USAGE: {agent_type} used {tokens:,} tokens", file=sys.stderr)
+        print(
+            f"⚠️  HIGH TOKEN USAGE: {agent_type} used {tokens:,} tokens", file=sys.stderr
+        )
 
     return agent_record
+
 
 def show_subagent_report():
     """Show subagent performance report."""
@@ -121,12 +131,12 @@ def show_subagent_report():
     print("SUBAGENT PERFORMANCE REPORT")
     print("=" * 60)
 
-    print(f"\n📊 Overall:")
+    print("\n📊 Overall:")
     print(f"   Total agents: {summary['total_agents']}")
     print(f"   Total tokens: {summary['total_tokens']:,}")
     print(f"   Average per agent: {summary['avg_tokens']:,.0f}")
 
-    print(f"\n🤖 By Agent Type:")
+    print("\n🤖 By Agent Type:")
     for agent_type, stats in sorted(summary["by_type"].items()):
         print(f"\n   {agent_type}:")
         print(f"      Count: {stats['count']}")
@@ -134,17 +144,20 @@ def show_subagent_report():
         print(f"      Max tokens: {stats['max_tokens']:,}")
 
         # Alert on high usage
-        if stats['avg_tokens'] > 200000:
-            print(f"      ⚠️  HIGH: Avg exceeds 200K")
-        elif stats['avg_tokens'] > 100000:
-            print(f"      ⚠️  Moderate: Consider optimization")
+        if stats["avg_tokens"] > 200000:
+            print("      ⚠️  HIGH: Avg exceeds 200K")
+        elif stats["avg_tokens"] > 100000:
+            print("      ⚠️  Moderate: Consider optimization")
 
     # Recent agents
-    print(f"\n📋 Recent Agents (last 10):")
+    print("\n📋 Recent Agents (last 10):")
     for agent in metrics["agents"][-10:]:
-        tokens_str = f"{agent['tokens']:,}" if isinstance(agent['tokens'], int) else "unknown"
+        tokens_str = (
+            f"{agent['tokens']:,}" if isinstance(agent["tokens"], int) else "unknown"
+        )
         status_emoji = "⚠️ " if agent.get("status") == "timeout" else "✅"
         print(f"   {status_emoji} {agent['type']:20} {tokens_str:>12} tokens")
+
 
 def main():
     if len(sys.argv) == 1:
@@ -167,6 +180,7 @@ def main():
     record = track_agent(agent_id, agent_type)
     if record["tokens"] != "unknown":
         print(f"✅ Tracked: {agent_type} used {record['tokens']:,} tokens")
+
 
 if __name__ == "__main__":
     main()

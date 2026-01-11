@@ -91,5 +91,27 @@
     "max_concurrent_subagents": 3,
     "batch_tool_calls": true,
     "background_tasks_enabled": true
+  },
+  "enforcement": {
+    "description": "Three-layer token efficiency enforcement",
+    "proactive_warnings": {
+      "enabled": true,
+      "search_threshold_50_percent": 3,
+      "search_threshold_80_percent": 4,
+      "read_threshold_50_percent": 3,
+      "read_threshold_80_percent": 4,
+      "description": "Warn agents at 50% and 80% of limits before blocking"
+    },
+    "pattern_detection": {
+      "enabled": true,
+      "lookback_messages": 3,
+      "min_batch_size": 5,
+      "description": "Detect batch operation intent early via regex patterns"
+    },
+    "mandatory_compliance": {
+      "enabled": true,
+      "required_tools": ["Task", "Write"],
+      "description": "Block non-compliant tools after initial block"
+    }
   }
 }

@@ -23,7 +23,7 @@
 - **Evidence:** Metrics showed 86.9% unknown, but reasons existed in wrong field
 
 ### 3. Non-Existent Infrastructure
-- **Problem:** Briefing referenced `~/.claude/lib/mcp_bridge.py` which doesn't exist
+- **Problem:** Briefing referenced `/home/fearsidhe/.claude/plugins/agent-swarm/lib/mcp_bridge.py` which doesn't exist
 - **Impact:** Script guidance was unusable, agents forced to use Bash
 - **Evidence:** 0 script usage out of 2,944 operations
 

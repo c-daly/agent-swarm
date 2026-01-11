@@ -47,10 +47,13 @@ def extract_agent_id(output: str) -> str | None:
 
     return None
 
-def track_subagent(tool_input: dict, tool_output: str) -> None:
+def track_subagent(tool_input: dict, tool_output) -> None:
     """Track subagent spawn from Task tool."""
-    # Extract agent_id from output
-    agent_id = extract_agent_id(tool_output)
+    # Extract agent_id from output (dict or string)
+    if isinstance(tool_output, dict):
+        agent_id = tool_output.get('agentId', None)
+    else:
+        agent_id = extract_agent_id(str(tool_output))
 
     if not agent_id:
         # No agent_id found, skip silently
@@ -123,7 +126,7 @@ def main():
 
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input", {})
-    tool_output = str(input_data.get("tool_output", ""))
+    tool_output = input_data.get("tool_output", {})  # Can be dict or string
 
     # Track subagent spawns
     if tool_name == "Task":

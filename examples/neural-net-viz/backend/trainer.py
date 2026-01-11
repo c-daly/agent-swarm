@@ -1,5 +1,5 @@
 import numpy as np
-import time
+
 
 class Trainer:
     def __init__(self, network, socketio):
@@ -51,14 +51,17 @@ class Trainer:
                     accuracy = correct / total if total > 0 else 0
                     viz_data = self.network.get_network_viz_data()
 
-                    self.socketio.emit('viz_update', {
-                        'epoch': epoch + 1,
-                        'batch': batch_idx,
-                        'total_batches': n_batches,
-                        'loss': float(loss),
-                        'accuracy': float(accuracy),
-                        'layers': viz_data
-                    })
+                    self.socketio.emit(
+                        "viz_update",
+                        {
+                            "epoch": epoch + 1,
+                            "batch": batch_idx,
+                            "total_batches": n_batches,
+                            "loss": float(loss),
+                            "accuracy": float(accuracy),
+                            "layers": viz_data,
+                        },
+                    )
 
                     self.socketio.sleep(0)  # Allow SocketIO to process
 
@@ -67,21 +70,26 @@ class Trainer:
             accuracy = correct / total
 
             viz_data = self.network.get_network_viz_data()
-            self.socketio.emit('viz_update', {
-                'epoch': epoch + 1,
-                'batch': n_batches,
-                'total_batches': n_batches,
-                'loss': float(avg_loss),
-                'accuracy': float(accuracy),
-                'layers': viz_data
-            })
+            self.socketio.emit(
+                "viz_update",
+                {
+                    "epoch": epoch + 1,
+                    "batch": n_batches,
+                    "total_batches": n_batches,
+                    "loss": float(avg_loss),
+                    "accuracy": float(accuracy),
+                    "layers": viz_data,
+                },
+            )
 
-            print(f"Epoch {epoch + 1}/{epochs} - Loss: {avg_loss:.4f} - Accuracy: {accuracy:.4f}")
+            print(
+                f"Epoch {epoch + 1}/{epochs} - Loss: {avg_loss:.4f} - Accuracy: {accuracy:.4f}"
+            )
 
         if not self.should_stop:
-            self.socketio.emit('training_complete', {
-                'message': 'Training completed successfully!'
-            })
+            self.socketio.emit(
+                "training_complete", {"message": "Training completed successfully!"}
+            )
 
     def stop(self):
         """Stop training"""

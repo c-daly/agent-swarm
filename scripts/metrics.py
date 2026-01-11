@@ -65,6 +65,7 @@ def analyze_activity_log():
     metrics = {
         "total_events": 0,
         "tools_by_type": defaultdict(int),
+        "token_by_tool": defaultdict(int),
         "blocks_by_reason": defaultdict(int),
         "duplicate_reads": 0,
         "files_read": [],
@@ -73,50 +74,64 @@ def analyze_activity_log():
 
     seen_reads = set()
 
-    # Track script usage
-    script_names = [
-        "batch_search.py",
-        "file_analyzer.py",
-        "serena_batch.py",
-        "gh_wrapper.py",
-        "inventory.py",
-        "context7_docs.py"
-    ]
-
     for line in lines:
         if not line.strip():
             continue
 
         metrics["total_events"] += 1
 
-        # Track script usage
-        for script in script_names:
-            if script in line:
-                metrics["script_calls"] = metrics.get("script_calls", 0) + 1
-                metrics["scripts_used"] = metrics.get("scripts_used", {})
-                metrics["scripts_used"][script] = metrics["scripts_used"].get(script, 0) + 1
+        # Track tool usage and extract command content for Bash
+        if "ALLOWED:" in line:
+            parts = line.split("ALLOWED:")
+            if len(parts) > 1:
+                rest = parts[1].strip()
+                
+                if rest.startswith("Bash:"):
+                    tool_name = "Bash"
+                    command = rest[5:].strip()
+                    
+                    is_script = False
+                    script_name = None
+                    
+                    if "python3" in command or "python " in command:
+                        if ".py" in command:
+                            is_script = True
+                            try:
+                                if "/tmp/" in command:
+                                    script_name = command.split("/tmp/")[1].split()[0]
+                                else:
+                                    import re
+                                    match = re.search(r'([a-zA-Z0-9_/-]+\.py)', command)
+                                    if match:
+                                        script_name = match.group(1).split('/')[-1]
+                            except:
+                                script_name = "unknown_script.py"
+                        elif " -c " in command or " << " in command:
+                            is_script = True
+                            script_name = "inline_script"
+                    
+                    if is_script:
+                        metrics["script_calls"] = metrics.get("script_calls", 0) + 1
+                        if script_name:
+                            metrics["scripts_used"] = metrics.get("scripts_used", {})
+                            metrics["scripts_used"][script_name] = metrics["scripts_used"].get(script_name, 0) + 1
+                else:
+                    tool_name = rest.split()[0]
+                
+                metrics["tools_by_type"][tool_name] += 1
+                token_estimate = TOKEN_ESTIMATES.get(tool_name, 500)
+                metrics["token_by_tool"][tool_name] += token_estimate
 
-        # Track tool usage
-        if "TOOL:" in line or "ALLOWED:" in line:
-            for tool in ["Read", "Write", "Edit", "Glob", "Grep", "Task", "Bash"]:
-                if tool in line:
-                    metrics["tools_by_type"][tool] += 1
-
-        # Track blocks
         if "BLOCKED" in line:
-            # Format: [timestamp] BLOCKED: Tool: [REASON] message
-            # Extract the reason (second bracketed text)
             parts = line.split("BLOCKED:")
             if len(parts) > 1:
                 blocked_part = parts[1]
-                # Look for [REASON] in the blocked part
                 if "[" in blocked_part and "]" in blocked_part:
                     reason = blocked_part.split("[")[1].split("]")[0]
                     metrics["blocks_by_reason"][reason] += 1
                 else:
                     metrics["blocks_by_reason"]["unknown"] += 1
 
-        # Track duplicate reads
         if "Read" in line and "file_path" in line:
             try:
                 file = line.split("file_path")[1].split("}")[0].strip('":\' ')
@@ -200,6 +215,110 @@ def calculate_token_estimate(log_metrics):
 
     return total_tokens, token_by_tool, cost
 
+def calculate_token_impact(log_metrics):
+    """Calculate actionable token impact metrics."""
+
+    impact = {
+        "data_volume": {},
+        "efficiency": {},
+        "impact_score": 0,
+        "recommendations": []
+    }
+
+    # DATA VOLUME METRICS
+    total_reads = log_metrics.get("total_reads", 0)
+    unique_files = log_metrics.get("unique_files", 0)
+    tools = log_metrics.get("tools_by_type", {})
+
+    # Estimate total lines processed (rough: 50 lines per read on average)
+    estimated_lines = total_reads * 50
+    impact["data_volume"]["total_reads"] = total_reads
+    impact["data_volume"]["estimated_lines"] = estimated_lines
+    impact["data_volume"]["searches"] = tools.get("Grep", 0) + tools.get("Glob", 0)
+
+    # EFFICIENCY METRICS
+    duplicate_rate = log_metrics.get("duplicate_rate", 0)
+    script_calls = log_metrics.get("script_calls", 0)
+    direct_reads = tools.get("Read", 0)
+    total_data_ops = script_calls + direct_reads
+    script_adoption = (script_calls / total_data_ops * 100) if total_data_ops > 0 else 0
+
+    impact["efficiency"]["duplicate_rate"] = duplicate_rate
+    impact["efficiency"]["script_adoption"] = script_adoption
+    impact["efficiency"]["direct_reads"] = direct_reads
+    impact["efficiency"]["script_calls"] = script_calls
+
+    # SUBAGENT USAGE (high impact)
+    subagent_count = tools.get("Task", 0)
+    impact["efficiency"]["subagent_count"] = subagent_count
+
+    # CALCULATE IMPACT SCORE (0-100, higher = more optimization potential)
+    score = 0
+
+    # High data volume = high impact
+    if estimated_lines > 10000:
+        score += 30
+        impact["recommendations"].append({
+            "priority": "HIGH",
+            "issue": f"Read {estimated_lines:,} lines of code",
+            "action": "Use Explore subagents for large codebases instead of direct reads"
+        })
+    elif estimated_lines > 5000:
+        score += 15
+
+    # Duplicate reads = wasted tokens
+    if duplicate_rate > 20:
+        score += 25
+        impact["recommendations"].append({
+            "priority": "HIGH",
+            "issue": f"Duplicate read rate: {duplicate_rate:.1f}%",
+            "action": "Implement caching or reduce redundant file reads"
+        })
+    elif duplicate_rate > 10:
+        score += 10
+
+    # Low script adoption = context dumping
+    if script_adoption < 40 and direct_reads > 5:
+        score += 25
+        impact["recommendations"].append({
+            "priority": "HIGH",
+            "issue": f"Script adoption only {script_adoption:.1f}%",
+            "action": "Use batch scripts to process data instead of direct reads"
+        })
+    elif script_adoption < 60 and direct_reads > 10:
+        score += 15
+
+    # Many searches = potential inefficiency
+    search_count = impact["data_volume"]["searches"]
+    if search_count > 10:
+        score += 15
+        impact["recommendations"].append({
+            "priority": "MEDIUM",
+            "issue": f"{search_count} separate searches",
+            "action": "Batch searches using batch_search.py script"
+        })
+
+    # Subagent usage (informational, not necessarily bad)
+    if subagent_count > 3:
+        impact["recommendations"].append({
+            "priority": "INFO",
+            "issue": f"{subagent_count} subagents spawned",
+            "action": f"Each subagent ~25-100k tokens. Total estimated: {subagent_count * 50}k tokens"
+        })
+
+    impact["impact_score"] = min(100, score)
+
+    # Add positive feedback if efficient
+    if score < 20:
+        impact["recommendations"].append({
+            "priority": "SUCCESS",
+            "issue": "Efficient token usage",
+            "action": "Good job! Workflow is optimized."
+        })
+
+    return impact
+
+
 def show_report():
     """Show comprehensive metrics report."""
     print("=" * 60)
@@ -212,15 +331,34 @@ def show_report():
     efficiency = calculate_efficiency_score(log_metrics)
     print(f"\n📊 Overall Efficiency Score: {efficiency:.1f}/100")
 
-    # Token usage
-    total_tokens, token_by_tool, cost = calculate_token_estimate(log_metrics)
-    print(f"\n💰 Token Usage (estimated):")
-    print(f"   Total: {total_tokens:,} tokens (${cost:.2f})")
-    print(f"   Top consumers:")
-    for tool, tokens in sorted(token_by_tool.items(), key=lambda x: -x[1])[:5]:
-        if tokens > 0:
-            pct = tokens / total_tokens * 100
-            print(f"     {tool:15} {tokens:>10,} tokens ({pct:5.1f}%)")
+    # Token Impact Analysis
+    impact = calculate_token_impact(log_metrics)
+    print(f"\n🎯 Token Impact Analysis:")
+    print(f"   Impact Score: {impact['impact_score']:.0f}/100", end="")
+    if impact['impact_score'] >= 50:
+        print(" 🔴 HIGH - Significant optimization potential")
+    elif impact['impact_score'] >= 25:
+        print(" 🟡 MEDIUM - Some optimization possible")
+    else:
+        print(" 🟢 LOW - Efficient usage")
+
+    print(f"\n   Data Volume:")
+    print(f"     Total reads: {impact['data_volume']['total_reads']}")
+    print(f"     Estimated lines: {impact['data_volume']['estimated_lines']:,}")
+    print(f"     Searches: {impact['data_volume']['searches']}")
+
+    print(f"\n   Efficiency:")
+    print(f"     Duplicate rate: {impact['efficiency']['duplicate_rate']:.1f}%")
+    print(f"     Script adoption: {impact['efficiency']['script_adoption']:.1f}%")
+    print(f"     Subagents: {impact['efficiency']['subagent_count']}")
+
+    if impact['recommendations']:
+        print(f"\n   Recommendations:")
+        for rec in impact['recommendations']:
+            priority = rec['priority']
+            icon = {"HIGH": "🔴", "MEDIUM": "🟡", "INFO": "ℹ️", "SUCCESS": "✅"}.get(priority, "•")
+            print(f"     {icon} {rec['issue']}")
+            print(f"        → {rec['action']}")
 
     # Tool usage breakdown
     print(f"\n🔧 Tool Usage:")
