@@ -1,0 +1,104 @@
+"""Tests for TaskQueue infrastructure in iterate_state.py."""
+
+import pytest
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+
+from iterate_state import (
+    TaskStatus,
+    TaskSource,
+    PRIORITY_TEST_FAILURE,
+    PRIORITY_GREPTILE_CRITICAL,
+    PRIORITY_GREPTILE_WARNING,
+    PRIORITY_ORIGINAL,
+    PRIORITY_COVERAGE_GAP,
+)
+
+
+class TestTaskStatusEnum:
+    """Test TaskStatus enum."""
+
+    def test_has_pending_status(self):
+        """TaskStatus has PENDING value."""
+        assert TaskStatus.PENDING == "pending"
+
+    def test_has_running_status(self):
+        """TaskStatus has RUNNING value."""
+        assert TaskStatus.RUNNING == "running"
+
+    def test_has_completed_status(self):
+        """TaskStatus has COMPLETED value."""
+        assert TaskStatus.COMPLETED == "completed"
+
+    def test_has_failed_status(self):
+        """TaskStatus has FAILED value."""
+        assert TaskStatus.FAILED == "failed"
+
+    def test_is_string_enum(self):
+        """TaskStatus values are strings and comparable with strings."""
+        assert isinstance(TaskStatus.PENDING.value, str)
+        # String enum allows direct comparison with strings
+        assert TaskStatus.PENDING == "pending"
+        # Use .value for explicit string conversion
+        assert TaskStatus.PENDING.value == "pending"
+
+
+class TestTaskSourceEnum:
+    """Test TaskSource enum."""
+
+    def test_has_original_source(self):
+        """TaskSource has ORIGINAL value."""
+        assert TaskSource.ORIGINAL == "original"
+
+    def test_has_greptile_source(self):
+        """TaskSource has GREPTILE value."""
+        assert TaskSource.GREPTILE == "greptile"
+
+    def test_has_test_failure_source(self):
+        """TaskSource has TEST_FAILURE value."""
+        assert TaskSource.TEST_FAILURE == "test_failure"
+
+    def test_has_coverage_gap_source(self):
+        """TaskSource has COVERAGE_GAP value."""
+        assert TaskSource.COVERAGE_GAP == "coverage_gap"
+
+    def test_is_string_enum(self):
+        """TaskSource values are strings and comparable with strings."""
+        assert isinstance(TaskSource.ORIGINAL.value, str)
+        # String enum allows direct comparison with strings
+        assert TaskSource.ORIGINAL == "original"
+        # Use .value for explicit string conversion
+        assert TaskSource.ORIGINAL.value == "original"
+
+
+class TestPriorityConstants:
+    """Test priority constants."""
+
+    def test_test_failure_highest_priority(self):
+        """Test failures have highest priority (0)."""
+        assert PRIORITY_TEST_FAILURE == 0
+
+    def test_greptile_critical_priority(self):
+        """Greptile critical issues have priority 1."""
+        assert PRIORITY_GREPTILE_CRITICAL == 1
+
+    def test_greptile_warning_priority(self):
+        """Greptile warnings have priority 2."""
+        assert PRIORITY_GREPTILE_WARNING == 2
+
+    def test_original_priority(self):
+        """Original tasks have priority 3."""
+        assert PRIORITY_ORIGINAL == 3
+
+    def test_coverage_gap_lowest_priority(self):
+        """Coverage gaps have lowest priority (4)."""
+        assert PRIORITY_COVERAGE_GAP == 4
+
+    def test_priority_ordering(self):
+        """Priorities are correctly ordered (lower = more urgent)."""
+        assert PRIORITY_TEST_FAILURE < PRIORITY_GREPTILE_CRITICAL
+        assert PRIORITY_GREPTILE_CRITICAL < PRIORITY_GREPTILE_WARNING
+        assert PRIORITY_GREPTILE_WARNING < PRIORITY_ORIGINAL
+        assert PRIORITY_ORIGINAL < PRIORITY_COVERAGE_GAP
