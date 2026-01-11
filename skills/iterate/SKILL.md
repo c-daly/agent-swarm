@@ -14,13 +14,14 @@ A tight development loop for rapid iteration with adversarial testing. The adver
 ## Flow
 
 ```
-[intake?] → [design?] → implement → ADVERSARY LOOP → Greptile review → [checkpoint] → done
-                              ↑____________|fail
+[intake?] → [design?] → IMPLEMENT (parallel) → commit → push → WAIT FOR GREPTILE → review → [checkpoint]
+                              ↑                                                      |fail
+                              └──────────────────────────────────────────────────────┘
 ```
 
-**Optional phases:** intake, design (skip if requirements are clear)
-**Adversary loop:** Runs until Greptile confirms coverage is solid
-**Exit conditions:** Greptile approves coverage, or max iterations reached
+**Parallel implementation:** When multiple issues exist, spawn parallel implementer agents
+**Greptile pacing:** Push once, wait for review to complete, then evaluate
+**Exit conditions:** Greptile approves, tests pass, or max iterations reached
 
 ## Configuration
 
@@ -61,26 +62,39 @@ Load from `~/.claude/plugins/agent-swarm/config/workflow.json`:
 
 ### Each Iteration
 
-1. **IMPLEMENT**: Make code changes
-   - Use `implementer` agent (sonnet)
-   - Focused, incremental changes
-   - Track what was modified
+1. **IMPLEMENT** (parallel): Make code changes
+   - Parse Greptile issues into discrete tasks
+   - Spawn parallel `implementer` agents (one per issue)
+   - Wait for all agents to complete
+   - Run tests locally to verify fixes
+   - Commit all changes together
 
-2. **ADVERSARY**: Evaluate and strengthen tests
-   - Use `adversary` agent (sonnet)
-   - Run `pytest --cov` to collect coverage
-   - Query Greptile: "Should passing tests give confidence?"
-   - If gaps exist:
-     - Write tests targeting blind spots
-     - Query Greptile: "Are these tests legitimate and fair?"
-     - Run tests
-     - If fail → back to IMPLEMENT
-   - Loop until Greptile says coverage is solid
+2. **PUSH & WAIT**: Single push, wait for Greptile
+   - Push all commits at once
+   - **Do not check stale reviews** - wait for new review to complete
+   - Greptile reviews the consolidated changes
 
-3. **REVIEW**: Final code review via Greptile
-   - Query: "Tests are solid. Review implementation for bugs, security, maintainability."
+3. **REVIEW**: Evaluate Greptile feedback
+   - Check latest review (not stale ones)
    - Decision: APPROVED, NEEDS_WORK, or BLOCKED
-   - If NEEDS_WORK → back to IMPLEMENT
+   - If NEEDS_WORK → parse new issues → back to IMPLEMENT (parallel)
+
+### Parallel Implementation Pattern
+
+When Greptile identifies N issues:
+```
+┌─ Task(implementer): "Fix issue 1: <description>" ─┐
+│─ Task(implementer): "Fix issue 2: <description>" ─│→ wait all → test → commit → push
+│─ Task(adversary): "Coverage for changed files"   ─│
+└─ Task(implementer): "Fix issue N: <description>" ─┘
+```
+
+**Key rules:**
+- Spawn all implementation agents in a **single message** with multiple Task tool calls
+- Each agent works independently on its issue
+- Wait for all to complete before testing/committing
+- Single push triggers single Greptile review
+- **Never push while Greptile is reviewing**
 
 ### Exit Conditions
 
