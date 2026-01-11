@@ -930,8 +930,9 @@ def check_git_safety(tool_name: str, tool_input: dict, state: dict) -> dict | No
             decision = call_monitor_agent("Bash", tool_input, state)
             if decision:
                 result = format_monitor_result(decision)
-                if not result.get("allowed", True):
-                    return block(result["message"])
+                hook_output = result.get("hookSpecificOutput", {})
+                if hook_output.get("permissionDecision") == "deny":
+                    return result  # Already in proper hook format
 
     return None
 

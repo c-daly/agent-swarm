@@ -226,33 +226,38 @@ class TestFormatMonitorResult:
         """Format allowed decision correctly."""
         decision = {"allowed": True, "reason": "Message is clean", "confidence": 0.95}
         result = format_monitor_result(decision)
-        assert result["allowed"] is True
-        assert "[MONITOR] Approved" in result["message"]
-        assert "Message is clean" in result["message"]
+        hook_output = result["hookSpecificOutput"]
+        assert hook_output["permissionDecision"] == "allow"
+        assert "[MONITOR] Approved" in hook_output["permissionDecisionReason"]
+        assert "Message is clean" in hook_output["permissionDecisionReason"]
 
     def test_format_blocked_result(self):
         """Format blocked decision with proper message structure."""
         decision = {"allowed": False, "reason": "Contains attribution", "confidence": 0.99}
         result = format_monitor_result(decision)
-        assert result["allowed"] is False
-        assert "[MONITOR AGENT]" in result["message"]
-        assert "Contains attribution" in result["message"]
-        assert "99%" in result["message"]
+        hook_output = result["hookSpecificOutput"]
+        assert hook_output["permissionDecision"] == "deny"
+        assert "[MONITOR AGENT]" in hook_output["permissionDecisionReason"]
+        assert "Contains attribution" in hook_output["permissionDecisionReason"]
+        assert "99%" in hook_output["permissionDecisionReason"]
 
     def test_format_confidence_display(self):
         """Test percentage formatting for various confidence values."""
         for conf, expected in [(0.0, "0%"), (0.5, "50%"), (0.999, "100%"), (1.0, "100%")]:
             decision = {"allowed": False, "reason": "test", "confidence": conf}
             result = format_monitor_result(decision)
-            assert expected in result["message"]
+            hook_output = result["hookSpecificOutput"]
+            assert expected in hook_output["permissionDecisionReason"]
 
     def test_format_result_structure(self):
         """Verify exact dict structure matches hook expectations."""
         decision = {"allowed": True, "reason": "OK", "confidence": 0.9}
         result = format_monitor_result(decision)
-        assert set(result.keys()) == {"allowed", "message"}
-        assert isinstance(result["allowed"], bool)
-        assert isinstance(result["message"], str)
+        assert "hookSpecificOutput" in result
+        hook_output = result["hookSpecificOutput"]
+        assert hook_output["hookEventName"] == "PreToolUse"
+        assert hook_output["permissionDecision"] in ("allow", "deny")
+        assert isinstance(hook_output["permissionDecisionReason"], str)
 
 
 # =============================================================================
