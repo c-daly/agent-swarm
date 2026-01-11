@@ -28,13 +28,6 @@ except ImportError:
     class StateError(Exception): pass
 
 
-except ImportError:
-    # Fallback: define minimal logging functions
-    def log_error(msg, **kw): pass
-    def log_warning(msg, **kw): pass
-    def log_info(msg, **kw): pass
-    def log_debug(msg, **kw): pass
-
 # Try to import monitor agent (optional dependency)
 try:
     from monitor_agent import needs_monitoring, call_monitor_agent, format_monitor_result

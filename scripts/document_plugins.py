@@ -45,7 +45,7 @@ def get_installed_plugins():
                         "manifest": manifest
                     })
                 except Exception as e:
-                    log_warning(f"Caught exception: {e}")
+                    pass  # Silent exception
     return plugins
 
 def detect_new_plugins():

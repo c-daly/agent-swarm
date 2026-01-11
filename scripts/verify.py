@@ -32,7 +32,7 @@ def load_state() -> dict:
         try:
             return json.loads(STATE_FILE.read_text())
         except (json.JSONDecodeError, IOError) as e:
-            log_warning(f"Caught exception: {e}")
+            pass  # Silent exception
     return {}
 
 

@@ -140,7 +140,7 @@ def analyze_activity_log():
                 seen_reads.add(file)
                 metrics["files_read"].append(file)
             except Exception as e:
-                log_warning(f"Caught exception: {e}")
+                pass  # Silent exception
 
     metrics["unique_files"] = len(seen_reads)
     metrics["total_reads"] = len(metrics["files_read"])
@@ -205,7 +205,7 @@ def calculate_token_estimate(log_metrics):
                 else:
                     subagent_tokens += 50000
         except Exception as e:
-            log_warning(f"Caught exception: {e}")
+            pass  # Silent exception
 
     total_tokens += subagent_tokens
     token_by_tool["Subagents"] = subagent_tokens
