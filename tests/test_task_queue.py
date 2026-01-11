@@ -411,3 +411,182 @@ class TestTaskQueueMarkFailed:
         q.add_task(make_task("task-014", status=TaskStatus.RUNNING))
         q.mark_failed("task-014", "Something went wrong")
         assert q.tasks["task-014"].metadata.get("error") == "Something went wrong"
+
+
+class TestTaskQueueQueryMethods:
+    """Test TaskQueue query methods."""
+
+    def test_get_pending_all(self):
+        """get_pending returns all pending tasks."""
+        q = TaskQueue()
+        q.add_task(make_task("t1", status=TaskStatus.PENDING))
+        q.add_task(make_task("t2", status=TaskStatus.RUNNING))
+        q.add_task(make_task("t3", status=TaskStatus.PENDING))
+        pending = q.get_pending()
+        assert len(pending) == 2
+        assert all(t.status == TaskStatus.PENDING for t in pending)
+
+    def test_get_pending_by_pr(self):
+        """get_pending can filter by PR."""
+        q = TaskQueue()
+        q.add_task(make_task("t1", pr_id="pr-a"))
+        q.add_task(make_task("t2", pr_id="pr-b"))
+        q.add_task(make_task("t3", pr_id="pr-a"))
+        pending = q.get_pending(pr_id="pr-a")
+        assert len(pending) == 2
+        assert all(t.pr_id == "pr-a" for t in pending)
+
+    def test_get_running(self):
+        """get_running returns all running tasks."""
+        q = TaskQueue()
+        q.add_task(make_task("t1", status=TaskStatus.PENDING))
+        q.add_task(make_task("t2", status=TaskStatus.RUNNING))
+        q.add_task(make_task("t3", status=TaskStatus.RUNNING))
+        running = q.get_running()
+        assert len(running) == 2
+
+    def test_has_pending_true(self):
+        """has_pending returns True when pending tasks exist."""
+        q = TaskQueue()
+        q.add_task(make_task("t1"))
+        assert q.has_pending() is True
+
+    def test_has_pending_false(self):
+        """has_pending returns False when no pending tasks."""
+        q = TaskQueue()
+        q.add_task(make_task("t1", status=TaskStatus.COMPLETED))
+        assert q.has_pending() is False
+
+    def test_has_running_true(self):
+        """has_running returns True when running tasks exist."""
+        q = TaskQueue()
+        q.add_task(make_task("t1", status=TaskStatus.RUNNING))
+        assert q.has_running() is True
+
+    def test_has_running_false(self):
+        """has_running returns False when no running tasks."""
+        q = TaskQueue()
+        q.add_task(make_task("t1", status=TaskStatus.PENDING))
+        assert q.has_running() is False
+
+    def test_get_tasks_for_pr(self):
+        """get_tasks_for_pr returns all tasks for a PR."""
+        q = TaskQueue()
+        q.add_task(make_task("t1", pr_id="pr-x"))
+        q.add_task(make_task("t2", pr_id="pr-y"))
+        q.add_task(make_task("t3", pr_id="pr-x", status=TaskStatus.COMPLETED))
+        tasks = q.get_tasks_for_pr("pr-x")
+        assert len(tasks) == 2
+        assert all(t.pr_id == "pr-x" for t in tasks)
+
+
+class TestTaskQueueEligibility:
+    """Test get_eligible_tasks method."""
+
+    def test_eligible_pending_parallel_phase(self):
+        """Tasks in parallel phase (test_writing/implement) are eligible."""
+        q = TaskQueue()
+        q.add_task(make_task("t1", phase="test_writing"))
+        q.add_task(make_task("t2", phase="implement"))
+        eligible = q.get_eligible_tasks(5)
+        assert len(eligible) == 2
+
+    def test_not_eligible_if_running(self):
+        """Running tasks are not eligible."""
+        q = TaskQueue()
+        q.add_task(make_task("t1", status=TaskStatus.RUNNING))
+        eligible = q.get_eligible_tasks(5)
+        assert len(eligible) == 0
+
+    def test_not_eligible_if_completed(self):
+        """Completed tasks are not eligible."""
+        q = TaskQueue()
+        q.add_task(make_task("t1", status=TaskStatus.COMPLETED))
+        eligible = q.get_eligible_tasks(5)
+        assert len(eligible) == 0
+
+    def test_eligible_respects_limit(self):
+        """get_eligible_tasks respects the n limit."""
+        q = TaskQueue()
+        for i in range(5):
+            q.add_task(make_task(f"t{i}"))
+        eligible = q.get_eligible_tasks(2)
+        assert len(eligible) == 2
+
+    def test_eligible_priority_order(self):
+        """Tasks returned in priority order (lower = first)."""
+        q = TaskQueue()
+        q.add_task(make_task("low", priority=PRIORITY_COVERAGE_GAP))
+        q.add_task(make_task("high", priority=PRIORITY_TEST_FAILURE))
+        q.add_task(make_task("mid", priority=PRIORITY_ORIGINAL))
+        eligible = q.get_eligible_tasks(3)
+        assert eligible[0].id == "high"
+        assert eligible[1].id == "mid"
+        assert eligible[2].id == "low"
+
+
+class TestTaskQueuePRManagement:
+    """Test PR management methods."""
+
+    def test_get_pr(self):
+        """get_pr returns PRState by ID."""
+        q = TaskQueue()
+        q.add_task(make_task("t1", pr_id="pr-001"))
+        pr = q.get_pr("pr-001")
+        assert pr is not None
+        assert pr.pr_id == "pr-001"
+
+    def test_get_pr_nonexistent(self):
+        """get_pr returns None for unknown PR."""
+        q = TaskQueue()
+        assert q.get_pr("nonexistent") is None
+
+    def test_create_pr(self):
+        """create_pr creates new PRState."""
+        q = TaskQueue()
+        q.add_task(make_task("t1", pr_id="temp"))
+        q.add_task(make_task("t2", pr_id="temp"))
+        pr = q.create_pr("pr-new", "feature/branch", ["t1", "t2"])
+        assert pr.pr_id == "pr-new"
+        assert pr.branch == "feature/branch"
+        assert pr.phase == "test_writing"
+        assert "t1" in pr.task_ids
+
+    def test_get_pr_phase(self):
+        """get_pr_phase returns current phase."""
+        q = TaskQueue()
+        q.add_task(make_task("t1", pr_id="pr-001"))
+        assert q.get_pr_phase("pr-001") == "test_writing"
+
+    def test_all_prs_done_false(self):
+        """all_prs_done returns False when PRs not done."""
+        q = TaskQueue()
+        q.add_task(make_task("t1", pr_id="pr-001"))
+        assert q.all_prs_done() is False
+
+    def test_all_prs_done_true(self):
+        """all_prs_done returns True when all PRs in done phase."""
+        q = TaskQueue()
+        q.add_task(make_task("t1", pr_id="pr-001"))
+        q.prs["pr-001"].phase = "done"
+        assert q.all_prs_done() is True
+
+    def test_advance_pr_to_sync_phase(self):
+        """advance_pr_to_sync_phase updates PR phase."""
+        q = TaskQueue()
+        q.add_task(make_task("t1", pr_id="pr-001"))
+        q.advance_pr_to_sync_phase("pr-001", "test")
+        assert q.prs["pr-001"].phase == "test"
+
+    def test_get_prs_ready_for_sync(self):
+        """get_prs_ready_for_sync finds PRs ready for sync phase."""
+        q = TaskQueue()
+        # PR with all tasks completed implement phase
+        q.add_task(make_task("t1", pr_id="pr-ready", phase="implement", status=TaskStatus.COMPLETED))
+        q.add_task(make_task("t2", pr_id="pr-ready", phase="implement", status=TaskStatus.COMPLETED))
+        # PR with tasks still running
+        q.add_task(make_task("t3", pr_id="pr-notready", phase="implement", status=TaskStatus.RUNNING))
+
+        ready = q.get_prs_ready_for_sync("test")
+        assert "pr-ready" in ready
+        assert "pr-notready" not in ready

@@ -156,6 +156,103 @@ class TaskQueue:
         self.failed.append(task_id)
 
 
+    # Query methods
+    def get_pending(self, pr_id: Optional[str] = None) -> list[Task]:
+        """Get all pending tasks, optionally filtered by PR."""
+        tasks = [t for t in self.tasks.values() if t.status == TaskStatus.PENDING]
+        if pr_id:
+            tasks = [t for t in tasks if t.pr_id == pr_id]
+        return tasks
+
+    def get_running(self) -> list[Task]:
+        """Get all currently running tasks."""
+        return [t for t in self.tasks.values() if t.status == TaskStatus.RUNNING]
+
+    def has_pending(self) -> bool:
+        """Returns True if any tasks are pending."""
+        return any(t.status == TaskStatus.PENDING for t in self.tasks.values())
+
+    def has_running(self) -> bool:
+        """Returns True if any tasks are running."""
+        return any(t.status == TaskStatus.RUNNING for t in self.tasks.values())
+
+    def get_tasks_for_pr(self, pr_id: str) -> list[Task]:
+        """Get all tasks (any status) for a specific PR."""
+        return [t for t in self.tasks.values() if t.pr_id == pr_id]
+
+    def get_eligible_tasks(self, n: int) -> list[Task]:
+        """Get up to N tasks eligible for work.
+        
+        Eligibility rules:
+        - Status must be pending
+        - Task must be in parallel phase (test_writing/implement)
+        
+        Returns tasks sorted by priority (lower = first).
+        """
+        eligible = [
+            t for t in self.tasks.values()
+            if t.status == TaskStatus.PENDING and t.phase in PARALLEL_PHASES
+        ]
+        # Sort by priority (lower = higher priority)
+        eligible.sort(key=lambda t: (t.priority, t.created_at))
+        return eligible[:n]
+
+    # PR management methods
+    def get_pr(self, pr_id: str) -> Optional[PRState]:
+        """Get PR state by ID."""
+        return self.prs.get(pr_id)
+
+    def create_pr(self, pr_id: str, branch: str, task_ids: list[str]) -> PRState:
+        """Create a new PR grouping tasks.
+        
+        Tasks must already exist in queue.
+        """
+        # Update tasks to point to new PR
+        for task_id in task_ids:
+            if task_id in self.tasks:
+                self.tasks[task_id].pr_id = pr_id
+        
+        pr = PRState(
+            pr_id=pr_id,
+            branch=branch,
+            phase="test_writing",
+            task_ids=task_ids.copy(),
+        )
+        self.prs[pr_id] = pr
+        return pr
+
+    def get_pr_phase(self, pr_id: str) -> str:
+        """Get current phase for a PR."""
+        pr = self.prs.get(pr_id)
+        return pr.phase if pr else "unknown"
+
+    def all_prs_done(self) -> bool:
+        """Returns True if all PRs are in 'done' phase."""
+        if not self.prs:
+            return True
+        return all(pr.phase == "done" for pr in self.prs.values())
+
+    def advance_pr_to_sync_phase(self, pr_id: str, phase: str) -> None:
+        """Manually advance PR to a sync phase (test, coverage, review)."""
+        if pr_id in self.prs:
+            self.prs[pr_id].phase = phase
+
+    def get_prs_ready_for_sync(self, phase: str) -> list[str]:
+        """Get PR IDs where all tasks have completed parallel phases."""
+        ready = []
+        for pr_id, pr in self.prs.items():
+            # Get all tasks for this PR
+            pr_tasks = self.get_tasks_for_pr(pr_id)
+            # Check if all tasks are completed or in a phase past implement
+            all_done = all(
+                t.status == TaskStatus.COMPLETED or t.phase in SYNC_PHASES
+                for t in pr_tasks
+            )
+            if all_done and pr_tasks:
+                ready.append(pr_id)
+        return ready
+
+
 # =============================================================================
 # State Management
 # =============================================================================
