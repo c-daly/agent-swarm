@@ -199,11 +199,6 @@ def _extract_commit_message(command: str) -> str:
     if msg_match:
         return msg_match.group(1)
 
-    # Handle -m "$(cat <<'EOF' ... EOF)" format
-    cat_match = re.search(r'-m\s+"\$\(cat\s+<<["\']?EOF["\']?\s*(.*?)\s*EOF', command, re.DOTALL)
-    if cat_match:
-        return cat_match.group(1)
-
     return "(unable to extract message)"
 
 
