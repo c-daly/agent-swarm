@@ -11,6 +11,16 @@ import re
 from pathlib import Path
 from datetime import datetime
 
+try:
+    from hook_logging import log_error, log_warning, log_info, log_debug, ConfigError, StateError
+except ImportError:
+    # Fallback: define minimal logging functions
+    def log_error(msg, **kw): pass
+    def log_warning(msg, **kw): pass
+    def log_info(msg, **kw): pass
+    def log_debug(msg, **kw): pass
+    class ConfigError(Exception): pass
+    class StateError(Exception): pass
 STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
 SUBAGENT_METRICS = STATE_DIR / "subagent_metrics.json"
 
@@ -19,8 +29,8 @@ def load_metrics():
     if SUBAGENT_METRICS.exists():
         try:
             return json.loads(SUBAGENT_METRICS.read_text())
-        except:
-            pass
+        except Exception as e:
+            log_warning(f"Caught exception: {e}")
 
     # Initialize structure
     return {}
@@ -88,7 +98,8 @@ def check_new_plugins():
 
     try:
         count = int(state_file.read_text()) if state_file.exists() else 0
-    except:
+    except (ValueError, IOError) as e:
+        log_debug(f"Failed to read plugin check count: {e}")
         count = 0
 
     count += 1
@@ -108,8 +119,8 @@ def check_new_plugins():
             if "new plugin" in result.stdout.lower():
                 state_file.write_text("0")  # Reset counter
                 return result.stdout
-        except:
-            pass
+        except Exception as e:
+            log_warning(f"Caught exception: {e}")
 
     state_file.write_text(str(count))
     return None
@@ -119,7 +130,7 @@ def main():
     try:
         # Read hook input
         input_data = json.loads(sys.stdin.read())
-    except:
+    except Exception:
         # No input or invalid JSON - allow
         print(json.dumps({"hookSpecificOutput": {}}))
         return
@@ -148,8 +159,8 @@ def main():
         try:
             with open(debug_file, "a") as f:
                 f.write(f"  ERROR in debug logging: {e}\n")
-        except:
-            pass
+        except Exception as e:
+            log_warning(f"Caught exception: {e}")
 
     tool_output = tool_output_raw
 
@@ -162,8 +173,8 @@ def main():
                 f.write(f"[{datetime.now().isoformat()}] Task tool detected\n")
                 f.write(f"  tool_input keys: {list(tool_input.keys())}\n")
                 f.write(f"  tool_response type: {type(tool_output)} keys: {list(tool_output.keys()) if isinstance(tool_output, dict) else len(tool_output)}\n")
-        except:
-            pass
+        except Exception as e:
+            log_warning(f"Caught exception: {e}")
 
         # Extract agent info from input and output
         # subagent_type is in tool_input, agent_id is in tool_output
@@ -182,8 +193,8 @@ def main():
             with open(debug_file, "a") as f:
                 f.write(f"  agent_id extracted: {agent_id}\n")
                 f.write(f"  subagent_type: {subagent_type}\n")
-        except:
-            pass
+        except Exception as e:
+            log_warning(f"Caught exception: {e}")
 
         if agent_id:
             try:
@@ -193,22 +204,22 @@ def main():
                 try:
                     with open(debug_file, "a") as f:
                         f.write(f"  ✅ Tracked successfully\n")
-                except:
-                    pass
+                except Exception as e:
+                    log_warning(f"Caught exception: {e}")
             except Exception as e:
                 # Don't fail the hook if tracking fails
                 try:
                     with open(debug_file, "a") as f:
                         f.write(f"  ❌ Tracking failed: {e}\n")
-                except:
-                    pass
+                except Exception as e:
+                    log_warning(f"Caught exception: {e}")
 
     # Check for new plugins periodically
     plugin_msg = None
     try:
         plugin_msg = check_new_plugins()
-    except:
-        pass
+    except Exception as e:
+        log_warning(f"Caught exception: {e}")
 
     # Return message if new plugins found
     output = {"hookSpecificOutput": {}}

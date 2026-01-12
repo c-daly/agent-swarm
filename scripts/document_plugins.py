@@ -44,8 +44,8 @@ def get_installed_plugins():
                         "path": str(plugin_dir),
                         "manifest": manifest
                     })
-                except:
-                    pass
+                except Exception as e:
+                    pass  # Silent exception
     return plugins
 
 def detect_new_plugins():

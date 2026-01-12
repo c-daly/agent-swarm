@@ -11,6 +11,16 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+try:
+    from hook_logging import log_error, log_warning, log_info, log_debug, ConfigError, StateError
+except ImportError:
+    # Fallback: define minimal logging functions
+    def log_error(msg, **kw): pass
+    def log_warning(msg, **kw): pass
+    def log_info(msg, **kw): pass
+    def log_debug(msg, **kw): pass
+    class ConfigError(Exception): pass
+    class StateError(Exception): pass
 HANDOFF_FILE = Path(__file__).parent.parent / "HANDOFF.md"
 STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
 
@@ -24,7 +34,8 @@ def extract_session_info():
             session = json.loads(session_file.read_text())
             phase = session.get("phase", "unknown")
             task = session.get("task_summary", "No task specified")
-        except:
+        except (json.JSONDecodeError, IOError) as e:
+            log_debug(f"Failed to load session file: {e}")
             phase = "unknown"
             task = "No task specified"
     else:
@@ -37,8 +48,8 @@ def extract_session_info():
     if metrics_file.exists():
         try:
             metrics = json.loads(metrics_file.read_text())
-        except:
-            pass
+        except Exception as e:
+            log_warning(f"Caught exception: {e}")
 
     return {
         "phase": phase,
@@ -128,14 +139,65 @@ cat ~/.claude/plugins/agent-swarm/.state/session.json
 
     return handoff
 
+
+COMPACTION_STATE_FILE = STATE_DIR / "compaction_state.json"
+
+# Flags that should persist across compaction (same conversation)
+PERSISTENT_FLAGS = [
+    "user_approved_commit",
+    "tests_executed",
+    "verify_signal_given",
+    "phase",  # Preserve workflow phase
+    "workflow_invoked",  # Workflow should persist across compaction
+]
+
+# Flags that must be CLEARED on compaction (depend on message history)
+MESSAGE_DEPENDENT_FLAGS = [
+    "classification_given",
+    "classification_type",
+    "edits_this_response",
+]
+
+def save_compaction_state():
+    """Save persistent flags before compaction so they survive session reset."""
+    session_file = STATE_DIR / "session.json"
+    
+    if not session_file.exists():
+        return False
+    
+    try:
+        session = json.loads(session_file.read_text())
+        
+        # Extract only persistent flags that are set
+        compaction_state = {
+            "saved_at": datetime.now().isoformat(),
+            "flags": {}
+        }
+        
+        for flag in PERSISTENT_FLAGS:
+            if session.get(flag):
+                compaction_state["flags"][flag] = session[flag]
+        
+        # Only write if there are flags to preserve
+        if compaction_state["flags"]:
+            COMPACTION_STATE_FILE.write_text(json.dumps(compaction_state, indent=2))
+            return True
+        
+        return False
+    except (IOError, json.JSONDecodeError):
+        return False  # Silent fallback - state save is best-effort
+
 def main():
     """Pre-compacting hook entry point."""
 
     # Read hook input
     try:
         input_data = json.loads(sys.stdin.read())
-    except:
-        input_data = {}
+    except json.JSONDecodeError:
+        input_data = {}  # Empty input is acceptable
+
+    # Save persistent flags before compaction
+    flags_saved = save_compaction_state()
 
     # Extract session information
     session_info = extract_session_info()
@@ -150,10 +212,15 @@ def main():
     except Exception as e:
         message = f"⚠️ Failed to write handoff: {e}"
 
+    # Build status message
+    status_parts = [f"[PRE-COMPACTING] {message}"]
+    if flags_saved:
+        status_parts.append("   ✓ Approval state preserved for session continuity")
+    status_parts.append("   Context will be compacted - review handoff for preserved state")
+
     # Return result
     output = {
-        "systemMessage": f"[PRE-COMPACTING] {message}\n"
-                        f"   Context will be compacted - review handoff for preserved state"
+        "systemMessage": "\n".join(status_parts)
     }
 
     print(json.dumps(output))

@@ -10,7 +10,6 @@ import json
 import sys
 import subprocess
 from pathlib import Path
-
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 CHARTS_SCRIPT = SCRIPTS_DIR / "charts.py"
 STATE_DIR = Path(__file__).parent.parent / ".state"
@@ -114,7 +113,7 @@ def main():
     # Read session data from stdin (if any)
     try:
         input_data = json.loads(sys.stdin.read())
-    except:
+    except json.JSONDecodeError:
         input_data = {}
 
     # Generate dashboard

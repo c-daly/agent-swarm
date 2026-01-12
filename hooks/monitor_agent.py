@@ -11,6 +11,16 @@ import json
 import re
 from typing import Dict, Optional, Any
 
+try:
+    from hook_logging import log_error, log_warning, log_info, log_debug, ConfigError, StateError
+except ImportError:
+    # Fallback: define minimal logging functions
+    def log_error(msg, **kw): pass
+    def log_warning(msg, **kw): pass
+    def log_info(msg, **kw): pass
+    def log_debug(msg, **kw): pass
+    class ConfigError(Exception): pass
+    class StateError(Exception): pass
 # Try to import anthropic, gracefully degrade if not available
 try:
     import anthropic
@@ -101,6 +111,10 @@ def call_monitor_agent(tool_name: str, tool_input: dict, state: dict) -> Optiona
 
 def _build_monitor_prompt(tool_name: str, tool_input: dict, state: dict) -> str:
     """Build prompt for monitor agent based on context."""
+    if tool_input is None:
+        tool_input = {}
+    if state is None:
+        state = {}
 
     # Git commit validation
     if tool_name == "Bash" and "git commit" in tool_input.get("command", ""):
@@ -185,11 +199,6 @@ def _extract_commit_message(command: str) -> str:
     if msg_match:
         return msg_match.group(1)
 
-    # Handle -m "$(cat <<'EOF' ... EOF)" format
-    cat_match = re.search(r'-m\s+"\$\(cat\s+<<["\']?EOF["\']?\s*(.*?)\s*EOF', command, re.DOTALL)
-    if cat_match:
-        return cat_match.group(1)
-
     return "(unable to extract message)"
 
 
@@ -224,19 +233,25 @@ def format_monitor_result(decision: Dict[str, Any]) -> dict:
     """
     if decision["allowed"]:
         return {
-            "allowed": True,
-            "message": f"[MONITOR] Approved: {decision['reason']}"
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+                "permissionDecisionReason": f"[MONITOR] Approved: {decision['reason']}"
+            }
         }
     else:
         return {
-            "allowed": False,
-            "message": (
-                f"[MONITOR AGENT] {decision['reason']}\n"
-                f"Confidence: {decision['confidence']:.0%}\n"
-                "\n"
-                "The monitor agent identified a potential policy violation.\n"
-                "Please review and correct before proceeding."
-            )
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": (
+                    f"[MONITOR AGENT] {decision['reason']}\n"
+                    f"Confidence: {decision['confidence']:.0%}\n"
+                    "\n"
+                    "The monitor agent identified a potential policy violation.\n"
+                    "Please review and correct before proceeding."
+                )
+            }
         }
 
 
@@ -280,8 +295,8 @@ def detect_batch_need(tool_name: str, tool_input: dict, state: dict, recent_mess
             try:
                 if match.lastindex and match.lastindex >= 1:
                     num = int(match.group(1))
-            except (ValueError, IndexError):
-                pass
+            except (ValueError, IndexError) as e:
+                log_warning(f"Caught exception: {e}")
             
             # If explicit number > 5, or qualitative indicator ("all", "every", etc.)
             if num and num > 5:

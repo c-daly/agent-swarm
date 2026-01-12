@@ -75,6 +75,31 @@
       ]
     }
   },
+  "iteration_modes": {
+    "iterate": {
+      "description": "Tight implement-test-review loop with adversarial testing",
+      "optional_phases": ["intake", "design"],
+      "loop_phases": ["implement", "adversary", "review"],
+      "max_iterations": 5,
+      "checkpoint_interval": 2,
+      "checkpoint_after_loop": true,
+      "exit_conditions": ["tests_pass", "review_approved", "max_reached"],
+      "agents": ["implementer", "adversary", "reviewer"],
+      "adversary": {
+        "enabled": true,
+        "scopes": ["commit", "pr", "codebase"],
+        "default_scope": "commit",
+        "max_tests_per_cycle": 10,
+        "max_adversary_loops": 3,
+        "greptile_genius": true,
+        "greptile_queries": {
+          "gap_discovery": "Review tests for [files]. Should passing tests give confidence?",
+          "test_validation": "Are these tests legitimate, fair, and testing real behavior?",
+          "final_review": "Tests are solid. Review implementation for bugs and security."
+        }
+      }
+    }
+  },
   "execution": {
     "prefer_parallel": true,
     "max_concurrent_subagents": 3,

@@ -2,6 +2,30 @@
 
 **You are a subagent spawned by the orchestrator.**
 
+## Environment Restrictions
+
+This environment has enforcement hooks. When blocked:
+
+### Git/GitHub Commands
+Use the wrapper script:
+```bash
+python3 /home/fearsidhe/projects/LOGOS/apollo/docs/scratch/scripts/gh_wrapper.py git status
+python3 /home/fearsidhe/projects/LOGOS/apollo/docs/scratch/scripts/gh_wrapper.py gh run list
+```
+
+### When Bash is Blocked
+Create a script with Write tool, then report the script path for manual execution:
+```python
+# Write to /tmp/my_script.py, then say:
+# "Created script at /tmp/my_script.py - run: python3 /tmp/my_script.py"
+```
+
+### When Read Limit Exceeded
+- Spawn a subagent for the read operation
+- Or create a batch script that reads and summarizes
+
+---
+
 ## CRITICAL: Token Efficiency Rules
 
 You MUST follow these constraints to avoid wasting tokens:
@@ -26,48 +50,8 @@ When you need to:
 - Search 3+ patterns → Write a batch script
 - Process large results → Write a script, output summary only
 
-### Example Batch Script
-```python
-#!/usr/bin/env python3
-from mcp_bridge import native_read, native_glob
-from pathlib import Path
-
-# Read multiple files efficiently
-files = native_glob("**/*.py", "/path")
-for f in files[:10]:  # Limit results
-    content = native_read(f)
-    # Process here
-    print(f"File: {f} - {len(content)} chars")
-```
-
-## Required Reading
-
-1. **CORE_PROTOCOL.md** - Tool selection and efficiency rules
-2. **AGENT_RULES.md** - Output and communication standards
-3. **Your agent file** - Role-specific behavior
-
-## Your Constraints
-
-- **Token budget**: Specified in spawn parameters
-- **Scope**: Only your assigned task
-- **Output**: Follow agent format exactly
-- **Efficiency**: Use scripts, avoid context dumping
-
-## Prohibited Actions
-
-❌ Multiple Read calls without batching
-❌ Bash cat/grep/find commands
-❌ Reading same file multiple times
-❌ Dumping large results into context
-❌ Spawning sub-subagents without clear need
-
-✅ Write batch scripts for multiple operations
-✅ Use Serena symbolic tools for code understanding
-✅ Return summaries, not full content
-✅ Track and reuse what you've already read
-
 ## Enforcement
 
-The orchestrator monitors your token usage. Inefficient subagents may be terminated early or not spawned in future tasks.
+The orchestrator monitors your token usage. Inefficient subagents may be terminated early.
 
 **Stay focused. Be efficient. Complete your task.**

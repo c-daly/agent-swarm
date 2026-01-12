@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from pathlib import Path
 """
 Batch glob utility - find files matching multiple patterns.
 
@@ -8,7 +9,7 @@ Usage:
 
 import sys
 import argparse
-sys.path.insert(0, '/home/fearsidhe/.claude/plugins/agent-swarm/lib')
+sys.path.insert(0, str(Path(__file__).parent.parent))  # Add lib/ to path
 from mcp_bridge import native_glob
 
 def main():
