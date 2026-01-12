@@ -8,8 +8,8 @@ from unittest.mock import patch
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
 
-import agent_state
-from agent_state import (
+import agent_state  # noqa: E402
+from agent_state import (  # noqa: E402
     get_agent_id,
     get_state_file,
     load_state,
@@ -87,6 +87,91 @@ class TestSaveState:
 
         save_state({"new": "data"}, "update")
         assert json.loads(state_file.read_text()) == {"new": "data"}
+
+
+
+
+class TestFileLocking:
+    """Tests for file locking behavior - G3 race condition fix."""
+
+    def test_lock_file_created_on_save(self, temp_state_dir):
+        """Save should create a .lock file alongside the state file."""
+        save_state({"test": "data"})
+        state_file = get_state_file()
+        lock_file = state_file.parent / (state_file.name + ".lock")
+
+        assert lock_file.exists(), "Lock file should be created"
+
+    def test_concurrent_writes_no_corruption(self, temp_state_dir):
+        """Multiple concurrent writes should not corrupt state."""
+        import threading
+
+        errors = []
+        iterations = 50
+
+        def increment_counter(thread_id):
+            for _ in range(iterations):
+                try:
+                    def updater(state):
+                        state["counter"] = state.get("counter", 0) + 1
+                        state[f"thread_{thread_id}"] = True
+                        return state
+                    agent_state.update_state(updater)
+                except Exception as e:
+                    errors.append(e)
+
+        threads = [threading.Thread(target=increment_counter, args=(i,)) for i in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors, f"Concurrent writes caused errors: {errors}"
+
+        final_state = load_state()
+        expected = iterations * 5  # 5 threads * 50 iterations each
+        assert final_state.get("counter") == expected, \
+            f"Counter should be {expected}, got {final_state.get('counter')} (lost updates without locking)"
+
+    def test_concurrent_reads_safe(self, temp_state_dir):
+        """Multiple concurrent reads should not block or error."""
+        import threading
+
+        save_state({"data": "test", "items": list(range(100))})
+
+        results = []
+        errors = []
+
+        def read_state(thread_id):
+            for _ in range(20):
+                try:
+                    state = load_state()
+                    results.append((thread_id, state.get("data")))
+                except Exception as e:
+                    errors.append(e)
+
+        threads = [threading.Thread(target=read_state, args=(i,)) for i in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors, f"Concurrent reads caused errors: {errors}"
+        assert len(results) == 100, f"Expected 100 reads, got {len(results)}"
+        assert all(r[1] == "test" for r in results), "All reads should return correct data"
+
+    def test_update_state_handles_invalid_json(self, temp_state_dir):
+        """update_state should handle corrupted JSON gracefully."""
+        state_file = get_state_file()
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state_file.write_text("not valid json {{{")
+
+        def updater(state):
+            state["fixed"] = True
+            return state
+
+        result = agent_state.update_state(updater)
+        assert result == {"fixed": True}, "Should start fresh on invalid JSON"
 
 
 class TestCleanupAgentState:
