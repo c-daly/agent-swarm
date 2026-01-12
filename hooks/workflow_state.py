@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 class WorkflowState(Enum):
     IDLE = "idle"
@@ -44,7 +44,7 @@ class WorkflowContext:
         self.violation_count += 1
         self.last_violation = reason
         # Violations decay after 10 minutes
-        decay = datetime.now().replace(minute=datetime.now().minute + 10)
+        decay = datetime.now() + timedelta(minutes=10)
         self.violation_decay_at = decay.isoformat()
         if self.violation_count >= 3:
             self.state = WorkflowState.BLOCKED
