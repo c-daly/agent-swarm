@@ -23,6 +23,13 @@ try:
 except ImportError:
     MONITOR_AVAILABLE = False
 
+# Hook logging
+sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
+try:
+    from hook_logger import log_hook
+except ImportError:
+    def log_hook(hook_type, hook_name, message=""): pass
+
 # Configuration
 STATE_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/session.json"
 CONFIG_FILE = Path.home() / ".claude/plugins/agent-swarm/config/workflow.json"
@@ -1410,6 +1417,9 @@ def main():
     tool_input = input_data.get("tool_input", {})
     messages = input_data.get("messages", [])
 
+    # Log hook entry
+    log_hook("PreToolUse", "combined-enforcement", f"checking {tool_name}")
+
     # Load session state
     state = load_json(STATE_FILE)
 
@@ -1471,6 +1481,7 @@ def main():
             # Log the block
             msg = result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "blocked")
             log_event("BLOCKED", f"{tool_name}: {msg[:50]}")
+            log_hook("PreToolUse", "combined-enforcement", f"BLOCKED {tool_name}: {msg[:40]}")
             update_stats(allowed=False, reason=msg, tool_name=tool_name)
             print(json.dumps(result))
             return
@@ -1488,6 +1499,7 @@ def main():
         log_event("ALLOWED", f"{tool_name} {status}")
 
     update_stats(allowed=True, tool_name=tool_name)
+    log_hook("PreToolUse", "combined-enforcement", f"ALLOWED {tool_name} {status}")
     print(json.dumps(allow(status)))
 
 if __name__ == "__main__":

@@ -15,6 +15,15 @@ import sys
 import subprocess
 from pathlib import Path
 
+# Hook logging
+sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
+try:
+    from hook_logger import log_hook
+except ImportError:
+    def log_hook(hook_type, hook_name, message=""): pass
+
+log_hook("SessionStart", "session-start", "initializing")
+
 def reset_enforcement_counters():
     """Reset enforcement counters and workflow tracking for new conversation."""
     state_file = Path(__file__).parent.parent / ".state" / "session.json"
@@ -136,6 +145,7 @@ def main():
         "systemMessage": "\n\n".join(messages) if messages else ""
     }
 
+    log_hook("SessionStart", "session-start", "completed - counters reset")
     print(json.dumps(output))
 
 if __name__ == "__main__":

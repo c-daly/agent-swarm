@@ -11,6 +11,15 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+# Hook logging
+sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
+try:
+    from hook_logger import log_hook
+except ImportError:
+    def log_hook(hook_type, hook_name, message=""): pass
+
+log_hook("PreCompact", "pre-compacting", "TRIGGERED - about to compact")
+
 HANDOFF_FILE = Path(__file__).parent.parent / "HANDOFF.md"
 STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
 
@@ -156,6 +165,7 @@ def main():
                         f"   Context will be compacted - review handoff for preserved state"
     }
 
+    log_hook("PreCompact", "pre-compacting", f"completed - {message}")
     print(json.dumps(output))
 
 if __name__ == "__main__":

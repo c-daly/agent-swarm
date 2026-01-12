@@ -2,8 +2,16 @@
 # Injects subagent briefing AND hierarchical context into Task tool prompts
 # Hook: PreToolUse for Task tool
 
+# Hook logging
+LOG_FILE="$HOME/.claude/plugins/agent-swarm/.state/hooks.log"
+mkdir -p "$(dirname "$LOG_FILE")"
+log_hook() {
+    echo "[$(date +%H:%M:%S.%3N)] PreToolUse    | inject-subagent-briefing  | $1" >> "$LOG_FILE"
+}
+
 # Read input from stdin
 INPUT=$(cat)
+log_hook "checking Task tool"
 
 # Extract the original prompt from the tool input
 ORIGINAL_PROMPT=$(echo "$INPUT" | jq -r '.tool_input.prompt // empty')
@@ -76,6 +84,7 @@ fi
 ESCAPED_PROMPT=$(echo "$MODIFIED_PROMPT" | jq -Rs .)
 
 # Output modified tool input
+log_hook "INJECTED briefing for $AGENT_TYPE"
 echo "$INPUT" | jq --argjson prompt "$ESCAPED_PROMPT" '.tool_input.prompt = $prompt' | \
   jq '{
     hookSpecificOutput: {
