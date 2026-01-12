@@ -33,9 +33,15 @@ def main():
     # Read hook input
     input_data = json.loads(sys.stdin.read())
 
-    # Extract info
-    session_id = input_data.get("sessionId", "unknown")[:8]
-    agent_type = input_data.get("agentType", "unknown")
+    # Debug: Log raw input to see what we're getting
+    debug_log = STATE_DIR / "subagent_debug.log"
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with open(debug_log, "a") as f:
+        f.write(f"INPUT: {json.dumps(input_data, default=str)}\n")
+
+    # Extract info - note: field names are snake_case per Claude Code API
+    session_id = input_data.get("session_id", input_data.get("sessionId", "unknown"))[:8]
+    agent_type = input_data.get("agent_type", input_data.get("agentType", "unknown"))
     agent_id = f"{agent_type}-{session_id}"
     prompt = input_data.get("prompt", "")
 

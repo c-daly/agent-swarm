@@ -33,9 +33,9 @@ def main():
     # Read hook input
     input_data = json.loads(sys.stdin.read())
 
-    # Extract info
-    session_id = input_data.get("sessionId", "unknown")[:8]
-    agent_type = input_data.get("agentType", "unknown")
+    # Extract info - note: field names are snake_case per Claude Code API
+    session_id = input_data.get("session_id", input_data.get("sessionId", "unknown"))[:8]
+    agent_type = input_data.get("agent_type", input_data.get("agentType", "unknown"))
     agent_id = f"{agent_type}-{session_id}"
     result = input_data.get("result", {})
     success = result.get("exitCode") == 0 if isinstance(result, dict) else False
