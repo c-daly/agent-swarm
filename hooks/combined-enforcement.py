@@ -249,6 +249,26 @@ def allow_with_warning(tool_name: str, tool_input: dict, warning: str) -> dict:
     }
 
 
+def build_status_line(state: dict, tool_name: str) -> str:
+    """Build a compact status line showing workflow state."""
+    phase = state.get("phase", "").upper() or "NO_PHASE"
+    classification = state.get("classification_type", "").upper() or "UNCLASSIFIED"
+
+    read_count = state.get("read_count", 0)
+    search_count = state.get("search_count", 0)
+
+    # Build counters string
+    counters = f"R:{read_count}/5 S:{search_count}/5"
+
+    # Workflow status
+    workflow_invoked = "✓" if state.get("workflow_invoked") else "✗"
+
+    # Build status line
+    status = f"[{classification}|{phase}] {counters} workflow:{workflow_invoked}"
+
+    return status
+
+
 def get_tool_category(tool_name: str) -> str | None:
     """Get the category of a tool, returns None if not categorized."""
     for category, tools in TOOL_CATEGORIES.items():
@@ -1455,7 +1475,9 @@ def main():
             print(json.dumps(result))
             return
 
-    # Default: allow
+    # Default: allow with status line
+    status = build_status_line(state, tool_name)
+
     # Enhanced logging for Bash - include command for script detection
     if tool_name == "Bash":
         command = tool_input.get("command", "")
@@ -1463,10 +1485,10 @@ def main():
         cmd_preview = command[:200] if len(command) <= 200 else command[:200] + "..."
         log_event("ALLOWED", f"Bash: {cmd_preview}")
     else:
-        log_event("ALLOWED", tool_name)
-    
+        log_event("ALLOWED", f"{tool_name} {status}")
+
     update_stats(allowed=True, tool_name=tool_name)
-    print(json.dumps(allow()))
+    print(json.dumps(allow(status)))
 
 if __name__ == "__main__":
     main()
