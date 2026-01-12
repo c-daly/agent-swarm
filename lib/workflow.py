@@ -7,26 +7,23 @@ the standalone iterate_state.py script with a reusable module.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
-# State management
-STATE_DIR = Path.home() / ".claude" / "plugins" / "agent-swarm" / ".state"
-SESSION_FILE = STATE_DIR / "session.json"
+# Add scripts to path for TaskQueue import
+_scripts_path = Path(__file__).parent.parent / "scripts"
+if str(_scripts_path) not in sys.path:
+    sys.path.insert(0, str(_scripts_path))
 
+try:
+    from iterate_state import TaskQueue, TaskStatus, load_queue, save_queue
+    QUEUE_AVAILABLE = True
+except ImportError:
+    QUEUE_AVAILABLE = False
 
-def _load_state() -> dict[str, Any]:
-    """Load session state from file."""
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    if SESSION_FILE.exists():
-        return json.loads(SESSION_FILE.read_text())
-    return {}
-
-
-def _save_state(state: dict[str, Any]) -> None:
-    """Save session state to file."""
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    SESSION_FILE.write_text(json.dumps(state, indent=2))
+# State management - use agent_state for per-agent isolation
+from agent_state import load_state as _load_state, save_state as _save_state, STATE_DIR
 
 
 class Workflow:
@@ -46,11 +43,14 @@ class Workflow:
         state = _load_state()
         state["mode"] = self.MODE
         state["iterate_phases"] = self.PHASES
-        state["iterate_phase"] = self.PHASES[0] if self.PHASES else None
+        initial_phase = self.PHASES[0] if self.PHASES else None
+        state["iterate_phase"] = initial_phase
+        state["phase"] = initial_phase  # Unified phase field (INT.5)
         state["iteration"] = 0
         state["max_iterations"] = self.max_iterations
         state["exit_reason"] = None
         state["workflow_invoked"] = True  # Unlock editing tools
+        state["phase_banner_shown"] = False  # SAFE.5.1: Require banner before work
         _save_state(state)
 
     @classmethod
@@ -79,6 +79,8 @@ class Workflow:
         if phase not in phases:
             raise ValueError(f"Invalid phase '{phase}'. Valid: {phases}")
         state["iterate_phase"] = phase
+        state["phase"] = phase  # Keep unified field in sync
+        state["phase_banner_shown"] = False  # SAFE.5.3: Require new banner
         _save_state(state)
 
     @classmethod
@@ -93,6 +95,8 @@ class Workflow:
         if idx + 1 < len(phases):
             next_phase = phases[idx + 1]
             state["iterate_phase"] = next_phase
+            state["phase"] = next_phase  # Keep unified field in sync
+            state["phase_banner_shown"] = False  # SAFE.5.3: Require new banner
             _save_state(state)
             return next_phase
         return None
@@ -141,6 +145,19 @@ class Workflow:
         state["exit_reason"] = None
         _save_state(state)
 
+    @classmethod
+    def mark_banner_shown(cls) -> None:
+        """Mark that the phase banner has been shown (SAFE.5.1)."""
+        state = _load_state()
+        state["phase_banner_shown"] = True
+        _save_state(state)
+
+    @classmethod
+    def is_banner_shown(cls) -> bool:
+        """Check if the phase banner has been shown (SAFE.5.2)."""
+        state = _load_state()
+        return state.get("phase_banner_shown", False)
+
 
 class IterateWorkflow(Workflow):
     """Iterate workflow - always TDD."""
@@ -170,6 +187,165 @@ class IterateWorkflow(Workflow):
             f"  Iteration: {iteration}/{max_iter}\n"
             f"  Phases: {phases}"
         )
+
+    @classmethod
+    def get_phase_tasks(cls, phase: str | None = None) -> list[Any]:
+        """Get tasks for a specific phase (or current phase).
+
+        Args:
+            phase: Phase to get tasks for, or None for current phase
+
+        Returns:
+            List of Task objects for the phase
+        """
+        if not QUEUE_AVAILABLE:
+            return []
+        queue = load_queue()
+        if not queue:
+            return []
+        if phase is None:
+            phase = cls.current_phase()
+        return [t for t in queue.tasks.values() if t.phase == phase]
+
+    @classmethod
+    def phase_complete(cls, phase: str | None = None) -> bool:
+        """Check if all tasks for a phase are completed.
+
+        Args:
+            phase: Phase to check, or None for current phase
+
+        Returns:
+            True if all phase tasks are completed (or no tasks exist)
+        """
+        tasks = cls.get_phase_tasks(phase)
+        if not tasks:
+            return True  # No tasks = phase complete
+        return all(t.status == TaskStatus.COMPLETED for t in tasks)
+
+    @classmethod
+    def check_auto_advance(cls) -> str | None:
+        """Check if phase is complete and auto-advance if so.
+
+        Returns:
+            New phase name if advanced, None if staying in current phase
+        """
+        if cls.phase_complete():
+            return cls.advance_phase()
+        return None
+
+    @classmethod
+    def get_queue_summary(cls) -> str:
+        """Get a summary of the task queue status."""
+        if not QUEUE_AVAILABLE:
+            return "Queue not available"
+        queue = load_queue()
+        if not queue:
+            return "No queue loaded"
+
+        tasks = list(queue.tasks.values())
+        by_phase: dict[str, dict[str, int]] = {}
+        for t in tasks:
+            if t.phase not in by_phase:
+                by_phase[t.phase] = {"total": 0, "completed": 0, "pending": 0}
+            by_phase[t.phase]["total"] += 1
+            if t.status == TaskStatus.COMPLETED:
+                by_phase[t.phase]["completed"] += 1
+            elif t.status == TaskStatus.PENDING:
+                by_phase[t.phase]["pending"] += 1
+
+        lines = ["=== Queue Summary ==="]
+        for phase in cls.PHASES:
+            if phase in by_phase:
+                stats = by_phase[phase]
+                lines.append(f"  {phase}: {stats['completed']}/{stats['total']} done")
+        total = len(tasks)
+        completed = len([t for t in tasks if t.status == TaskStatus.COMPLETED])
+        lines.append(f"  Total: {completed}/{total} ({100*completed//total if total else 0}%)")
+        return "\n".join(lines)
+
+
+# Priority names for display
+PRIORITY_NAMES = {
+    0: "CRITICAL",
+    1: "HIGH",
+    2: "MEDIUM",
+    3: "LOW",
+    4: "DONE",
+}
+
+
+def _make_progress_bar(done: int, total: int, width: int = 20) -> str:
+    """Create a visual progress bar.
+
+    Args:
+        done: Number of completed items
+        total: Total number of items
+        width: Width of the bar in characters
+
+    Returns:
+        Formatted progress bar string like "[========            ] 8/20"
+    """
+    if total == 0:
+        return f"[{'=' * width}] 0/0"
+    filled = int(width * done / total)
+    empty = width - filled
+    return f"[{'=' * filled}{' ' * empty}] {done}/{total}"
+
+
+def show_queue_status() -> str:
+    """Display queue status with visual progress bars per priority group.
+
+    Returns:
+        Formatted string showing queue progress by priority group.
+    """
+    state = _load_state()
+    queue_data = state.get("queue", {})
+    tasks = queue_data.get("tasks", {})
+
+    if not tasks:
+        return "[QUEUE] No tasks - queue empty"
+
+    # Group by priority
+    by_priority: dict[int, dict[str, int]] = {}
+    for task_data in tasks.values():
+        priority = task_data.get("priority", 3)
+        status = task_data.get("status", "pending")
+
+        if priority not in by_priority:
+            by_priority[priority] = {"total": 0, "completed": 0, "running": 0, "pending": 0}
+
+        by_priority[priority]["total"] += 1
+        if status == "completed":
+            by_priority[priority]["completed"] += 1
+        elif status == "running":
+            by_priority[priority]["running"] += 1
+        else:
+            by_priority[priority]["pending"] += 1
+
+    # Build output
+    lines = ["=== Queue Status ==="]
+
+    # Sort by priority (0 = highest)
+    for priority in sorted(by_priority.keys()):
+        stats = by_priority[priority]
+        name = PRIORITY_NAMES.get(priority, f"P{priority}")
+        bar = _make_progress_bar(stats["completed"], stats["total"], width=15)
+        running_indicator = f" ({stats['running']} running)" if stats["running"] > 0 else ""
+        lines.append(f"  {name:<10} {bar}{running_indicator}")
+
+    # Overall totals
+    total_tasks = len(tasks)
+    completed_tasks = sum(1 for t in tasks.values() if t.get("status") == "completed")
+    running_tasks = sum(1 for t in tasks.values() if t.get("status") == "running")
+    pending_tasks = total_tasks - completed_tasks - running_tasks
+
+    pct = int(100 * completed_tasks / total_tasks) if total_tasks > 0 else 100
+    lines.append(f"  {'TOTAL':<10} {_make_progress_bar(completed_tasks, total_tasks, width=15)} {pct}%")
+
+    if running_tasks > 0:
+        lines.append(f"  Active: {running_tasks} task(s) running")
+
+    return "\n".join(lines)
 
 
 class OrchestrateWorkflow(Workflow):
@@ -218,6 +394,9 @@ if __name__ == "__main__":
     # reset
     subparsers.add_parser("reset", help="Reset workflow state")
 
+    # stop (alias for reset with clearer semantics)
+    subparsers.add_parser("stop", help="Stop active workflow")
+
     # advance
     subparsers.add_parser("advance", help="Advance to next phase")
 
@@ -251,6 +430,12 @@ if __name__ == "__main__":
     elif args.command == "reset":
         Workflow.reset()
         print("[WORKFLOW] Reset complete")
+    elif args.command == "stop":
+        if Workflow.is_active():
+            Workflow.reset()
+            print("[WORKFLOW] Stopped")
+        else:
+            print("[WORKFLOW] No active workflow to stop")
     elif args.command == "advance":
         next_phase = Workflow.advance_phase()
         if next_phase:
