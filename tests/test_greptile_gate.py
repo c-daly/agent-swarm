@@ -30,27 +30,35 @@ class TestCheckGreptileComments:
 
     def test_returns_none_when_no_unaddressed_comments(self):
         """Should return None when all P0 comments are addressed."""
-        # Mock the Greptile MCP response with no unaddressed P0 comments
-        with patch('verification_gates.get_greptile_comments') as mock_get:
-            mock_get.return_value = {
-                "comments": [
-                    {"priority": "P0", "addressed": True, "body": "Fix this"},
-                    {"priority": "P1", "addressed": False, "body": "Consider this"},
-                ]
+        # Mock load_verification_state to return state with no unaddressed P0
+        mock_state = {
+            "greptile_state": {
+                "pr_number": 123,
+                "repo": "owner/repo",
+                "unaddressed_p0_count": 0,
+                "unaddressed_p0_comments": [],
+                "api_available": True
             }
+        }
+        with patch('verification_gates.load_verification_state', return_value=mock_state):
             result = check_greptile_comments(123, "owner/repo")
-            # Should not block - P0 is addressed, P1 unaddressed is OK
+            # Should not block - no unaddressed P0
             assert result is None
 
     def test_blocks_when_unaddressed_p0_comments(self):
         """Should return error when unaddressed P0 comments exist."""
-        with patch('verification_gates.get_greptile_comments') as mock_get:
-            mock_get.return_value = {
-                "comments": [
-                    {"priority": "P0", "addressed": False, "body": "Critical: Fix injection vulnerability"},
-                    {"priority": "P1", "addressed": False, "body": "Consider renaming"},
-                ]
+        mock_state = {
+            "greptile_state": {
+                "pr_number": 123,
+                "repo": "owner/repo",
+                "unaddressed_p0_count": 1,
+                "unaddressed_p0_comments": [
+                    {"id": "1", "body": "Critical: Fix injection vulnerability", "path": "src/main.py"}
+                ],
+                "api_available": True
             }
+        }
+        with patch('verification_gates.load_verification_state', return_value=mock_state):
             result = check_greptile_comments(123, "owner/repo")
             # Should block - unaddressed P0
             assert result is not None

@@ -1,3 +1,15 @@
+---
+name: architect
+description: Architecture and design decisions
+hooks:
+  PreToolUse:
+    - matcher: "*"
+      hooks:
+        - type: command
+          command: "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/subagent-pretool.py"
+          timeout: 3
+---
+
 # Architect Agent
 
 **Model**: sonnet

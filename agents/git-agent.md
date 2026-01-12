@@ -1,3 +1,15 @@
+---
+name: git-agent
+description: Version control operations
+hooks:
+  PreToolUse:
+    - matcher: "*"
+      hooks:
+        - type: command
+          command: "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/subagent-pretool.py"
+          timeout: 3
+---
+
 # Git Agent
 
 **Model**: haiku (straightforward operations)

@@ -130,3 +130,145 @@ class TestSessionStateReset:
 
         # Phase should be in persistent flags or preserved
         assert "phase" in hook_content.lower()
+
+
+class TestPhaseBannerEnforcement:
+    """Tests for SAFE.5: Phase Banner Enforcement.
+
+    Tools should be blocked until the agent outputs a phase banner,
+    ensuring visibility into current workflow state.
+    """
+
+    def test_banner_flag_false_on_init(self):
+        """SAFE.5.1: phase_banner_shown should be False on workflow init."""
+        from workflow import IterateWorkflow, _load_state
+
+        wf = IterateWorkflow()
+        state = _load_state()
+
+        assert state.get("phase_banner_shown") is False, \
+            "phase_banner_shown should be False on workflow init"
+
+    def test_banner_flag_false_on_phase_transition(self):
+        """SAFE.5.3: phase_banner_shown should reset to False on phase change."""
+        from workflow import IterateWorkflow, Workflow, _load_state, _save_state
+
+        wf = IterateWorkflow()
+
+        # Simulate banner was shown
+        state = _load_state()
+        state["phase_banner_shown"] = True
+        _save_state(state)
+
+        # Transition to next phase
+        Workflow.transition_phase("implement")
+
+        state = _load_state()
+        assert state.get("phase_banner_shown") is False, \
+            "phase_banner_shown should reset on phase transition"
+
+    def test_banner_flag_false_on_advance_phase(self):
+        """SAFE.5.3: phase_banner_shown should reset on advance_phase()."""
+        from workflow import IterateWorkflow, Workflow, _load_state, _save_state
+
+        wf = IterateWorkflow()
+
+        # Simulate banner was shown
+        state = _load_state()
+        state["phase_banner_shown"] = True
+        _save_state(state)
+
+        # Advance phase
+        Workflow.advance_phase()
+
+        state = _load_state()
+        assert state.get("phase_banner_shown") is False, \
+            "phase_banner_shown should reset on advance_phase"
+
+    def test_mark_banner_shown_sets_flag(self):
+        """SAFE.5.1: mark_banner_shown() should set flag to True."""
+        from workflow import IterateWorkflow, Workflow, _load_state
+
+        wf = IterateWorkflow()
+        assert _load_state().get("phase_banner_shown") is False
+
+        Workflow.mark_banner_shown()
+
+        assert _load_state().get("phase_banner_shown") is True, \
+            "mark_banner_shown() should set flag to True"
+
+    def test_is_banner_shown_returns_current_state(self):
+        """SAFE.5.1: is_banner_shown() should return current flag state."""
+        from workflow import IterateWorkflow, Workflow, _load_state, _save_state
+
+        wf = IterateWorkflow()
+        assert Workflow.is_banner_shown() is False
+
+        Workflow.mark_banner_shown()
+        assert Workflow.is_banner_shown() is True
+
+
+class TestPhaseBannerHook:
+    """Tests for check_phase_banner() in combined-enforcement.py."""
+
+    def setup_method(self):
+        """Setup test state."""
+        import sys
+        hooks_dir = Path(__file__).parent.parent / "hooks"
+        if str(hooks_dir) not in sys.path:
+            sys.path.insert(0, str(hooks_dir))
+
+        # Reset workflow state
+        from workflow import Workflow
+        Workflow.reset()
+
+    def test_always_allowed_tools_bypass_banner(self):
+        """SAFE.5.2: TodoWrite/AskUserQuestion bypass banner check."""
+        from combined_enforcement import check_phase_banner, ALWAYS_ALLOWED
+        from workflow import IterateWorkflow, _load_state
+
+        wf = IterateWorkflow()
+        state = _load_state()
+
+        # These should pass even without banner
+        for tool in ALWAYS_ALLOWED:
+            result = check_phase_banner(tool, state)
+            assert result is None, f"{tool} should bypass banner check"
+
+    def test_work_tool_blocked_without_banner(self):
+        """SAFE.5.4: Work tools blocked when banner not shown."""
+        from combined_enforcement import check_phase_banner
+        from workflow import IterateWorkflow, _load_state
+
+        wf = IterateWorkflow()
+        state = _load_state()
+
+        # Edit should be blocked without banner
+        result = check_phase_banner("Edit", state)
+        assert result is not None, "Edit should be blocked without banner"
+        assert "BANNER REQUIRED" in result.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
+
+    def test_work_tool_allowed_with_banner(self):
+        """SAFE.5.4: Work tools allowed after banner shown."""
+        from combined_enforcement import check_phase_banner
+        from workflow import IterateWorkflow, Workflow, _load_state
+
+        wf = IterateWorkflow()
+        Workflow.mark_banner_shown()
+        state = _load_state()
+
+        # Edit should be allowed after banner
+        result = check_phase_banner("Edit", state)
+        assert result is None, "Edit should be allowed after banner shown"
+
+    def test_no_workflow_bypasses_banner(self):
+        """When no workflow active, banner check passes."""
+        from combined_enforcement import check_phase_banner
+        from workflow import Workflow, _load_state
+
+        Workflow.reset()
+        state = _load_state()
+
+        # No workflow = no banner requirement
+        result = check_phase_banner("Edit", state)
+        assert result is None, "No workflow should bypass banner check"

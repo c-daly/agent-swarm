@@ -21,24 +21,24 @@ except ImportError:
     def log_debug(msg, **kw): pass
     class ConfigError(Exception): pass
     class StateError(Exception): pass
+
+# Import agent_state module for per-agent state isolation
+sys.path.insert(0, str(Path.home() / ".claude/plugins/agent-swarm/lib"))
+from agent_state import load_state
+
 HANDOFF_FILE = Path(__file__).parent.parent / "HANDOFF.md"
 STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
 
 def extract_session_info():
     """Extract key information from the current session."""
 
-    # Try to load session state
-    session_file = STATE_DIR / "session.json"
-    if session_file.exists():
-        try:
-            session = json.loads(session_file.read_text())
-            phase = session.get("phase", "unknown")
-            task = session.get("task_summary", "No task specified")
-        except (json.JSONDecodeError, IOError) as e:
-            log_debug(f"Failed to load session file: {e}")
-            phase = "unknown"
-            task = "No task specified"
-    else:
+    # Try to load session state using agent_state module
+    try:
+        session = load_state()
+        phase = session.get("phase", "unknown")
+        task = session.get("task_summary", "No task specified")
+    except Exception as e:
+        log_debug(f"Failed to load session state: {e}")
         phase = "unknown"
         task = "No task specified"
 
@@ -160,31 +160,26 @@ MESSAGE_DEPENDENT_FLAGS = [
 
 def save_compaction_state():
     """Save persistent flags before compaction so they survive session reset."""
-    session_file = STATE_DIR / "session.json"
-    
-    if not session_file.exists():
-        return False
-    
     try:
-        session = json.loads(session_file.read_text())
-        
+        session = load_state()
+
         # Extract only persistent flags that are set
         compaction_state = {
             "saved_at": datetime.now().isoformat(),
             "flags": {}
         }
-        
+
         for flag in PERSISTENT_FLAGS:
             if session.get(flag):
                 compaction_state["flags"][flag] = session[flag]
-        
+
         # Only write if there are flags to preserve
         if compaction_state["flags"]:
             COMPACTION_STATE_FILE.write_text(json.dumps(compaction_state, indent=2))
             return True
-        
+
         return False
-    except (IOError, json.JSONDecodeError):
+    except Exception:
         return False  # Silent fallback - state save is best-effort
 
 def main():

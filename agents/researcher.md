@@ -1,3 +1,15 @@
+---
+name: researcher
+description: Research and documentation lookup
+hooks:
+  PreToolUse:
+    - matcher: "*"
+      hooks:
+        - type: command
+          command: "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/subagent-pretool.py"
+          timeout: 3
+---
+
 # Researcher Agent
 
 **Model**: haiku

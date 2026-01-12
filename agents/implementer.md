@@ -1,3 +1,15 @@
+---
+name: implementer
+description: Code implementation with quality focus
+hooks:
+  PreToolUse:
+    - matcher: "*"
+      hooks:
+        - type: command
+          command: "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/subagent-pretool.py"
+          timeout: 3
+---
+
 # Implementer Agent
 
 **Model**: sonnet

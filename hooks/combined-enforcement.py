@@ -40,6 +40,7 @@ except ImportError:
 try:
     sys.path.insert(0, str(Path.home() / ".claude/plugins/agent-swarm/lib"))
     from workflow import Workflow, show_queue_status
+    from agent_state import load_state, save_state as agent_save_state
     WORKFLOW_AVAILABLE = True
 except ImportError:
     WORKFLOW_AVAILABLE = False
@@ -74,8 +75,7 @@ except ImportError:
     VERIFICATION_GATES_AVAILABLE = False
 
 # Configuration
-STATE_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/session.json"
-STATE_DIR = STATE_FILE.parent
+STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
 CONFIG_FILE = Path.home() / ".claude/plugins/agent-swarm/config/workflow.json"
 LOG_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/activity.log"
 STATS_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/stats.json"
@@ -363,9 +363,8 @@ def load_json(path: Path) -> dict:
         return {}
 
 def save_state(state: dict) -> None:
-    """Save session state."""
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, indent=2))
+    """Save session state using agent_state module."""
+    agent_save_state(state)
 
 def allow(reason: str = None) -> dict:
     """Return allow decision."""
@@ -1916,7 +1915,7 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
     current_phase = state.get("phase") or state.get("iterate_phase") or ""
     bash_allowed_phases = {"test_writing", "test", "coverage", "implement", "debug", "git"}
 
-    if tool_name == "Bash" and classification in ("CONVERSATION", "RESEARCH", None):
+    if tool_name == "Bash" and classification in ("CONVERSATION", "RESEARCH"):
         # Allow if workflow is active OR we're in a phase that allows Bash
         if not workflow_invoked and current_phase not in bash_allowed_phases:
             command = tool_input.get("command", "")
@@ -2151,7 +2150,7 @@ def main():
             from datetime import datetime
             phase = "?"
             try:
-                state_data = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
+                state_data = load_state()
                 phase = state_data.get("phase") or state_data.get("iterate_phase") or "none"
             except:
                 pass
@@ -2160,7 +2159,7 @@ def main():
         pass  # Don't fail on logging errors
 
     # Load session state
-    state = load_json(STATE_FILE)
+    state = load_state()
 
     # Detect new user turn (reset edits_this_response counter)
     # Check if there's a user message AFTER the last tool execution

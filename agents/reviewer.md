@@ -1,3 +1,15 @@
+---
+name: reviewer
+description: Code review and quality checking
+hooks:
+  PreToolUse:
+    - matcher: "*"
+      hooks:
+        - type: command
+          command: "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/subagent-pretool.py"
+          timeout: 3
+---
+
 # Reviewer Agent
 
 **Model**: sonnet

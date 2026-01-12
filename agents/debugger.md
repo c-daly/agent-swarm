@@ -1,3 +1,15 @@
+---
+name: debugger
+description: Debug and fix issues
+hooks:
+  PreToolUse:
+    - matcher: "*"
+      hooks:
+        - type: command
+          command: "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/subagent-pretool.py"
+          timeout: 3
+---
+
 # Debugger Agent
 
 **Model**: sonnet (needs to reason about code)

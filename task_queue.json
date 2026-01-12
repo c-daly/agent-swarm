@@ -2,10 +2,10 @@
   "metadata": {
     "created": "2026-01-12",
     "source": "SPEC.md",
-    "total": 71,
-    "done": 21,
+    "total": 81,
+    "done": 29,
     "verify": 0,
-    "pending": 54,
+    "pending": 59,
     "priority_order": [
       "CRITICAL",
       "HIGH",
@@ -546,7 +546,8 @@
       "task": "Block all git/gh commands unless in review phase - no git access outside review",
       "status": "pending",
       "priority": "CRITICAL",
-      "group": "WORKFLOW"
+      "group": "WORKFLOW",
+      "note": "Allow read-only: git status/log/diff/branch. Block: commit/push/reset"
     },
     {
       "id": "WORKFLOW.6",
@@ -565,6 +566,76 @@
     {
       "id": "WORKFLOW.8",
       "task": "Enforce max_parallel config on Task tool spawn - track active agents, block spawn if at limit",
+      "status": "done",
+      "priority": "CRITICAL",
+      "group": "WORKFLOW"
+    },
+    {
+      "id": "GREPTILE.1",
+      "task": "Fix workflow_state.py: Use timedelta to avoid invalid minute rollover (P2)",
+      "status": "done",
+      "priority": "DONE",
+      "group": "GREPTILE"
+    },
+    {
+      "id": "GREPTILE.2",
+      "task": "Fix shell_virtualizer.py: any -> Any type hint (P0)",
+      "status": "done",
+      "priority": "DONE",
+      "group": "GREPTILE"
+    },
+    {
+      "id": "GREPTILE.3",
+      "task": "Fix review_gate.py: frozen dataclass mutation in on_push() (P0)",
+      "status": "done",
+      "priority": "DONE",
+      "group": "GREPTILE"
+    },
+    {
+      "id": "GREPTILE.4",
+      "task": "Fix review_gate.py: frozen dataclass mutation in on_review_complete() (P0)",
+      "status": "done",
+      "priority": "DONE",
+      "group": "GREPTILE"
+    },
+    {
+      "id": "WORKFLOW.9",
+      "task": "Make model parameter optional with reasonable defaults per agent type (sonnet for implementer, haiku for explorer)",
+      "status": "pending",
+      "priority": "HIGH",
+      "group": "WORKFLOW"
+    },
+    {
+      "id": "WORKFLOW.10",
+      "task": "Subagents should start their own iterate workflow, not inherit orchestrator state",
+      "status": "pending",
+      "priority": "CRITICAL",
+      "group": "WORKFLOW"
+    },
+    {
+      "id": "WORKFLOW.11",
+      "task": "Subagents need isolated state - shared session.json causes orchestrator phase to be overwritten",
+      "status": "pending",
+      "priority": "CRITICAL",
+      "group": "WORKFLOW"
+    },
+    {
+      "id": "WORKFLOW.12",
+      "task": "Read/search counters shared between orchestrator and subagents - need per-agent counters",
+      "status": "pending",
+      "priority": "HIGH",
+      "group": "WORKFLOW"
+    },
+    {
+      "id": "WORKFLOW.13",
+      "task": "Subagent monitoring - bubble up meaningful status (phase, progress, errors) to orchestrator",
+      "status": "pending",
+      "priority": "HIGH",
+      "group": "WORKFLOW"
+    },
+    {
+      "id": "WORKFLOW.14",
+      "task": "Subagent inherits orchestrator mode - blocked from editing, told to spawn subagent when it IS a subagent",
       "status": "done",
       "priority": "CRITICAL",
       "group": "WORKFLOW"

@@ -1,3 +1,15 @@
+---
+name: explorer
+description: Codebase exploration and pattern discovery
+hooks:
+  PreToolUse:
+    - matcher: "*"
+      hooks:
+        - type: command
+          command: "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/subagent-pretool.py"
+          timeout: 3
+---
+
 # Explorer Agent
 
 **Model**: haiku (fast exploration, many parallel searches)

@@ -19,6 +19,40 @@ PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/agent-swarm}"
 WORKING_DIR=$(echo "$INPUT" | jq -r '.cwd // "."')
 AGENT_TYPE=$(echo "$INPUT" | jq -r '.tool_input.subagent_type // "general-purpose"')
 
+# Read current phase from session state and get tool restrictions
+STATE_FILE="$PLUGIN_ROOT/.state/session.json"
+PHASE_RESTRICTIONS=""
+if [ -f "$STATE_FILE" ]; then
+    CURRENT_PHASE=$(jq -r '.phase // .iterate_phase // ""' "$STATE_FILE" 2>/dev/null)
+    if [ -n "$CURRENT_PHASE" ] && [ "$CURRENT_PHASE" != "null" ]; then
+        # Get phase restrictions via Python helper
+        PHASE_RESTRICTIONS=$(python3 -c "
+import sys
+sys.path.insert(0, '$PLUGIN_ROOT/lib')
+try:
+    from phase_model import get_phase_info, TOOL_CATEGORIES, ToolCategory
+    phase = get_phase_info('$CURRENT_PHASE')
+    if phase:
+        blocked = list(phase.blocked_tools)
+        # Add tools not in allowed categories
+        for tool, cat in TOOL_CATEGORIES.items():
+            if cat and cat not in phase.allowed_categories:
+                if tool not in blocked:
+                    blocked.append(tool)
+        if blocked:
+            print('## PHASE RESTRICTIONS')
+            print(f'Current phase: {phase.name}')
+            print('**BLOCKED TOOLS (DO NOT USE):**')
+            for t in sorted(set(blocked))[:15]:  # Top 15
+                print(f'- {t}')
+            print()
+            print('If you need a blocked tool, STOP and report to orchestrator.')
+except Exception as e:
+    pass
+" 2>/dev/null)
+    fi
+fi
+
 # Read the briefing
 BRIEFING_FILE="$PLUGIN_ROOT/hooks/subagent-briefing.md"
 if [ -f "$BRIEFING_FILE" ]; then
@@ -49,6 +83,8 @@ if [ -n "$HIERARCHICAL_CONTEXT" ] && [ -n "$BRIEFING" ]; then
 
 $BRIEFING
 
+$PHASE_RESTRICTIONS
+
 ---
 
 $HIERARCHICAL_CONTEXT
@@ -62,6 +98,8 @@ elif [ -n "$BRIEFING" ]; then
     MODIFIED_PROMPT="# SUBAGENT OPERATING PROTOCOL
 
 $BRIEFING
+
+$PHASE_RESTRICTIONS
 
 ---
 

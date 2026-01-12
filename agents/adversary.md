@@ -1,3 +1,15 @@
+---
+name: adversary
+description: Adversarial test quality evaluation
+hooks:
+  PreToolUse:
+    - matcher: "*"
+      hooks:
+        - type: command
+          command: "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/subagent-pretool.py"
+          timeout: 3
+---
+
 # Adversary Agent
 
 **Model**: sonnet

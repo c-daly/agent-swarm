@@ -23,9 +23,12 @@ except ImportError:
     def log_debug(msg, **kw): pass
     class ConfigError(Exception): pass
     class StateError(Exception): pass
+# Import agent_state module for per-agent state isolation
+sys.path.insert(0, str(Path.home() / ".claude/plugins/agent-swarm/lib"))
+from agent_state import load_state, save_state as agent_save_state
+
 # Configuration
 METRICS_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/subagent_metrics.json"
-STATE_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/session.json"
 
 def load_json(path: Path) -> dict:
     """Load JSON file safely."""
@@ -107,7 +110,7 @@ def detect_signature_change(tool_name: str, tool_input: dict) -> None:
         return
 
     # Load state and add reminder
-    state = load_json(STATE_FILE)
+    state = load_state()
 
     reminders = state.get("signature_change_reminders", [])
     file_path = tool_input.get("file_path", "unknown")
@@ -123,7 +126,7 @@ def detect_signature_change(tool_name: str, tool_input: dict) -> None:
         reminders.append(reminder)
         # Keep only last 10 reminders
         state["signature_change_reminders"] = reminders[-10:]
-        save_json(STATE_FILE, state)
+        agent_save_state(state)
 
 def main():
     # Read input from stdin
