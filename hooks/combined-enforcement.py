@@ -505,15 +505,19 @@ def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dic
                 f"  - 'Where is X implemented?'\n"
                 f"  - Understanding codebase structure\n"
                 f"  Example: Task(subagent_type='Explore', prompt='Find error handlers...')\n\n"
-                f"✓ USE BATCH SCRIPT when:\n"
-                f"  - Multiple specific search patterns\n"
-                f"  - Data extraction from known patterns\n"
-                f"  Pattern: Create /tmp/batch_search.py\n"
+                f"✓ USE BATCH SCRIPT - copy this exactly:\n"
                 f"```python\n"
+                f"#!/usr/bin/env python3\n"
+                f"import sys\n"
+                f"sys.path.insert(0, '/home/user/agent-swarm/lib')\n"
                 f"from mcp_bridge import native_glob, native_grep\n"
-                f"# Batch all searches\n"
+                f"\n"
+                f"# Your searches here\n"
+                f"results = native_grep('pattern', '.', output_mode='files_with_matches')\n"
+                f"for f in results['files']:\n"
+                f"    print(f)\n"
                 f"```\n"
-                f"Or spawn an Explorer subagent with Task tool."
+                f"Write to /tmp/batch_search.py, then: Bash('python3 /tmp/batch_search.py')"
             )
 
     # Track file reads and detect duplicates
@@ -564,18 +568,22 @@ def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dic
             save_state(state)
             return block(
                 f"[BLOCKED] {count} direct file reads (limit: {MAX_FILE_READS}).\n\n"
-                f"REQUIRED ACTION: Choose based on task type\n\n"
-                f"✓ USE EXPLORER SUBAGENT when:\n"
-                f"  - Exploring unfamiliar code ('how does X work?')\n"
-                f"  - Finding patterns across files\n"
-                f"  - Understanding architecture/flow\n"
-                f"  Example: Task(subagent_type='Explore', prompt='Find all API endpoints...')\n\n"
-                f"✓ USE BATCH SCRIPT when:\n"
-                f"  - Processing known file list\n"
-                f"  - Repetitive data operations\n"
-                f"  - Known extraction task\n\n"
-                f"✗ DON'T: Keep calling Read one at a time\n\n"
-                f"Why: Direct reads flood context. Agents aggregate better."
+                f"REQUIRED ACTION: Write a batch script\n\n"
+                f"Copy this template to /tmp/batch_read.py:\n"
+                f"```python\n"
+                f"#!/usr/bin/env python3\n"
+                f"import sys\n"
+                f"sys.path.insert(0, '/home/user/agent-swarm/lib')\n"
+                f"from mcp_bridge import native_read, native_glob\n"
+                f"\n"
+                f"files = ['file1.py', 'file2.py']  # Your files here\n"
+                f"for f in files:\n"
+                f"    content = native_read(f)\n"
+                f"    # Process and print summary only\n"
+                f"    print(f'{{f}}: {{len(content)}} bytes')\n"
+                f"```\n"
+                f"Then: Bash('python3 /tmp/batch_read.py')\n\n"
+                f"Why: Direct reads flood context. Scripts return summaries."
             )
 
 
@@ -631,12 +639,20 @@ def check_mcp_script_requirement(tool_name: str, tool_input: dict, state: dict) 
     if tool_name in MCP_SCRIPT_REQUIRED:
         return block(
             f"[MCP SCRIPT] {tool_name} requires batch script.\n"
-            f"This operation can return large results. Use:\n"
+            f"This operation can return large results.\n\n"
+            f"Write to /tmp/mcp_batch.py:\n"
             f"```python\n"
-            f"from mcp_bridge import call_mcp\n"
+            f"#!/usr/bin/env python3\n"
+            f"import sys\n"
+            f"sys.path.insert(0, '/home/user/agent-swarm/lib')\n"
+            f"from mcp_bridge import call_mcp, close_all_servers\n"
+            f"\n"
             f"result = call_mcp('{tool_name}', {tool_input})\n"
-            f"# Process and summarize result\n"
-            f"```"
+            f"# Process and print summary\n"
+            f"print(result)\n"
+            f"close_all_servers()\n"
+            f"```\n"
+            f"Then: Bash('python3 /tmp/mcp_batch.py')"
         )
 
     # Track repeated MCP calls of same type
@@ -650,12 +666,20 @@ def check_mcp_script_requirement(tool_name: str, tool_input: dict, state: dict) 
     if count > 5:
         return block(
             f"[BLOCKED] {tool_name} called {count} times.\n\n"
-            f"REQUIRED ACTION: Write a Python script to batch operations\n"
-            f"✓ DO: Create /tmp/batch_ops.py using mcp_bridge\n"
-            f"✗ DON'T: Try calling the tool 'just one more time'\n"
-            f"✗ DON'T: Switch to Edit, Read, or other workarounds\n\n"
-            f"Why: Repeated tool calls waste tokens. Scripts are faster and tracked.\n"
-            f"Ignoring this will trigger more blocks."
+            f"REQUIRED: Write /tmp/batch_ops.py with this template:\n"
+            f"```python\n"
+            f"#!/usr/bin/env python3\n"
+            f"import sys\n"
+            f"sys.path.insert(0, '/home/user/agent-swarm/lib')\n"
+            f"from mcp_bridge import call_mcp, close_all_servers\n"
+            f"\n"
+            f"# Batch your operations\n"
+            f"for item in ['a', 'b', 'c']:\n"
+            f"    result = call_mcp('{tool_name}', {{'your': 'args'}})\n"
+            f"    print(result)\n"
+            f"close_all_servers()\n"
+            f"```\n"
+            f"Then: Bash('python3 /tmp/batch_ops.py')"
         )
 
     return None

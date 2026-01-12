@@ -13,7 +13,7 @@ You MUST follow these constraints to avoid wasting tokens:
 
 ### Search Limits
 - **MAX 5 searches** (Grep/Glob) before you must batch
-- Use scripts with `from mcp_bridge import native_grep, native_glob`
+- Write scripts to `/tmp/` that use mcp_bridge (see example below)
 - Process results in script, return summary only
 
 ### Duplicate Prevention
@@ -29,15 +29,16 @@ When you need to:
 ### Example Batch Script
 ```python
 #!/usr/bin/env python3
+import sys
+sys.path.insert(0, '/home/user/agent-swarm/lib')
 from mcp_bridge import native_read, native_glob
-from pathlib import Path
 
 # Read multiple files efficiently
-files = native_glob("**/*.py", "/path")
+files = native_glob("**/*.py", "/project")
 for f in files[:10]:  # Limit results
     content = native_read(f)
-    # Process here
-    print(f"File: {f} - {len(content)} chars")
+    if "pattern" in content:  # Process here, output summary only
+        print(f"MATCH: {f}")
 ```
 
 ## Required Reading

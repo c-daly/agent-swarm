@@ -7,9 +7,10 @@ Provides two types of functionality:
 2. MCP protocol support (call_mcp) - Call MCP tools programmatically
 
 Usage:
-    from mcp_bridge import native_glob, native_grep, call_mcp
+    from mcp_bridge import native_read, native_glob, native_grep, call_mcp
 
     # Fast local operations
+    content = native_read("/path/to/file.py")
     files = native_glob("**/*.py", "/project")
     results = native_grep("pattern", "/project", output_mode="content")
 
@@ -29,6 +30,45 @@ from typing import Any, Dict, List, Optional
 # ============================================================================
 # PART 1: Native Helper Functions (No MCP required)
 # ============================================================================
+
+def native_read(file_path: str, limit: Optional[int] = None, offset: int = 0) -> str:
+    """
+    Read file content without spawning MCP tools.
+
+    Args:
+        file_path: Path to file (absolute or relative)
+        limit: Max lines to read (None = all)
+        offset: Line number to start from (0-indexed)
+
+    Returns:
+        File content as string
+
+    Example:
+        content = native_read("/home/user/project/main.py")
+        first_50 = native_read("/path/to/file.py", limit=50)
+    """
+    path = Path(file_path).expanduser().resolve()
+
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+    if not path.is_file():
+        raise ValueError(f"Not a file: {file_path}")
+
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            if offset > 0 or limit is not None:
+                lines = f.readlines()
+                if offset > 0:
+                    lines = lines[offset:]
+                if limit is not None:
+                    lines = lines[:limit]
+                return ''.join(lines)
+            else:
+                return f.read()
+    except Exception as e:
+        raise IOError(f"Error reading {file_path}: {e}")
+
 
 def native_glob(pattern: str, path: str = ".") -> List[str]:
     """
@@ -432,21 +472,28 @@ if __name__ == "__main__":
     print("=" * 50)
 
     # Test native functions
-    print("\n1. Testing native_glob...")
+    print("\n1. Testing native_read...")
+    try:
+        content = native_read(str(Path(__file__)))
+        print(f"   ✓ Read {len(content)} bytes from self")
+    except Exception as e:
+        print(f"   ✗ Error: {e}")
+
+    print("\n2. Testing native_glob...")
     try:
         files = native_glob("*.py", str(Path(__file__).parent))
         print(f"   ✓ Found {len(files)} Python files")
     except Exception as e:
         print(f"   ✗ Error: {e}")
 
-    print("\n2. Testing native_grep...")
+    print("\n3. Testing native_grep...")
     try:
         results = native_grep("def ", str(Path(__file__)), output_mode="count")
         print(f"   ✓ Found {results.get('total', 0)} function definitions")
     except Exception as e:
         print(f"   ✗ Error: {e}")
 
-    print("\n3. MCP protocol support available")
+    print("\n4. MCP protocol support available")
     print(f"   ✓ call_mcp() - Call MCP tools programmatically")
     print(f"   ✓ close_all_servers() - Cleanup function")
     print(f"   ✓ MCPBridge - Convenience wrapper class")
