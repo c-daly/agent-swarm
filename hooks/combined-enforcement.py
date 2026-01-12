@@ -1818,7 +1818,7 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
             return None  # Always allow workflow commands
 
     # Parse messages to detect classification and workflow invocation
-    classification_pattern = r'\[(TRIVIAL|CONVERSATION|RESEARCH)\]'
+    classification_pattern = r'\[(TRIVIAL|SIMPLE|COMPLEX|RESEARCH|CONVERSATION)\]'
     
     for msg in messages:
         if msg.get("role") == "assistant":
