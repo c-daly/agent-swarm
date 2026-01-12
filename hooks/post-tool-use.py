@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+"""
+PostToolUse hook for agent-swarm plugin.
+
+Tracks Bash command completions to update verification state
+(lint runs, test runs, format runs).
+"""
+
+import sys
+import json
+from pathlib import Path
+
+# Import verification gates
+try:
+    sys.path.insert(0, str(Path.home() / ".claude/plugins/agent-swarm/hooks"))
+    from verification_gates import on_bash_complete
+    VERIFICATION_GATES_AVAILABLE = True
+except ImportError:
+    VERIFICATION_GATES_AVAILABLE = False
+
+
+def main():
+    """Handle PostToolUse events."""
+    try:
+        input_data = json.loads(sys.stdin.read())
+    except json.JSONDecodeError:
+        return
+
+    tool_name = input_data.get("tool_name", "")
+    tool_input = input_data.get("tool_input", {})
+    tool_result = input_data.get("tool_result", {})
+
+    # Only track Bash commands
+    if tool_name != "Bash":
+        return
+
+    if not VERIFICATION_GATES_AVAILABLE:
+        return
+
+    # Extract command and exit code
+    command = tool_input.get("command", "")
+
+    # Try to extract exit code from tool result
+    # The result format varies, but often includes exit code info
+    exit_code = 0  # Default to success
+    result_content = tool_result.get("content", "")
+    if isinstance(result_content, str):
+        if "exit code: " in result_content.lower():
+            try:
+                # Parse exit code from result
+                import re
+                match = re.search(r'exit code:\s*(\d+)', result_content, re.IGNORECASE)
+                if match:
+                    exit_code = int(match.group(1))
+            except (ValueError, AttributeError):
+                pass
+        elif "error" in result_content.lower() or "failed" in result_content.lower():
+            # Heuristic: likely failure
+            exit_code = 1
+
+    # Update verification state
+    on_bash_complete(command, exit_code)
+
+
+if __name__ == "__main__":
+    main()
