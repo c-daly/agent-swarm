@@ -21,8 +21,10 @@ from agent_state import (  # noqa: E402
 @pytest.fixture
 def temp_state_dir(tmp_path):
     """Use a temporary directory for state files."""
+    agent_state.StateManager.clear_cache()
     with patch.object(agent_state, "STATE_DIR", tmp_path):
         yield tmp_path
+    agent_state.StateManager.clear_cache()
 
 
 class TestGetAgentId:
@@ -198,3 +200,78 @@ class TestCleanupAgentState:
         assert temp_state_dir.exists() or True  # Ensure fixture is used
         result = cleanup_agent_state("nonexistent-agent")
         assert result is False
+
+
+class TestStateManager:
+    """Tests for StateManager class."""
+
+    def test_get_returns_singleton(self, temp_state_dir):
+        """Same agent_id returns same instance."""
+        mgr1 = agent_state.StateManager.get("test")
+        mgr2 = agent_state.StateManager.get("test")
+        assert mgr1 is mgr2
+
+    def test_get_different_agents(self, temp_state_dir):
+        """Different agent_ids return different instances."""
+        mgr1 = agent_state.StateManager.get("agent1")
+        mgr2 = agent_state.StateManager.get("agent2")
+        assert mgr1 is not mgr2
+
+    def test_main_returns_main_manager(self, temp_state_dir):
+        """StateManager.main() returns manager for main session."""
+        mgr = agent_state.StateManager.main()
+        assert mgr.agent_id == "main"
+
+    def test_caching(self, temp_state_dir):
+        """State is cached in memory after load."""
+        mgr = agent_state.StateManager.get("cache-test")
+        mgr.set_value("key", "value")
+
+        # Modify directly bypasses cache
+        state_file = temp_state_dir / "session.cache-test.json"
+        state_file.write_text('{"key": "modified"}')
+
+        # Should still return cached value
+        assert mgr.get_value("key") == "value"
+
+    def test_invalidate_clears_cache(self, temp_state_dir):
+        """invalidate() forces reload from disk."""
+        mgr = agent_state.StateManager.get("invalidate-test")
+        mgr.set_value("key", "value")
+
+        # Modify file directly
+        state_file = temp_state_dir / "session.invalidate-test.json"
+        state_file.write_text('{"key": "modified"}')
+
+        # Invalidate and re-read
+        mgr.invalidate()
+        assert mgr.get_value("key") == "modified"
+
+    def test_phase_property(self, temp_state_dir):
+        """phase property reads/writes phase."""
+        mgr = agent_state.StateManager.get("phase-test")
+        mgr.phase = "implement"
+        assert mgr.phase == "implement"
+
+    def test_active_agents_property(self, temp_state_dir):
+        """active_agents property with default."""
+        mgr = agent_state.StateManager.get("agents-test")
+        assert mgr.active_agents == 0
+        mgr.active_agents = 3
+        assert mgr.active_agents == 3
+
+    def test_workflow_invoked_property(self, temp_state_dir):
+        """workflow_invoked property with default."""
+        mgr = agent_state.StateManager.get("workflow-test")
+        assert mgr.workflow_invoked is False
+        mgr.workflow_invoked = True
+        assert mgr.workflow_invoked is True
+
+    def test_clear_cache_removes_all(self, temp_state_dir):
+        """clear_cache removes all instances."""
+        agent_state.StateManager.get("a")
+        agent_state.StateManager.get("b")
+        assert len(agent_state.StateManager._instances) >= 2
+
+        agent_state.StateManager.clear_cache()
+        assert len(agent_state.StateManager._instances) == 0

@@ -10,16 +10,12 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+# Import agent_state module for per-agent state isolation
+sys.path.insert(0, str(Path.home() / ".claude/plugins/agent-swarm/lib"))
+from agent_state import load_state, save_state
+
 STATE_DIR = Path.home() / ".claude" / "plugins" / "agent-swarm" / ".state"
-STATE_FILE = STATE_DIR / "session.json"
 SUBAGENT_LOG = STATE_DIR / "subagent_executions.log"
-
-
-def load_state() -> dict:
-    """Load session state."""
-    if STATE_FILE.exists():
-        return json.loads(STATE_FILE.read_text())
-    return {}
 
 
 def log_subagent_stop(agent_type: str, session_id: str, phase: str) -> None:
@@ -58,8 +54,7 @@ def main():
     
     # Decrement active agent count
     state["active_agents"] = max(0, state.get("active_agents", 0) - 1)
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, indent=2))
+    save_state(state)
 
     result = {
         "hookSpecificOutput": {
