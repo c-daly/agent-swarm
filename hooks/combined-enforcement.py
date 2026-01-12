@@ -44,6 +44,18 @@ try:
 except ImportError:
     WORKFLOW_AVAILABLE = False
 
+# Import new enforcement modules (P1-P5)
+try:
+    from shell_virtualizer import check_command as shell_check_command
+    from phase_model import check_tool_allowed as phase_check_tool_allowed
+    from classification_validator import validate_classification
+    from review_gate import check_review_allowed, on_push, on_review_complete
+    from agent_protocol import validate_agent_spawn, get_protocol
+    NEW_MODULES_AVAILABLE = True
+except ImportError as e:
+    NEW_MODULES_AVAILABLE = False
+    log_warning(f"New enforcement modules not available: {e}")
+
 # Import verification gates for tracking lint/test/format runs
 try:
     from verification_gates import (
@@ -447,19 +459,25 @@ def check_phase_restrictions(tool_name: str, state: dict, tool_input: dict = Non
     # Strict phase enforcement (default True, can disable in config)
     config = load_json(CONFIG_FILE)
     if config.get("strict_phase_enforcement", True):
-        # Check both specific tool name AND tool category
-        tool_category = get_tool_category(tool_name)
-        allowed_categories = PHASE_ALLOWED_CATEGORIES.get(phase, set())
+        # Use phase_model if available (P2 module) - provides unified phase enforcement
+        if NEW_MODULES_AVAILABLE:
+            allowed, reason = phase_check_tool_allowed(tool_name, phase)
+            if not allowed:
+                return block(f"[PHASE: {phase}] {reason}")
+        else:
+            # Fallback to inline check
+            tool_category = get_tool_category(tool_name)
+            allowed_categories = PHASE_ALLOWED_CATEGORIES.get(phase, set())
 
-        # Allow if tool name matches OR category matches
-        if (tool_name not in allowed_tools and
-            tool_name not in ALWAYS_ALLOWED and
-            tool_category not in allowed_categories):
-            return block(
-                f"[PHASE: {phase}] {tool_name} not allowed in this phase.\n"
-                f"Allowed tools: {', '.join(sorted(allowed_tools))}\n"
-                f"Allowed categories: {', '.join(sorted(allowed_categories))}"
-            )
+            # Allow if tool name matches OR category matches
+            if (tool_name not in allowed_tools and
+                tool_name not in ALWAYS_ALLOWED and
+                tool_category not in allowed_categories):
+                return block(
+                    f"[PHASE: {phase}] {tool_name} not allowed in this phase.\n"
+                    f"Allowed tools: {', '.join(sorted(allowed_tools))}\n"
+                    f"Allowed categories: {', '.join(sorted(allowed_categories))}"
+                )
 
     return None
 
@@ -803,22 +821,11 @@ def check_smart_tool_usage(tool_name: str, tool_input: dict, state: dict) -> dic
         if 'AGENT_PHASE=' in cmd or '/tmp/phase_' in cmd:
             return None  # Allow
 
-        # CRITICAL: Detect Bash abuse patterns (cat/grep/find)
-        # These should NEVER be done via Bash - proper tools exist
-
-        # cat abuse → use Read or Write tools
-        # Block cat UNLESS it's receiving piped input (e.g., grep | cat)
-        if 'cat' in cmd and not re.search(r'\|\s*cat\s*(?:[|;]|$)', cmd):
-            # Cat reading files
-            if re.search(r'\bcat\s+[^\|<>]', cmd):
-                return block(
-                    f"[BLOCKED] Don't use 'cat' for reading files.\n\n"
-                    f"REQUIRED ACTION: Use the Read tool\n"
-                    f"✓ DO: Read({{'file_path': '<path>'}})\n"
-                    f"✗ DON'T: Try bash cat, sed, awk, or other shell workarounds\n\n"
-                    f"Why: Bash cat wastes tokens and bypasses activity tracking.\n"
-                    f"Current command: {cmd[:60]}"
-                )
+        # Use shell_virtualizer if available (P1 module)
+        if NEW_MODULES_AVAILABLE:
+            allowed, message = shell_check_command(cmd)
+            if not allowed:
+                return block(f"[BLOCKED] {message}\nCurrent command: {cmd[:60]}")
             # Cat with heredocs (writing)
             if re.search(r'\bcat\s*[>]+.*<<|\bcat\s*<<', cmd):
                 return block(
@@ -1258,6 +1265,9 @@ def check_greptile_gate(tool_name: str, tool_input: dict, state: dict, messages:
     populated when the agent calls the Greptile MCP tool - hooks cannot call
     MCP tools directly.
 
+    Also uses review_gate (P4 module) for SHA tracking to ensure reviews
+    are not stale.
+
     Triggers on:
     - git commit commands
     - Completion claims mentioning "ready for merge" or "PR ready"
@@ -1270,8 +1280,30 @@ def check_greptile_gate(tool_name: str, tool_input: dict, state: dict, messages:
         return None
 
     command = tool_input.get("command", "")
+
+    # Track pushes with review_gate (P4 module)
+    if NEW_MODULES_AVAILABLE and "git push" in command:
+        # Get current HEAD SHA
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                sha = result.stdout.strip()
+                on_push(sha)
+        except Exception:
+            pass
+
     if "git commit" not in command:
         return None
+
+    # Check review_gate for stale reviews (P4 module)
+    if NEW_MODULES_AVAILABLE:
+        allowed, msg = check_review_allowed()
+        if not allowed:
+            return block(f"[REVIEW GATE] {msg}\nReviews must be current before committing.")
 
     # Try to detect PR number from git branch or state
     # Look for PR number in state or recent messages
@@ -1476,10 +1508,25 @@ def check_subagent_model(tool_name: str, tool_input: dict, state: dict) -> dict 
     tool_input, state = _validate_inputs(tool_input=tool_input, state=state)
     if tool_name != "Task":
         return None
-    
+
     subagent_type = tool_input.get("subagent_type", "")
     specified_model = tool_input.get("model", "")
-    
+
+    # Use agent_protocol if available (P5 module) - provides unified validation
+    if NEW_MODULES_AVAILABLE:
+        phase = state.get("phase") or state.get("iterate_phase") or ""
+        valid, msg = validate_agent_spawn(subagent_type, specified_model, phase)
+        if not valid:
+            protocol = get_protocol(subagent_type)
+            correct_model = protocol.model if protocol else "sonnet"
+            return block(
+                f"[AGENT PROTOCOL] {msg}\n"
+                f"Agent '{subagent_type}' requires model='{correct_model}'\n"
+                f"Current phase: {phase}"
+            )
+        return None  # P5 module handled validation, skip legacy check
+
+    # Fallback to legacy check if P5 module not available
     # Skip if not an agent type we track
     if subagent_type not in AGENT_MODEL_MAP:
         return None
@@ -1643,6 +1690,20 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
                 state["episodic_search_done"] = True
                 save_state(state)
 
+    # Use classification_validator if available (P3 module)
+    # Validates that classification matches actual task complexity
+    if NEW_MODULES_AVAILABLE:
+        classification = state.get("classification_type")
+        task_desc = state.get("current_task", "")
+        if classification and tool_name in {"Write", "Edit", "mcp__plugin_serena_serena__replace_symbol_body"}:
+            valid, reason = validate_classification(
+                claimed=classification,
+                task=task_desc,
+                state=state
+            )
+            if not valid:
+                return block(f"[CLASSIFICATION MISMATCH] {reason}")
+
     # Block editing tools in CONVERSATION/RESEARCH mode unless workflow invoked
     edit_tools = {"Write", "Edit", "NotebookEdit",
                   "mcp__plugin_serena_serena__replace_symbol_body",
@@ -1767,8 +1828,7 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
     # === SUBAGENT TRACKING ===
     # Track subagent spawns at PreToolUse (PostToolUse doesn't work for async Task tools)
     if tool_name == "Task":
-        from datetime import datetime
-        import json
+        # datetime and json already imported at module level
 
         subagent_type = tool_input.get("subagent_type", "unknown")
         description = tool_input.get("description", "")
