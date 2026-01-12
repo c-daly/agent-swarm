@@ -61,6 +61,14 @@ def main():
     # Update verification state
     on_bash_complete(command, exit_code)
 
+    # Clean up git_approval.flag after successful git commit/push (one-time use)
+    if exit_code == 0:
+        import re
+        if re.search(r'\bgit\s+(commit|push)\b', command):
+            approval_flag = Path.home() / ".claude/plugins/agent-swarm/.state/git_approval.flag"
+            if approval_flag.exists():
+                approval_flag.unlink()
+
 
 if __name__ == "__main__":
     main()
