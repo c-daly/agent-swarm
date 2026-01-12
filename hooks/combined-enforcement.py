@@ -13,6 +13,7 @@ Enforces:
 import sys
 import json
 import re
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -42,6 +43,21 @@ try:
     WORKFLOW_AVAILABLE = True
 except ImportError:
     WORKFLOW_AVAILABLE = False
+
+# Import verification gates for tracking lint/test/format runs
+try:
+    from verification_gates import (
+        on_bash_complete,
+        check_verify_signal,
+        check_agent_spawning,
+        check_tool_versions,
+        check_greptile_comments,
+        load_verification_state,
+        check_pr_ready,
+    )
+    VERIFICATION_GATES_AVAILABLE = True
+except ImportError:
+    VERIFICATION_GATES_AVAILABLE = False
 
 # Configuration
 STATE_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/session.json"
@@ -673,6 +689,15 @@ def check_mcp_script_requirement(tool_name: str, tool_input: dict, state: dict) 
     if tool_name in MCP_DIRECT_ALLOWED:
         return None
 
+    # Whitelist polling operations when poll skill is active
+    POLLING_TOOLS = {
+        "mcp__plugin_greptile_greptile__get_code_review",
+        "mcp__plugin_greptile_greptile__list_code_reviews",
+        "mcp__plugin_greptile_greptile__get_merge_request",
+    }
+    if tool_name in POLLING_TOOLS and state.get("poll_skill_active"):
+        return None  # Allow controlled polling
+
     # Block high-cost operations - require script
     if tool_name in MCP_SCRIPT_REQUIRED:
         return block(
@@ -685,23 +710,38 @@ def check_mcp_script_requirement(tool_name: str, tool_input: dict, state: dict) 
             f"```"
         )
 
-    # Track repeated MCP calls of same type
-    mcp_counts = state.get("mcp_counts", {})
-    count = mcp_counts.get(tool_name, 0) + 1
-    mcp_counts[tool_name] = count
-    state["mcp_counts"] = mcp_counts
+    # Track repeated MCP calls with timestamps for time-based rate limiting
+    # Rate limit: max 6 calls per tool per 5 minutes (300 seconds)
+    RATE_LIMIT_WINDOW = 300  # seconds
+    RATE_LIMIT_MAX_CALLS = 6
+
+    current_time = time.time()
+    mcp_timestamps = state.get("mcp_timestamps", {})
+
+    # Get timestamps for this tool, filter to within window
+    tool_timestamps = mcp_timestamps.get(tool_name, [])
+    tool_timestamps = [ts for ts in tool_timestamps if current_time - ts < RATE_LIMIT_WINDOW]
+
+    # Add current call
+    tool_timestamps.append(current_time)
+    mcp_timestamps[tool_name] = tool_timestamps
+    state["mcp_timestamps"] = mcp_timestamps
     save_state(state)
 
-    # Block after 5th call of same MCP tool (allow sequential edits)
-    if count > 5:
+    # Count calls within window
+    count = len(tool_timestamps)
+
+    # Block if exceeds rate limit within window
+    if count > RATE_LIMIT_MAX_CALLS:
+        minutes_remaining = int((RATE_LIMIT_WINDOW - (current_time - tool_timestamps[0])) / 60) + 1
         return block(
-            f"[BLOCKED] {tool_name} called {count} times.\n\n"
+            f"[BLOCKED] {tool_name} called {count} times in {RATE_LIMIT_WINDOW // 60} minutes.\n\n"
             f"REQUIRED ACTION: Write a Python script to batch operations\n"
             f"✓ DO: Create /tmp/batch_ops.py using mcp_bridge\n"
             f"✗ DON'T: Try calling the tool 'just one more time'\n"
             f"✗ DON'T: Switch to Edit, Read, or other workarounds\n\n"
             f"Why: Repeated tool calls waste tokens. Scripts are faster and tracked.\n"
-            f"Ignoring this will trigger more blocks."
+            f"Rate limit resets in ~{minutes_remaining} minute(s)."
         )
 
     return None
@@ -1137,6 +1177,300 @@ def reset_verify_on_edit(tool_name: str, tool_input: dict, state: dict) -> None:
         log_event("VERIFY_RESET", f"verify_passed reset due to {tool_name}")
 
 
+def check_tool_version_mismatch(tool_name: str, tool_input: dict, state: dict) -> dict | None:
+    """Warn if local tool versions don't match pyproject.toml.
+
+    Uses verification_gates module to check tool versions.
+    """
+    if not VERIFICATION_GATES_AVAILABLE:
+        return None
+
+    # Only check once per session, on first lint/format command
+    if state.get("tool_versions_checked"):
+        return None
+
+    # Check on lint/format commands
+    if tool_name != "Bash":
+        return None
+
+    command = tool_input.get("command", "")
+    if not any(x in command for x in ["ruff", "black", "pylint", "mypy"]):
+        return None
+
+    # Mark as checked
+    state["tool_versions_checked"] = True
+    save_state(state)
+
+    # Get cwd from input or use default
+    import os
+    cwd = os.getcwd()
+
+    warning_msg = check_tool_versions(cwd)
+    if warning_msg:
+        return allow_with_warning(tool_name, tool_input, warning_msg)
+
+    return None
+
+
+def check_verification_claims(tool_name: str, tool_input: dict, state: dict, messages: list) -> dict | None:
+    """Block [VERIFY] or completion claims without actual verification runs.
+
+    Uses verification_gates module to track lint/test runs and block premature
+    completion claims.
+    """
+    if not VERIFICATION_GATES_AVAILABLE:
+        return None
+
+    # Only check on git commit attempts (most critical gate)
+    if tool_name != "Bash":
+        return None
+
+    command = tool_input.get("command", "")
+    if "git commit" not in command:
+        return None
+
+    # Get recent assistant messages to check for verification claims
+    recent_content = ""
+    for msg in reversed(messages[-10:]):
+        if msg.get("role") == "assistant":
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                content = " ".join(
+                    block.get("text", "") if isinstance(block, dict) else str(block)
+                    for block in content
+                )
+            recent_content += str(content) + "\n"
+
+    # Check if verification claims are made without actual runs
+    error_msg = check_verify_signal(recent_content)
+    if error_msg:
+        return block(error_msg)
+
+    return None
+
+
+
+
+def check_greptile_gate(tool_name: str, tool_input: dict, state: dict, messages: list) -> dict | None:
+    """Block git commit when unaddressed P0 Greptile comments exist.
+
+    Uses cached Greptile state from verification_gates module. The state is
+    populated when the agent calls the Greptile MCP tool - hooks cannot call
+    MCP tools directly.
+
+    Triggers on:
+    - git commit commands
+    - Completion claims mentioning "ready for merge" or "PR ready"
+    """
+    if not VERIFICATION_GATES_AVAILABLE:
+        return None
+
+    # Only check on git commit attempts
+    if tool_name != "Bash":
+        return None
+
+    command = tool_input.get("command", "")
+    if "git commit" not in command:
+        return None
+
+    # Try to detect PR number from git branch or state
+    # Look for PR number in state or recent messages
+    pr_number = state.get("current_pr_number")
+    repo = state.get("current_repo", "c-daly/apollo")
+
+    if not pr_number:
+        # Try to extract from branch name (feature/xxx-123 or pr-123)
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["git", "branch", "--show-current"],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                branch = result.stdout.strip()
+                import re
+                # Match patterns like feature/foo-123, pr-123, etc.
+                match = re.search(r'[/-](\d+)$', branch)
+                if match:
+                    pr_number = int(match.group(1))
+        except Exception:
+            pass
+
+    if not pr_number:
+        # No PR number available, skip check gracefully
+        return None
+
+    # Check for unaddressed P0 comments using cached state
+    error_msg = check_greptile_comments(pr_number, repo)
+    if error_msg:
+        return block(error_msg)
+
+    return None
+
+def check_commit_attribution(tool_name: str, tool_input: dict, state: dict) -> dict | None:
+    """Block commit messages with AI attributions.
+
+    Per project standards, commit messages should not contain:
+    - Co-Authored-By: Claude/AI/etc
+    - Generated by Claude
+    - AI attribution markers
+    """
+    tool_input, state = _validate_inputs(tool_input=tool_input, state=state)
+    if tool_name != "Bash":
+        return None
+
+    command = tool_input.get("command", "")
+
+    # Only check git commit commands
+    if not re.search(r'\bgit\s+commit\b', command):
+        return None
+
+    # Check for common attribution patterns (case-insensitive)
+    attribution_patterns = [
+        r'Co-Authored-By:',
+        r'Generated\s+(by|with)\s+(Claude|AI|GPT|Anthropic)',
+        r'🤖',  # Robot emoji often used for AI attribution
+        r'\[AI\]',
+        r'\[Claude\]',
+    ]
+
+    for pattern in attribution_patterns:
+        if re.search(pattern, command, re.IGNORECASE):
+            return block(
+                "[ATTRIBUTION BLOCKED] Commit message contains AI attribution.\n"
+                "Per project standards, commit messages should not include:\n"
+                "- Co-Authored-By: Claude/AI markers\n"
+                "- 'Generated by' attributions\n"
+                "- AI/Claude markers or emojis\n"
+                "Remove the attribution and try again."
+            )
+
+    return None
+
+
+def check_coverage_required(tool_name: str, tool_input: dict, state: dict) -> dict | None:
+    """Block git commit unless coverage meets threshold.
+
+    Coverage enforcement:
+    - Set state["coverage_percentage"] after running coverage
+    - Set config["coverage_required"] = true to enable enforcement
+    - Set config["coverage_threshold"] = 80 for threshold (default 80%)
+    """
+    tool_input, state = _validate_inputs(tool_input=tool_input, state=state)
+    if tool_name != "Bash":
+        return None
+
+    command = tool_input.get("command", "")
+
+    # Only check git commit commands
+    if not re.search(r'\bgit\s+commit\b', command):
+        return None
+
+    # Check if coverage enforcement is enabled
+    config = load_json(CONFIG_FILE)
+    if not config.get("coverage_required", False):
+        return None  # Coverage enforcement disabled
+
+    # Get threshold (default 80%)
+    threshold = config.get("coverage_threshold", 80)
+
+    # Check if coverage has been recorded
+    coverage = state.get("coverage_percentage")
+    if coverage is None:
+        return block(
+            f"[COVERAGE REQUIRED] Git commit blocked - coverage not measured.\n"
+            f"Run: poetry run pytest --cov=src --cov-report=term-missing\n"
+            f"Then set state['coverage_percentage'] = <value>\n"
+            f"Required threshold: {threshold}%"
+        )
+
+    # Check if coverage meets threshold
+    if coverage >= threshold:
+        return None  # Coverage meets threshold, allow commit
+
+    return block(
+        f"[COVERAGE REQUIRED] Git commit blocked - coverage below threshold.\n"
+        f"Current: {coverage}% | Required: {threshold}%\n"
+        f"Add tests to improve coverage before committing."
+    )
+
+
+def check_pr_completion_gate(tool_name: str, tool_input: dict, state: dict, messages: list) -> dict | None:
+    """
+    PR completion composite gate - blocks 'PR ready' claims unless ALL conditions met.
+
+    Triggers on:
+    - git push
+    - gh pr create
+    - Messages claiming 'ready for merge'
+
+    Checks:
+    1. Lint has been run (from verification state)
+    2. Tests have been run and passed
+    3. No unaddressed P0 Greptile comments (placeholder)
+    """
+    if not VERIFICATION_GATES_AVAILABLE:
+        return None
+
+    # Detect triggering conditions
+    is_git_push = False
+    is_pr_create = False
+    is_merge_claim = False
+
+    if tool_name == "Bash":
+        command = tool_input.get("command", "")
+        is_git_push = re.search(r'\bgit\s+push\b', command) is not None
+        is_pr_create = re.search(r'\bgh\s+pr\s+create\b', command) is not None
+
+    # Check recent messages for merge readiness claims
+    merge_claim_patterns = [
+        r'ready\s+for\s+merge',
+        r'ready\s+to\s+merge',
+        r'PR\s+is\s+ready',
+        r'pull\s+request\s+is\s+ready',
+        r'can\s+be\s+merged',
+        r'good\s+to\s+merge',
+        r'merge\s+ready',
+    ]
+
+    for msg in reversed(messages[-5:]):
+        if msg.get("role") == "assistant":
+            raw_content = msg.get("content", "")
+            if isinstance(raw_content, list):
+                content = " ".join(
+                    block.get("text", "") if isinstance(block, dict) else str(block)
+                    for block in raw_content
+                )
+            else:
+                content = str(raw_content)
+
+            if any(re.search(pattern, content, re.IGNORECASE) for pattern in merge_claim_patterns):
+                is_merge_claim = True
+                break
+
+    # Only enforce gate on triggering conditions
+    if not (is_git_push or is_pr_create or is_merge_claim):
+        return None
+
+    # Extract PR number if available (for Greptile check)
+    pr_number = state.get("current_pr_number", 0)
+    repo = state.get("current_repo", "")
+
+    # Run composite gate check
+    is_ready, issues = check_pr_ready(pr_number, repo)
+
+    if not is_ready:
+        trigger_type = "git push" if is_git_push else "gh pr create" if is_pr_create else "merge claim"
+        return block(
+            f"[PR COMPLETION GATE] Blocked {trigger_type} - PR not ready.\n\n"
+            f"Issues:\n" +
+            "\n".join(f"  - {issue}" for issue in issues) +
+            "\n\nResolve all issues before claiming PR is ready or pushing."
+        )
+
+    return None
+
+
 def check_subagent_model(tool_name: str, tool_input: dict, state: dict) -> dict | None:
     """Enforce correct model usage when spawning subagents."""
     tool_input, state = _validate_inputs(tool_input=tool_input, state=state)
@@ -1471,6 +1805,66 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
     return None
 
 
+def check_agent_spawning_enforcement(tool_name: str, tool_input: dict, state: dict, input_data: dict) -> dict | None:
+    """Enforce agent spawning when multiple pending tasks exist.
+
+    If there are >1 pending tasks and <=1 in_progress, the agent should be
+    using Task tool to spawn subagents for parallel work. Block other tools
+    until this is done.
+
+    Uses check_agent_spawning from verification_gates module.
+    """
+    if not VERIFICATION_GATES_AVAILABLE:
+        return None
+
+    # Allow Task tool - that's how agents are spawned
+    if tool_name == "Task":
+        return None
+
+    # Allow TodoWrite - needed to manage the task list
+    if tool_name == "TodoWrite":
+        return None
+
+    # Extract todo list from conversation context
+    # The todo list comes from the conversation's TodoWrite state
+    todo_list = []
+
+    # Try to get from input_data's conversation/messages
+    messages = input_data.get("messages", [])
+    for msg in reversed(messages):
+        # Look for todo state in the conversation
+        if isinstance(msg, dict):
+            content = msg.get("content", "")
+            if isinstance(content, str) and "[TODO]" in content:
+                # Parse todo items from message content
+                # Format: [TODO] status: task
+                for line in content.split("\n"):
+                    if line.strip().startswith("- ["):
+                        # Parse checkbox format: - [ ] pending, - [x] completed, - [>] in_progress
+                        if "[ ]" in line:
+                            todo_list.append({"status": "pending", "content": line})
+                        elif "[>]" in line or "[~]" in line:
+                            todo_list.append({"status": "in_progress", "content": line})
+                        elif "[x]" in line:
+                            todo_list.append({"status": "completed", "content": line})
+
+    # Also check state for cached todo list
+    if not todo_list and "todo_list" in state:
+        todo_list = state.get("todo_list", [])
+
+    # If no todo list found, don't block
+    if not todo_list:
+        return None
+
+    # Call the verification gate
+    block_msg = check_agent_spawning(todo_list, max_inline=1)
+    if block_msg:
+        return block(block_msg)
+
+    return None
+
+
+
 def main():
     # Read input from stdin
     try:
@@ -1529,12 +1923,19 @@ def main():
         check_phase_restrictions(tool_name, state, tool_input),
         check_checkpoint_approval(tool_name, tool_input, state),
         check_verify_required(tool_name, tool_input, state),
+        check_verification_claims(tool_name, tool_input, state, messages),  # Block [VERIFY] without runs
+        check_tool_version_mismatch(tool_name, tool_input, state),  # Warn on pyproject.toml mismatch
         check_mcp_script_requirement(tool_name, tool_input, state),
         check_smart_tool_usage(tool_name, tool_input, state),
         check_token_efficiency(tool_name, tool_input, state),
         check_scope_discipline(tool_name, tool_input, state),
+        check_agent_spawning_enforcement(tool_name, tool_input, state, input_data),  # Enforce agent spawning for parallel work
         check_git_safety(tool_name, tool_input, state),
         check_git_approval_layers(tool_name, tool_input, state, messages),  # 3-layer approval
+        check_commit_attribution(tool_name, tool_input, state),  # Block AI attributions
+        check_greptile_gate(tool_name, tool_input, state, messages),  # Block commit with unaddressed P0 Greptile comments
+        check_coverage_required(tool_name, tool_input, state),  # Enforce coverage threshold
+        check_pr_completion_gate(tool_name, tool_input, state, messages),  # PR readiness gate
         check_subagent_model(tool_name, tool_input, state),
         check_episodic_memory_suggestion(tool_name, tool_input, state),
     ]
