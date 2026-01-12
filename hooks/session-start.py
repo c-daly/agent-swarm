@@ -29,18 +29,28 @@ def reset_enforcement_counters():
     state_file = Path(__file__).parent.parent / ".state" / "session.json"
 
     try:
-        # Initialize fresh session state
+        # Initialize fresh session state with phase executor support
         state = {
+            # Enforcement counters
             "last_phase": None,
             "last_tool_time": None,
             "signature_change_reminders": [],
             "files_read": [],
             "read_count": 0,
             "files_edited_this_session": [],
-            "phase": None,
             "search_count": 0,
             "edits_this_response": 0,
-            "memory_search_suggested": 1
+            "memory_search_suggested": 1,
+
+            # Phase executor state
+            "phase": "intake",
+            "action_index": 0,
+            "phase_context": {},
+            "iteration_counts": {},
+            "pending_agents": [],
+            "completed_agents": [],
+            "user_request": None,
+            "workflow_active": False,
         }
 
         with open(state_file, 'w') as f:
@@ -130,22 +140,55 @@ def main():
     # Build output message
     messages = []
 
-    # Add inventory if available
-    if inventory_output:
-        messages.append("📦 Capability Inventory:\n" + inventory_output[:1000])  # Limit size
+    # Add workflow instruction
+    workflow_msg = """
+═══════════════════════════════════════════════════════════════════════
+                        WORKFLOW STATE MACHINE
+═══════════════════════════════════════════════════════════════════════
 
-    # Add episodic memory suggestion
+You are an ORCHESTRATOR, not an implementer. Your job is to:
+1. Follow the phase script EXACTLY
+2. Spawn subagents for actual work
+3. Coordinate, don't code
+
+CURRENT PHASE: INTAKE
+
+YOUR FIRST ACTION (MANDATORY):
+Before doing ANYTHING else, classify the user's request:
+
+→ Spawn a classifier agent:
+  Task(subagent_type="haiku", prompt="Classify this request: [USER REQUEST]
+
+  Determine:
+  1. Complexity: trivial | normal | complex
+  2. Type: bug_fix | feature | refactor | question | research
+  3. Scope: single_file | multi_file | system_wide
+
+  Output JSON only: {complexity, type, scope, reasoning}")
+
+→ Wait for result
+→ Store classification and proceed to next phase
+
+DO NOT skip intake. DO NOT read files yourself. SPAWN THE CLASSIFIER.
+═══════════════════════════════════════════════════════════════════════
+"""
+    messages.append(workflow_msg)
+
+    # Add inventory if available (abbreviated)
+    if inventory_output:
+        # Just note it's available, don't flood context
+        messages.append("📦 Capabilities loaded. Use /inventory for details.")
+
+    # Add episodic memory suggestion (abbreviated)
     if not results.get("found"):
-        messages.append(results.get("message", ""))
-    else:
-        messages.append(f"✓ Found {len(results.get('conversations', []))} relevant past conversations")
+        messages.append("💭 Use episodic-memory search for past context if needed.")
 
     # Return result with suggestion
     output = {
-        "systemMessage": "\n\n".join(messages) if messages else ""
+        "systemMessage": "\n".join(messages) if messages else ""
     }
 
-    log_hook("SessionStart", "session-start", "completed - counters reset")
+    log_hook("SessionStart", "session-start", "completed - workflow initialized")
     print(json.dumps(output))
 
 if __name__ == "__main__":

@@ -245,6 +245,170 @@ def block(reason: str) -> dict:
     }
 
 
+# Phase instruction templates - what MUST happen in each phase
+PHASE_INSTRUCTIONS = {
+    "intake": """
+[PHASE: INTAKE]
+ACTION REQUIRED: Spawn classifier agent to analyze request.
+→ Task(subagent_type="haiku", prompt="Classify: {request}...")
+→ DO NOT read files or explore codebase yet
+""",
+
+    "explore": """
+[PHASE: EXPLORE]
+ACTION REQUIRED: Spawn explorer agent to map codebase.
+→ Task(subagent_type="Explore", prompt="Find relevant code for: {request}...")
+→ Let explorer do the searching, don't search yourself
+""",
+
+    "research": """
+[PHASE: RESEARCH]
+ACTION REQUIRED: Spawn researcher for domain knowledge.
+→ Task(subagent_type="general-purpose", prompt="Research: {topic}...")
+→ May spawn parallel agents for different aspects
+""",
+
+    "design": """
+[PHASE: DESIGN]
+ACTION REQUIRED: Spawn architect to create implementation plan.
+→ Task(subagent_type="Plan", prompt="Design implementation for: {request}...")
+→ Wait for design spec before implementing
+""",
+
+    "implement": """
+[PHASE: IMPLEMENT]
+ACTION REQUIRED: Spawn implementer to execute the plan.
+→ Task(subagent_type="general-purpose", prompt="Implement: {design_spec}...")
+→ DO NOT write code yourself - delegate to subagent
+""",
+
+    "review": """
+[PHASE: REVIEW]
+ACTION REQUIRED: Spawn reviewer to check implementation.
+→ Task(subagent_type="general-purpose", prompt="Review changes...")
+→ Also run tests if applicable
+""",
+
+    "debug": """
+[PHASE: DEBUG]
+ACTION REQUIRED: Spawn debugger to fix issues.
+→ Task(subagent_type="general-purpose", prompt="Fix: {issues}...")
+→ Return to REVIEW after fixes
+""",
+
+    "git": """
+[PHASE: GIT]
+ACTION REQUIRED: Commit changes with user approval.
+→ Show diff to user
+→ Create commit message
+→ Wait for approval before committing
+"""
+}
+
+
+def get_phase_instruction(state: dict, tool_name: str) -> str:
+    """Get instruction for current phase, or nudge toward correct behavior."""
+    phase = state.get("phase", "intake")
+    workflow_active = state.get("workflow_active", False)
+
+    # If workflow not active, don't inject instructions
+    if not workflow_active:
+        return ""
+
+    # Get phase template
+    template = PHASE_INSTRUCTIONS.get(phase, "")
+    if not template:
+        return ""
+
+    # Detect if orchestrator is doing work instead of delegating
+    orchestrator_actions = {"Read", "Grep", "Glob", "Edit", "Write"}
+
+    if tool_name in orchestrator_actions:
+        # Count recent direct actions
+        direct_actions = state.get("direct_actions_this_phase", 0)
+        if direct_actions > 2:
+            return f"""
+⚠️ ORCHESTRATOR ROLE VIOLATION
+
+You have made {direct_actions} direct tool calls in {phase} phase.
+As orchestrator, you should DELEGATE work to subagents.
+
+{template}
+
+Spawn a subagent to continue this work.
+"""
+
+    return template
+
+
+def detect_and_activate_workflow(messages: list, state: dict) -> None:
+    """Detect task-like requests and activate workflow state machine."""
+    if state.get("workflow_active"):
+        return  # Already active
+
+    if not messages:
+        return
+
+    # Find most recent user message
+    for msg in reversed(messages):
+        if msg.get("role") == "user":
+            content = msg.get("content", "")
+            if isinstance(content, str) and len(content) > 20:
+                # Looks like a real task, not just a greeting
+                # Check for task indicators
+                task_patterns = [
+                    r'\b(implement|create|add|fix|update|change|modify|refactor)\b',
+                    r'\b(bug|feature|issue|error|problem)\b',
+                    r'\b(make|build|write|develop)\b',
+                    r'\?$',  # Questions
+                ]
+
+                for pattern in task_patterns:
+                    if re.search(pattern, content, re.I):
+                        state["workflow_active"] = True
+                        state["user_request"] = content[:500]  # Store for templates
+                        state["phase"] = "intake"
+                        state["action_index"] = 0
+                        state["direct_actions_this_phase"] = 0
+                        save_state(state)
+                        return
+            break
+
+
+def check_orchestrator_role(tool_name: str, state: dict) -> dict | None:
+    """Enforce orchestrator role - prevent direct work when should delegate."""
+    phase = state.get("phase", "intake")
+    workflow_active = state.get("workflow_active", False)
+
+    if not workflow_active:
+        return None
+
+    # Track direct actions
+    orchestrator_actions = {"Read", "Grep", "Glob", "Edit", "Write"}
+
+    if tool_name in orchestrator_actions:
+        count = state.get("direct_actions_this_phase", 0) + 1
+        state["direct_actions_this_phase"] = count
+        save_state(state)
+
+        # Allow some direct actions for coordination, but not too many
+        if count > 5:
+            template = PHASE_INSTRUCTIONS.get(phase, "Spawn a subagent.")
+            return block(
+                f"[ORCHESTRATOR ROLE] Too many direct actions ({count}).\n\n"
+                f"You are the ORCHESTRATOR. Delegate work to subagents.\n\n"
+                f"{template}\n\n"
+                f"Use Task() to spawn an agent for this work."
+            )
+
+    # Reset counter when Task is used
+    if tool_name == "Task":
+        state["direct_actions_this_phase"] = 0
+        save_state(state)
+
+    return None
+
+
 def allow_with_warning(tool_name: str, tool_input: dict, warning: str) -> dict:
     """Allow tool but inject warning message."""
     return {
@@ -1423,6 +1587,9 @@ def main():
     # Load session state
     state = load_json(STATE_FILE)
 
+    # Detect task requests and activate workflow
+    detect_and_activate_workflow(messages, state)
+
     # Detect new user turn (reset edits_this_response counter)
     # Check if there's a user message AFTER the last tool execution
     last_tool_time_str = state.get("last_tool_time")
@@ -1462,6 +1629,7 @@ def main():
 
     # Run all enforcement checks
     checks = [
+        check_orchestrator_role(tool_name, state),  # Enforce delegation
         check_workflow_compliance(tool_name, tool_input, state, messages),
         check_phase_restrictions(tool_name, state, tool_input),
         check_checkpoint_approval(tool_name, tool_input, state),
@@ -1489,6 +1657,11 @@ def main():
     # Default: allow with status line
     status = build_status_line(state, tool_name)
 
+    # Add phase instruction if workflow is active
+    phase_instruction = get_phase_instruction(state, tool_name)
+    if phase_instruction:
+        status = f"{status}\n{phase_instruction}"
+
     # Enhanced logging for Bash - include command for script detection
     if tool_name == "Bash":
         command = tool_input.get("command", "")
@@ -1496,10 +1669,10 @@ def main():
         cmd_preview = command[:200] if len(command) <= 200 else command[:200] + "..."
         log_event("ALLOWED", f"Bash: {cmd_preview}")
     else:
-        log_event("ALLOWED", f"{tool_name} {status}")
+        log_event("ALLOWED", f"{tool_name} {status.split(chr(10))[0]}")  # Log first line only
 
     update_stats(allowed=True, tool_name=tool_name)
-    log_hook("PreToolUse", "combined-enforcement", f"ALLOWED {tool_name} {status}")
+    log_hook("PreToolUse", "combined-enforcement", f"ALLOWED {tool_name}")
     print(json.dumps(allow(status)))
 
 if __name__ == "__main__":
