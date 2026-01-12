@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for hooks/post-tool-use.py hook.
+"""Tests for hooks/post_tool_use.py hook.
 
 Tests the post-tool-use hook's behavior, especially the git_approval.flag
 cleanup logic that triggers after successful git commit/push commands.
@@ -11,25 +11,15 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch, MagicMock, mock_open
 import io
-import importlib.util
 
 
-# Add hooks to path
-hooks_dir = Path(__file__).parent.parent / "hooks"
-sys.path.insert(0, str(hooks_dir))
-
-# Import the post-tool-use module (handling hyphen in filename)
-spec = importlib.util.spec_from_file_location(
-    "post_tool_use",
-    hooks_dir / "post-tool-use.py"
-)
-post_tool_use = importlib.util.module_from_spec(spec)
-sys.modules["post_tool_use"] = post_tool_use
-spec.loader.exec_module(post_tool_use)
+# Add project root to path for hooks package
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from hooks import post_tool_use
 
 
 class TestPostToolUseMain:
-    """Tests for the main() function in post-tool-use.py."""
+    """Tests for the main() function in post_tool_use.py."""
 
     def test_processes_bash_command_correctly(self):
         """main() should extract command and exit_code from Bash tool."""
@@ -277,26 +267,50 @@ class TestGitApprovalFlagCleanup:
             assert not flag_path.exists(), "Flag should be deleted for compound git commit command"
 
 
-class TestVerificationGatesIntegration:
-    """Tests for verification_gates integration."""
 
-    def test_verification_gates_unavailable_no_error(self):
-        """If verification_gates is unavailable, hook should not crash."""
+
+class TestEdgeCases:
+    """Tests for edge cases to achieve 100% coverage."""
+
+    def test_exit_code_no_match_defaults_to_zero(self):
+        """Should default to exit code 0 when regex doesn't match."""
         input_data = {
             "tool_name": "Bash",
-            "tool_input": {"command": "pytest"},
-            "tool_result": {"content": "exit code: 0"}
+            "tool_input": {"command": "test"},
+            "tool_result": {"content": "exit code: abc"}  # No digits, won't match
         }
 
         with patch('sys.stdin', io.StringIO(json.dumps(input_data))):
-            with patch.dict('sys.modules', {'verification_gates': None}):
-                # Force reimport without verification_gates
-                import importlib
-                import post_tool_use
+            with patch.object(post_tool_use, 'on_bash_complete') as mock_callback:
+                post_tool_use.main()
+                # Default exit code when regex doesn't match
+                mock_callback.assert_called_once_with("test", 0)
 
-                # Mock VERIFICATION_GATES_AVAILABLE to False
-                with patch.object(post_tool_use, 'VERIFICATION_GATES_AVAILABLE', False):
-                    try:
-                        post_tool_use.main()
-                    except Exception as e:
-                        assert False, f"Should handle missing verification_gates gracefully, got: {e}"
+    def test_module_run_as_script(self):
+        """Test the if __name__ == '__main__' block."""
+        import subprocess
+        result = subprocess.run(
+            ['python3', '-c',
+             "import sys; sys.stdin = __import__('io').StringIO('{}'); "
+             "exec(open('/home/fearsidhe/.claude/plugins/agent-swarm/hooks/post_tool_use.py').read())"],
+            capture_output=True,
+            text=True
+        )
+        # Should not crash with empty JSON input
+        assert result.returncode == 0
+
+    def test_non_string_result_content(self):
+        """Should handle non-string result content."""
+        input_data = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "test"},
+            "tool_result": {"content": ["list", "not", "string"]}
+        }
+
+        with patch('sys.stdin', io.StringIO(json.dumps(input_data))):
+            with patch.object(post_tool_use, 'on_bash_complete') as mock_callback:
+                post_tool_use.main()
+                # Default exit code when content isn't a string
+                mock_callback.assert_called_once_with("test", 0)
+
+

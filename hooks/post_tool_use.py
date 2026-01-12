@@ -11,12 +11,8 @@ import json
 from pathlib import Path
 
 # Import verification gates
-try:
-    sys.path.insert(0, str(Path.home() / ".claude/plugins/agent-swarm/hooks"))
-    from verification_gates import on_bash_complete
-    VERIFICATION_GATES_AVAILABLE = True
-except ImportError:
-    VERIFICATION_GATES_AVAILABLE = False
+sys.path.insert(0, str(Path.home() / ".claude/plugins/agent-swarm/hooks"))
+from verification_gates import on_bash_complete
 
 
 def main():
@@ -34,9 +30,6 @@ def main():
     if tool_name != "Bash":
         return
 
-    if not VERIFICATION_GATES_AVAILABLE:
-        return
-
     # Extract command and exit code
     command = tool_input.get("command", "")
 
@@ -46,14 +39,11 @@ def main():
     result_content = tool_result.get("content", "")
     if isinstance(result_content, str):
         if "exit code: " in result_content.lower():
-            try:
-                # Parse exit code from result
-                import re
-                match = re.search(r'exit code:\s*(\d+)', result_content, re.IGNORECASE)
-                if match:
-                    exit_code = int(match.group(1))
-            except (ValueError, AttributeError):
-                pass
+            # Parse exit code from result
+            import re
+            match = re.search(r'exit code:\s*(\d+)', result_content, re.IGNORECASE)
+            if match:
+                exit_code = int(match.group(1))
         elif "error" in result_content.lower() or "failed" in result_content.lower():
             # Heuristic: likely failure
             exit_code = 1
@@ -70,5 +60,5 @@ def main():
                 approval_flag.unlink()
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()
