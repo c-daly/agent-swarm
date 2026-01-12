@@ -39,10 +39,12 @@ except ImportError:
 # Import Workflow class for state management
 try:
     sys.path.insert(0, str(Path.home() / ".claude/plugins/agent-swarm/lib"))
-    from workflow import Workflow
+    from workflow import Workflow, show_queue_status
     WORKFLOW_AVAILABLE = True
 except ImportError:
     WORKFLOW_AVAILABLE = False
+    def show_queue_status() -> str:
+        return "[QUEUE] Not available"
 
 # Import new enforcement modules (P1-P5)
 try:
@@ -208,10 +210,15 @@ PHASE_ALLOWED_CATEGORIES = {
     "research": {"web_research", "file_read", "subagent", "user_interaction"},
     "explore": {"file_search", "file_read", "code_query", "subagent", "user_interaction"},
     "design": {"file_read", "file_search", "code_query", "subagent", "user_interaction"},
-    "implement": {"subagent", "file_read", "user_interaction"},  # Write only via subagent
-    "review": {"file_read", "file_search", "shell", "subagent", "user_interaction"},
+    "implement": {"file_read", "file_write", "code_edit", "file_search", "shell", "subagent", "user_interaction"},
+    "review": {"file_read", "file_search", "web_research", "subagent", "user_interaction"},
     "debug": {"file_read", "file_search", "file_write", "code_edit", "shell", "subagent", "user_interaction"},
     "git": {"shell", "file_read", "user_interaction"},
+    # Iterate workflow phases (TDD)
+    "test_writing": {"file_read", "file_write", "file_search", "code_query", "shell", "subagent", "user_interaction"},
+    "test": {"file_read", "file_search", "shell", "subagent", "user_interaction"},
+    "coverage": {"file_read", "file_write", "file_search", "shell", "subagent", "user_interaction"},
+    "review": {"file_read", "file_search", "web_research", "subagent", "user_interaction"},  # Iterate review phase
     "": set(),  # No phase = no restrictions
 }
 
@@ -221,15 +228,71 @@ PHASE_ALLOWED_TOOLS = {
     "research": {"WebSearch", "WebFetch", "Read", "Task"},
     "explore": {"Glob", "Grep", "Read", "Task"},
     "design": {"Read", "Glob", "Grep", "Task", "AskUserQuestion"},
-    "implement": {"Task", "Read"},  # Write only via subagent
+    "implement": {"Task", "Read", "Edit", "Write", "Bash"},  # Full editing in implement phase
     "review": {"Read", "Glob", "Grep", "Bash", "Task"},
     "debug": {"Read", "Glob", "Grep", "Bash", "Edit", "Write", "Task"},
     "git": {"Bash", "Read"},
+    # Iterate workflow phases (TDD)
+    "test_writing": {"Read", "Glob", "Grep", "Edit", "Write", "Bash", "Task"},
+    "test": {"Read", "Glob", "Grep", "Bash", "Task"},
+    "coverage": {"Read", "Glob", "Grep", "Edit", "Write", "Bash", "Task"},
     "": set(),  # No phase = no restrictions
 }
 
 # Tools always allowed regardless of phase
 ALWAYS_ALLOWED = {"TodoWrite", "AskUserQuestion"}
+
+
+def check_phase_banner(tool_name: str, state: dict) -> dict | None:
+    """Check if phase banner has been shown before allowing work tools (SAFE.5).
+    
+    Args:
+        tool_name: The tool being invoked
+        state: Current session state
+        
+    Returns:
+        None if tool is allowed, or a block dict if banner not shown
+    """
+    # Always-allowed tools bypass banner check
+    if tool_name in ALWAYS_ALLOWED:
+        return None
+    
+    # No workflow active = no banner required
+    if not state.get("workflow_invoked"):
+        return None
+    
+    # Banner already shown = allow
+    if state.get("phase_banner_shown"):
+        return None
+    
+    # Banner not shown - block work tools
+    phase = state.get("phase") or state.get("iterate_phase") or "unknown"
+    return block(
+        f"[BLOCKED] BANNER REQUIRED before work.\n\n"
+        f"Current phase: {phase}\n\n"
+        f"REQUIRED: Output phase banner before using {tool_name}:\n"
+        f"```\n"
+        f"[ITERATE] ═══════════════════════════════════════════════════════════════\n"
+        f"  Phase: {phase.upper()} | Iteration: N/MAX\n"
+        f"  Task: <brief description>\n"
+        f"═══════════════════════════════════════════════════════════════════════\n"
+        f"```"
+    )
+
+# Orchestrator restrictions - when workflow_active, orchestrator cannot use these
+# Must spawn subagents instead
+ORCHESTRATOR_BLOCKED_TOOLS = {
+    # Direct file editing
+    "Edit", "Write", "NotebookEdit",
+    # Serena edit tools
+    "mcp__plugin_serena_serena__replace_content",
+    "mcp__plugin_serena_serena__create_text_file",
+    "mcp__plugin_serena_serena__replace_symbol_body",
+    "mcp__plugin_serena_serena__insert_after_symbol",
+    "mcp__plugin_serena_serena__insert_before_symbol",
+    "mcp__filesystem__write_file",
+    "mcp__filesystem__edit_file",
+}
 
 # Thresholds
 MAX_DIRECT_SEARCHES = 5  # After this, must use scripts
@@ -340,6 +403,7 @@ def get_tool_category(tool_name: str) -> str | None:
             return category
     return None
 
+
 def check_autopilot(state: dict) -> dict | None:
     """Autopilot mode bypasses all enforcement."""
     autopilot = state.get("autopilot", {})
@@ -347,17 +411,91 @@ def check_autopilot(state: dict) -> dict | None:
         return allow("[AUTOPILOT] Auto-approved")
     return None
 
+def _extract_output_path(command: str) -> str:
+    """Extract the output path from a shell command, ignoring heredoc content.
+
+    For 'cat > /path/file << EOF ... EOF', returns '/path/file'
+    For 'cp src dst', returns 'dst'
+    For heredocs, stops at << to avoid checking content.
+    """
+    # Remove heredoc content (everything after <<)
+    heredoc_match = re.search(r'<<\s*[\'"]?\w+[\'"]?', command)
+    if heredoc_match:
+        command = command[:heredoc_match.start()]
+
+    # Look for redirect targets: > /path or >> /path
+    redirect_match = re.search(r'>+\s*([^\s|&;]+)', command)
+    if redirect_match:
+        return redirect_match.group(1)
+
+    # Look for cp/mv destination (last argument)
+    cp_mv_match = re.search(r'\b(cp|mv)\s+.*\s+([^\s|&;]+)\s*$', command)
+    if cp_mv_match:
+        return cp_mv_match.group(2)
+
+    return command
+
+
+def check_workflow_lock(tool_name: str, tool_input: dict, state: dict) -> dict | None:
+    """Block escape from active workflow.
+
+    When workflow_invoked is True, agent must stay within the workflow.
+    Only workflow management commands can modify workflow state.
+    """
+    tool_input, state = _validate_inputs(tool_input=tool_input, state=state)
+
+    if not state.get("workflow_invoked"):
+        return None
+
+    workflow_mode = state.get("mode", "iterate")
+    current_phase = state.get("phase", "unknown")
+
+    # Always allow workflow management
+    if tool_name == "Bash" and tool_input:
+        command = tool_input.get("command", "")
+        # Allow workflow.py commands
+        if "workflow.py" in command:
+            return None
+
+    # Always allow these tools in any workflow
+    WORKFLOW_ALWAYS_ALLOWED = {
+        "TodoWrite",       # Task tracking
+        "AskUserQuestion", # User interaction
+        "Read",            # Reading files
+        "Glob",            # Finding files
+        "Grep",            # Searching
+    }
+
+    if tool_name in WORKFLOW_ALWAYS_ALLOWED:
+        return None
+
+    # If no phase is set, block and require phase initialization
+    if not current_phase or current_phase == "unknown":
+        return block(
+            f"[WORKFLOW LOCK] Workflow '{workflow_mode}' active but no phase set.\n\n"
+            "REQUIRED: Initialize or check workflow status:\n"
+            "  python3 ~/.../workflow.py status\n"
+            "  python3 ~/.../workflow.py iterate\n\n"
+            "To exit workflow: python3 ~/.../workflow.py stop"
+        )
+
+    # Workflow is active with valid phase - let phase_restrictions handle specifics
+    return None
+
+
 def check_phase_restrictions(tool_name: str, state: dict, tool_input: dict = None) -> dict | None:
     """Enforce phase-specific tool restrictions."""
     tool_input, state = _validate_inputs(tool_input=tool_input, state=state)
-    
+
     # FIRST: State file protection (always enforced, regardless of phase)
     # Only block WRITES to state files, allow reads (ls, cat, grep, etc.)
     if tool_name == "Bash" and tool_input:
         command = tool_input.get("command", "").strip()
         # Normalize to prevent obfuscation bypasses like .sta""te or $'.state'
         normalized_cmd = _normalize_shell_command(command)
-        if '.state' in normalized_cmd or 'session.json' in normalized_cmd:
+        # Extract just the output path, not heredoc content
+        output_path = _extract_output_path(normalized_cmd)
+        if '.state' in output_path or 'session.json' in output_path:
             # Block write operations
             write_patterns = [
                 r'\brm\s+',  # rm
@@ -463,11 +601,18 @@ def check_phase_restrictions(tool_name: str, state: dict, tool_input: dict = Non
         if NEW_MODULES_AVAILABLE:
             allowed, reason = phase_check_tool_allowed(tool_name, phase)
             if not allowed:
+                log_event("PHASE_BLOCK", f"{phase}/{tool_name}: {reason}")
                 return block(f"[PHASE: {phase}] {reason}")
         else:
             # Fallback to inline check
             tool_category = get_tool_category(tool_name)
             allowed_categories = PHASE_ALLOWED_CATEGORIES.get(phase, set())
+
+            # FAIL-OPEN: If phase is unknown and categories are empty, allow with warning
+            # This prevents lockout from misconfigured or new phases
+            if not allowed_categories and phase:
+                log_event("PHASE_UNKNOWN", f"Unknown phase '{phase}', allowing {tool_name}")
+                return None  # Fail open - unknown phase allows all tools
 
             # Allow if tool name matches OR category matches
             if (tool_name not in allowed_tools and
@@ -674,6 +819,46 @@ def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dic
             save_state(state)
 
     return None
+
+def check_orchestrator_restrictions(tool_name: str, tool_input: dict, state: dict) -> dict | None:
+    """Block implementation tools when orchestrator is in workflow mode.
+    
+    The orchestrator should spawn subagents for implementation work,
+    not do it directly. This enforces that pattern.
+    """
+    tool_input, state = _validate_inputs(tool_input=tool_input, state=state)
+    
+    # Only enforce when workflow is active
+    if not state.get("workflow_invoked"):
+        return None
+    
+    # Allow during recovery mode
+    try:
+        from lib.recovery_mode import is_recovery_mode
+        if is_recovery_mode():
+            return None
+    except ImportError:
+        pass
+    
+    # Check if tool is blocked for orchestrator
+    if tool_name in ORCHESTRATOR_BLOCKED_TOOLS:
+        return block(
+            f"[ORCHESTRATOR] {tool_name} blocked - spawn a subagent instead.\n\n"
+            f"As orchestrator, you manage the queue and spawn agents.\n"
+            f"You don't implement directly.\n\n"
+            f"REQUIRED: Spawn agents IN PARALLEL for task items:\n"
+            f"  - One Task call per queue item (up to max_parallel config)\n"
+            f"  - Send multiple Task calls in a SINGLE message\n"
+            f"  - Monitor queue progress, spawn more as agents complete\n\n"
+            f"Example (parallel spawn):\n"
+            f"  [Task(subagent_type='agent-swarm:implementer', prompt='Task 1...'),\n"
+            f"   Task(subagent_type='agent-swarm:implementer', prompt='Task 2...'),\n"
+            f"   Task(subagent_type='agent-swarm:implementer', prompt='Task 3...')]\n\n"
+            f"Allowed tools: Task, TodoWrite, AskUserQuestion, Read, Glob, Grep, Skill"
+        )
+    
+    return None
+
 
 def check_scope_discipline(tool_name: str, tool_input: dict, state: dict) -> dict | None:
     """Prevent off-task exploration."""
@@ -989,9 +1174,6 @@ def check_git_approval_layers(tool_name: str, tool_input: dict, state: dict, mes
 
     Orchestrator mode: Skips Layer 2 & 3 for workflow-initiated commits
     """
-    # TEMPORARY: Disable approval check for iterate workflow debugging
-    return None
-
     if tool_name != "Bash":
         return None
 
@@ -1661,10 +1843,9 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
                 new_classification = match.group(1)
                 # Allow classification to update (user can change from RESEARCH to TRIVIAL, etc.)
                 if state.get("classification_type") != new_classification:
-                    # Classification changed - reset workflow tracking
+                    # Classification changed - update tracking (preserve workflow state)
                     state["classification_given"] = True
                     state["classification_type"] = new_classification
-                    state["workflow_invoked"] = False  # May not need workflow for new task type
                     save_state(state)
                 elif not state.get("classification_given"):
                     # First classification
@@ -1736,8 +1917,13 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
 
     # Block Bash in CONVERSATION/RESEARCH (except gh_wrapper)
     # Note: workflow.py commands are handled by early exit at function start
+    # Also check phase - if we're in a valid iterate phase, allow Bash
+    current_phase = state.get("phase") or state.get("iterate_phase") or ""
+    bash_allowed_phases = {"test_writing", "test", "coverage", "implement", "debug", "git"}
+
     if tool_name == "Bash" and classification in ("CONVERSATION", "RESEARCH", None):
-        if not workflow_invoked:
+        # Allow if workflow is active OR we're in a phase that allows Bash
+        if not workflow_invoked and current_phase not in bash_allowed_phases:
             command = tool_input.get("command", "")
             # Allow gh_wrapper calls
             if "gh_wrapper.py" not in command:
@@ -1865,6 +2051,29 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
     return None
 
 
+
+def check_max_parallel_agents(tool_name: str, tool_input: dict, state: dict) -> dict | None:
+    """Enforce max parallel agents limit on Task spawning.
+    
+    Tracks active agents via SubagentStart/Stop hooks.
+    Blocks Task spawn if at or above max_parallel limit.
+    """
+    if tool_name != "Task":
+        return None
+    
+    # Get config - default to 1 (serialized) until parallelism infra ready
+    max_parallel = state.get("max_parallel_agents", 1)
+    active_agents = state.get("active_agents", 0)
+    
+    if active_agents >= max_parallel:
+        return block(
+            f"[PARALLEL LIMIT] {active_agents}/{max_parallel} agents active. "
+            f"Wait for completion or increase max_parallel_agents in session.json"
+        )
+    
+    return None
+
+
 def check_agent_spawning_enforcement(tool_name: str, tool_input: dict, state: dict, input_data: dict) -> dict | None:
     """Enforce agent spawning when multiple pending tasks exist.
 
@@ -1933,9 +2142,27 @@ def main():
         print(json.dumps(allow()))
         return
 
+    # LOGGING: Track hook execution for debugging subagent enforcement
+    HOOK_LOG = STATE_DIR / "hook_executions.log"
+    session_id = input_data.get("sessionId", "unknown")[:8]
+    agent_id = input_data.get("agentId", "main")[:8] if input_data.get("agentId") else "main"
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input", {})
     messages = input_data.get("messages", [])
+
+    # Log hook execution to verify subagent enforcement
+    try:
+        with open(HOOK_LOG, "a") as f:
+            from datetime import datetime
+            phase = "?"
+            try:
+                state_data = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
+                phase = state_data.get("phase") or state_data.get("iterate_phase") or "none"
+            except:
+                pass
+            f.write(f"{datetime.now().isoformat()} | session={session_id} agent={agent_id} | {tool_name} | phase={phase}\n")
+    except:
+        pass  # Don't fail on logging errors
 
     # Load session state
     state = load_json(STATE_FILE)
@@ -1956,6 +2183,32 @@ def main():
                     log_event("COUNTER_RESET", "New user turn detected, edits counter reset")
                     save_state(state)
                 break
+
+    # SAFE.6: Track tool calls and display queue status periodically
+    QUEUE_DISPLAY_INTERVAL = 10  # Show queue every N tool calls
+    tool_call_count = state.get("tool_call_count", 0) + 1
+    state["tool_call_count"] = tool_call_count
+
+    # SAFE.6.3: Check for phase change
+    current_phase = state.get("phase") or state.get("iterate_phase") or ""
+    last_displayed_phase = state.get("last_displayed_phase", "")
+    phase_changed = current_phase and current_phase != last_displayed_phase
+
+    # SAFE.6.2: Trigger on interval OR phase change
+    should_display_queue = (
+        state.get("workflow_invoked", False) and
+        (tool_call_count % QUEUE_DISPLAY_INTERVAL == 0 or phase_changed)
+    )
+
+    if should_display_queue:
+        queue_status = show_queue_status()
+        log_event("QUEUE_STATUS", f"Call #{tool_call_count}, phase={current_phase}")
+        state["last_displayed_phase"] = current_phase
+        # Write to stderr so it appears but doesn't corrupt JSON output
+        import sys as _sys
+        print(f"\n{queue_status}\n", file=_sys.stderr)
+
+    save_state(state)
 
     # Check autopilot first
     result = check_autopilot(state)
@@ -1980,6 +2233,8 @@ def main():
     # Run all enforcement checks
     checks = [
         check_workflow_compliance(tool_name, tool_input, state, messages),
+        check_orchestrator_restrictions(tool_name, tool_input, state),  # Block Edit/Write for orchestrator
+        check_workflow_lock(tool_name, tool_input, state),  # Prevent escape from active workflow
         check_phase_restrictions(tool_name, state, tool_input),
         check_checkpoint_approval(tool_name, tool_input, state),
         check_verify_required(tool_name, tool_input, state),
@@ -1989,6 +2244,7 @@ def main():
         check_smart_tool_usage(tool_name, tool_input, state),
         check_token_efficiency(tool_name, tool_input, state),
         check_scope_discipline(tool_name, tool_input, state),
+        check_max_parallel_agents(tool_name, tool_input, state),  # WORKFLOW.8: Enforce max parallel agents
         check_agent_spawning_enforcement(tool_name, tool_input, state, input_data),  # Enforce agent spawning for parallel work
         check_git_safety(tool_name, tool_input, state),
         check_git_approval_layers(tool_name, tool_input, state, messages),  # 3-layer approval
