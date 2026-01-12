@@ -6,10 +6,15 @@ Usage:
     python3 batch_search.py pattern1 pattern2 pattern3 [--path /dir]
 """
 
-import sys
 import argparse
-sys.path.insert(0, '/home/fearsidhe/.claude/plugins/agent-swarm/lib')
-from mcp_bridge import native_grep
+import sys
+from pathlib import Path
+
+# Add lib directory to path (works for any user)
+lib_path = Path(__file__).parent.parent
+sys.path.insert(0, str(lib_path))
+
+from mcp_bridge import native_grep  # noqa: E402
 
 def main():
     parser = argparse.ArgumentParser(description='Batch search multiple patterns')
