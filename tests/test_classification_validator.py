@@ -12,7 +12,7 @@ class TestValidateClassification:
         valid, reason = validate_classification(
             claimed="SIMPLE",
             task="Fix typo in config file",
-            state={"files_edited": {"config.py"}}
+            state={"files_edited_this_session": ["config.py"]}
         )
         assert valid is True
         assert reason == "OK"
@@ -22,7 +22,7 @@ class TestValidateClassification:
         valid, reason = validate_classification(
             claimed="SIMPLE",
             task="Update configuration",
-            state={"files_edited": {"config.py", "utils.py", "main.py"}}
+            state={"files_edited_this_session": ["config.py", "utils.py", "main.py"]}
         )
         assert valid is False
         assert "SIMPLE allows 1 file, edited 3" in reason
@@ -33,13 +33,13 @@ class TestValidateClassification:
         valid, reason = validate_classification(
             claimed="SIMPLE",
             task="Research issue",
-            state={"files_edited": set()}
+            state={"files_edited_this_session": []}
         )
         assert valid is True
         assert reason == "OK"
 
     def test_simple_missing_files_key_valid(self):
-        """SIMPLE classification with missing files_edited key should be valid."""
+        """SIMPLE classification with missing files_edited_this_session key should be valid."""
         valid, reason = validate_classification(
             claimed="SIMPLE",
             task="Read code",
@@ -65,7 +65,7 @@ class TestValidateClassification:
         valid, reason = validate_classification(
             claimed="SIMPLE",
             task=f"Let's {keyword} the module",
-            state={"files_edited": {"module.py"}}
+            state={"files_edited_this_session": ["module.py"]}
         )
         assert valid is False
         assert f"'{keyword}' requires COMPLEX classification" in reason
@@ -75,7 +75,7 @@ class TestValidateClassification:
         valid, reason = validate_classification(
             claimed="SIMPLE",
             task="REFACTOR the utility functions",
-            state={"files_edited": {"utils.py"}}
+            state={"files_edited_this_session": ["utils.py"]}
         )
         assert valid is False
         assert "'refactor' requires COMPLEX classification" in reason
@@ -85,7 +85,7 @@ class TestValidateClassification:
         valid, reason = validate_classification(
             claimed="COMPLEX",
             task="Refactor authentication system",
-            state={"files_edited": {"auth.py", "user.py", "session.py"}}
+            state={"files_edited_this_session": ["auth.py", "user.py", "session.py"]}
         )
         assert valid is True
         assert reason == "OK"
@@ -125,7 +125,7 @@ class TestValidateClassification:
         valid, reason = validate_classification(
             claimed="SIMPLE",
             task="",
-            state={"files_edited": {"file.py"}}
+            state={"files_edited_this_session": ["file.py"]}
         )
         assert valid is True
         assert reason == "OK"
@@ -135,7 +135,7 @@ class TestValidateClassification:
         valid, reason = validate_classification(
             claimed="SIMPLE",
             task="Refactoring utility module",
-            state={"files_edited": {"utils.py"}}
+            state={"files_edited_this_session": ["utils.py"]}
         )
         assert valid is False
         assert "'refactor' requires COMPLEX classification" in reason

@@ -5,7 +5,7 @@ upon when they correspond to the current pushed state.
 """
 
 import json
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, replace
 from pathlib import Path
 from typing import Optional
 
@@ -13,7 +13,7 @@ STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
 SESSION_FILE = STATE_DIR / "session.json"
 
 
-@dataclass
+@dataclass(frozen=True)
 class ReviewState:
     """State tracking for review gate."""
     last_pushed_sha: Optional[str] = None
@@ -65,9 +65,8 @@ def on_push(sha: str) -> None:
         sha: The git SHA that was just pushed
     """
     state = load_review_state()
-    state.last_pushed_sha = sha
-    state.review_pending = True
-    save_review_state(state)
+    new_state = replace(state, last_pushed_sha=sha, review_pending=True)
+    save_review_state(new_state)
 
 
 def check_review_allowed() -> tuple[bool, str]:
@@ -102,6 +101,5 @@ def on_review_complete(sha: str) -> None:
         sha: The git SHA that was reviewed
     """
     state = load_review_state()
-    state.last_reviewed_sha = sha
-    state.review_pending = False
-    save_review_state(state)
+    new_state = replace(state, last_reviewed_sha=sha, review_pending=False)
+    save_review_state(new_state)

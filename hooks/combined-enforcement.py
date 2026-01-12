@@ -820,13 +820,21 @@ def check_token_efficiency(tool_name: str, tool_input: dict, state: dict) -> dic
 
     return None
 
-def check_orchestrator_restrictions(tool_name: str, tool_input: dict, state: dict) -> dict | None:
+def check_orchestrator_restrictions(tool_name: str, tool_input: dict, state: dict, input_data: dict = None) -> dict | None:
     """Block implementation tools when orchestrator is in workflow mode.
     
     The orchestrator should spawn subagents for implementation work,
     not do it directly. This enforces that pattern.
+    
+    Note: Subagents (identified by agentId) are exempt - they ARE the workers.
     """
     tool_input, state = _validate_inputs(tool_input=tool_input, state=state)
+    
+    # Subagents are exempt - they're the workers, not orchestrators
+    if input_data:
+        agent_id = input_data.get("agentId")
+        if agent_id and agent_id != "main":
+            return None  # Subagent, not orchestrator
     
     # Only enforce when workflow is active
     if not state.get("workflow_invoked"):
@@ -1463,20 +1471,7 @@ def check_greptile_gate(tool_name: str, tool_input: dict, state: dict, messages:
 
     command = tool_input.get("command", "")
 
-    # Track pushes with review_gate (P4 module)
-    if NEW_MODULES_AVAILABLE and "git push" in command:
-        # Get current HEAD SHA
-        import subprocess
-        try:
-            result = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0:
-                sha = result.stdout.strip()
-                on_push(sha)
-        except Exception:
-            pass
+    # NOTE: on_push tracking moved to post_tool_use.py (per Greptile P1 - must run after push succeeds)
 
     if "git commit" not in command:
         return None
@@ -2233,7 +2228,7 @@ def main():
     # Run all enforcement checks
     checks = [
         check_workflow_compliance(tool_name, tool_input, state, messages),
-        check_orchestrator_restrictions(tool_name, tool_input, state),  # Block Edit/Write for orchestrator
+        check_orchestrator_restrictions(tool_name, tool_input, state, input_data),  # Block Edit/Write for orchestrator
         check_workflow_lock(tool_name, tool_input, state),  # Prevent escape from active workflow
         check_phase_restrictions(tool_name, state, tool_input),
         check_checkpoint_approval(tool_name, tool_input, state),

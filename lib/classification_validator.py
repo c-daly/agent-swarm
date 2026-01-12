@@ -20,7 +20,9 @@ def validate_classification(claimed: str, task: str, state: dict) -> tuple[bool,
     """
     # SIMPLE can't have multiple files
     if claimed == "SIMPLE":
-        files_edited = len(state.get("files_edited", set()))
+        # Use files_edited_this_session (list) which is what production code populates
+        files_list = state.get("files_edited_this_session", [])
+        files_edited = len(files_list)
         if files_edited > 1:
             return False, f"SIMPLE allows 1 file, edited {files_edited}. Use /iterate or /orchestrate."
 

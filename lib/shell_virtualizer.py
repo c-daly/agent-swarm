@@ -1,7 +1,7 @@
 """Shell virtualizer to redirect common shell commands to appropriate tools."""
 
 import re
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Any
 
 # Tool categories for suggestions - emphasize batch scripting for efficiency
 TOOL_CATEGORIES = {
@@ -43,7 +43,7 @@ SAFE_SHELL = [
 ]
 
 
-def categorize_command(command: str) -> Dict[str, any]:
+def categorize_command(command: str) -> Dict[str, Any]:
     """
     Categorize a shell command and determine if it should be blocked.
 

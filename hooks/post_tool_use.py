@@ -10,9 +10,15 @@ import sys
 import json
 from pathlib import Path
 
-# Import verification gates
+# Import verification gates and review gate
 sys.path.insert(0, str(Path.home() / ".claude/plugins/agent-swarm/hooks"))
+sys.path.insert(0, str(Path.home() / ".claude/plugins/agent-swarm/lib"))
 from verification_gates import on_bash_complete
+try:
+    from review_gate import on_push
+    REVIEW_GATE_AVAILABLE = True
+except ImportError:
+    REVIEW_GATE_AVAILABLE = False
 
 
 def main():
@@ -54,10 +60,24 @@ def main():
     # Clean up git_approval.flag after successful git commit/push (one-time use)
     if exit_code == 0:
         import re
+        import subprocess
         if re.search(r'\bgit\s+(commit|push)\b', command):
             approval_flag = Path.home() / ".claude/plugins/agent-swarm/.state/git_approval.flag"
             if approval_flag.exists():
                 approval_flag.unlink()
+
+        # Track successful pushes with review_gate (moved from PreToolUse per Greptile P1)
+        if REVIEW_GATE_AVAILABLE and re.search(r'\bgit\s+push\b', command):
+            try:
+                result = subprocess.run(
+                    ["git", "rev-parse", "HEAD"],
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0:
+                    sha = result.stdout.strip()
+                    on_push(sha)
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":  # pragma: no cover
