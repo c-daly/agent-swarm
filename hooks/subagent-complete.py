@@ -36,6 +36,9 @@ def main():
     # Extract info
     session_id = input_data.get("sessionId", "unknown")[:8]
     agent_type = input_data.get("agentType", "unknown")
+    agent_id = f"{agent_type}-{session_id}"
+    result = input_data.get("result", {})
+    success = result.get("exitCode") == 0 if isinstance(result, dict) else False
 
     # Get current phase
     state = load_state()
@@ -43,6 +46,15 @@ def main():
 
     # Log the subagent completion
     log_subagent_stop(agent_type, session_id, phase)
+    
+    # Add logging via subagent_logger
+    try:
+        sys.path.insert(0, str(Path.home() / ".claude/plugins/agent-swarm/lib"))
+        from subagent_logger import log_completion
+        summary = result.get("summary", "") if isinstance(result, dict) else str(result)
+        log_completion(agent_id, phase, success, summary[:100])
+    except Exception as e:
+        pass  # Logging failure should not block completion
     
     # Decrement active agent count
     state["active_agents"] = max(0, state.get("active_agents", 0) - 1)

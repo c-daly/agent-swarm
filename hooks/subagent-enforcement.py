@@ -36,6 +36,8 @@ def main():
     # Extract info
     session_id = input_data.get("sessionId", "unknown")[:8]
     agent_type = input_data.get("agentType", "unknown")
+    agent_id = f"{agent_type}-{session_id}"
+    prompt = input_data.get("prompt", "")
 
     # Get current phase
     state = load_state()
@@ -43,6 +45,14 @@ def main():
 
     # Log the subagent spawn
     log_subagent_start(agent_type, session_id, phase)
+    
+    # Add logging via subagent_logger
+    try:
+        sys.path.insert(0, str(Path.home() / ".claude/plugins/agent-swarm/lib"))
+        from subagent_logger import log_subagent_event
+        log_subagent_event(agent_id, "start", {"task": prompt[:100], "phase": phase})
+    except Exception as e:
+        pass  # Logging failure should not block subagent creation
     
     # Increment active agent count
     state["active_agents"] = state.get("active_agents", 0) + 1
