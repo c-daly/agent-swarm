@@ -52,9 +52,6 @@ def main():
     except Exception as e:
         pass  # Logging failure should not block completion
     
-    # Decrement active agent count
-    state["active_agents"] = max(0, state.get("active_agents", 0) - 1)
-    save_state(state)
 
     result = {
         "hookSpecificOutput": {

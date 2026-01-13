@@ -41,24 +41,15 @@ def main():
     agent_id = f"{agent_type}-{session_id}"
     prompt = input_data.get("prompt", "")
 
-    # Get current phase
-    state = load_state()
+    # Get current phase from parent state
+    state = load_state(agent_id)
     phase = state.get("phase") or state.get("iterate_phase") or "none"
+
+    # Initialize subagent's isolated state with its phase
+    save_state({"phase": phase}, agent_id=agent_id)
 
     # Log the subagent spawn
     log_subagent_start(agent_type, session_id, phase)
-    
-    # Add logging via subagent_logger
-    try:
-        sys.path.insert(0, str(Path.home() / ".claude/plugins/agent-swarm/lib"))
-        from subagent_logger import log_subagent_event
-        log_subagent_event(agent_id, "start", {"task": prompt[:100], "phase": phase})
-    except Exception as e:
-        pass  # Logging failure should not block subagent creation
-    
-    # Increment active agent count
-    state["active_agents"] = state.get("active_agents", 0) + 1
-    save_state(state)
 
     # Build phase restrictions to inject
     phase_restrictions = ""
@@ -75,12 +66,20 @@ def main():
                             blocked.append(tool)
                 if blocked:
                     phase_restrictions = f"""
-## PHASE RESTRICTIONS (ENFORCED)
-Current phase: {phase}
-**BLOCKED TOOLS - DO NOT USE:**
+## SUBAGENT WORKFLOW - YOUR ID: {agent_id}
+
+**Current phase:** {phase}
+**Sequence:** test_writing → implement → test → coverage → review
+
+### To advance YOUR phase (NOT workflow.py - that's for orchestrator):
+```bash
+python3 -c "import sys; sys.path.insert(0, '/home/fearsidhe/.claude/plugins/agent-swarm/lib'); from agent_state import save_state; save_state({{'phase': 'NEXT_PHASE'}}, agent_id='{agent_id}')"
+```
+
+**BLOCKED TOOLS in {phase} phase - DO NOT USE:**
 {chr(10).join(f'- {t}' for t in sorted(set(blocked))[:15])}
 
-If you need a blocked tool, STOP and report to orchestrator.
+When you complete {phase} phase work, advance to next phase, then continue.
 """
         except Exception:
             pass

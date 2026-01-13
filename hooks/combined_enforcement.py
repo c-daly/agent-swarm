@@ -1162,6 +1162,8 @@ def check_git_safety(tool_name: str, tool_input: dict, state: dict) -> dict | No
         "git reset --hard",
         "git clean -fd",
         "git checkout .",  # Discards all changes
+        "git checkout --",  # Discards changes to specific files
+        "git checkout HEAD",  # Discards changes via HEAD reference
     ]
 
     for pattern in dangerous:
@@ -2074,28 +2076,6 @@ def check_workflow_compliance(tool_name: str, tool_input: dict, state: dict, mes
 
 
 
-def check_max_parallel_agents(tool_name: str, tool_input: dict, state: dict) -> dict | None:
-    """Enforce max parallel agents limit on Task spawning.
-    
-    Tracks active agents via SubagentStart/Stop hooks.
-    Blocks Task spawn if at or above max_parallel limit.
-    """
-    if tool_name != "Task":
-        return None
-    
-    # Get config - default to 1 (serialized) until parallelism infra ready
-    max_parallel = state.get("max_parallel_agents", 1)
-    active_agents = state.get("active_agents", 0)
-    
-    if active_agents >= max_parallel:
-        return block(
-            f"[PARALLEL LIMIT] {active_agents}/{max_parallel} agents active. "
-            f"Wait for completion or increase max_parallel_agents in session.json"
-        )
-    
-    return None
-
-
 def check_agent_spawning_enforcement(tool_name: str, tool_input: dict, state: dict, input_data: dict) -> dict | None:
     """Enforce agent spawning when multiple pending tasks exist.
 
@@ -2266,7 +2246,6 @@ def main():
         check_smart_tool_usage(tool_name, tool_input, state),
         check_token_efficiency(tool_name, tool_input, state),
         check_scope_discipline(tool_name, tool_input, state),
-        check_max_parallel_agents(tool_name, tool_input, state),  # WORKFLOW.8: Enforce max parallel agents
         check_agent_spawning_enforcement(tool_name, tool_input, state, input_data),  # Enforce agent spawning for parallel work
         check_git_safety(tool_name, tool_input, state),
         check_git_approval_layers(tool_name, tool_input, state, messages),  # 3-layer approval
