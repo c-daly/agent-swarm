@@ -202,3 +202,70 @@ def get_phase_info(phase: str) -> Optional[Phase]:
         Phase definition or None if not found
     """
     return ITERATE_PHASES.get(phase)
+
+
+def verify_phase_completion(phase: str, cwd: str = ".") -> tuple[bool, str]:
+    """Verify that phase completion requirements are met before advancing.
+    
+    Args:
+        phase: Current phase to verify completion of
+        cwd: Working directory for running commands
+        
+    Returns:
+        (success, message) tuple
+    """
+    import subprocess
+    
+    phase_def = ITERATE_PHASES.get(phase)
+    if not phase_def or not phase_def.requires_verification:
+        return True, ""
+    
+    errors = []
+    
+    if phase == "test":
+        # 1. Syntax check on modified Python files
+        try:
+            result = subprocess.run(
+                ["git", "diff", "--name-only", "--diff-filter=AM", "*.py"],
+                capture_output=True, text=True, cwd=cwd, timeout=10
+            )
+            py_files = [f for f in result.stdout.strip().split("\n") if f.endswith(".py")]
+            
+            for py_file in py_files:
+                compile_result = subprocess.run(
+                    ["python3", "-m", "py_compile", py_file],
+                    capture_output=True, text=True, cwd=cwd, timeout=10
+                )
+                if compile_result.returncode != 0:
+                    errors.append(f"Syntax error in {py_file}: {compile_result.stderr}")
+        except Exception as e:
+            errors.append(f"Syntax check failed: {e}")
+        
+        # 2. Lint check with ruff (if available)
+        try:
+            result = subprocess.run(
+                ["ruff", "check", "--select=E9,F63,F7,F82", "."],  # Critical errors only
+                capture_output=True, text=True, cwd=cwd, timeout=30
+            )
+            if result.returncode != 0 and result.stdout.strip():
+                errors.append(f"Lint errors:\n{result.stdout[:500]}")
+        except FileNotFoundError:
+            pass  # ruff not installed, skip
+        except Exception as e:
+            pass  # Don't block on lint failures
+        
+        # 3. Run tests
+        try:
+            result = subprocess.run(
+                ["python3", "-m", "pytest", "-x", "--tb=short", "-q"],
+                capture_output=True, text=True, cwd=cwd, timeout=120
+            )
+            if result.returncode != 0:
+                errors.append(f"Tests failed:\n{result.stdout[-500:]}")
+        except Exception as e:
+            errors.append(f"Test execution failed: {e}")
+    
+    if errors:
+        return False, "\n".join(errors)
+    
+    return True, "All verification checks passed"
