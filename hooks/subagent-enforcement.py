@@ -41,54 +41,60 @@ def main():
     agent_id = f"{agent_type}-{session_id}"
     prompt = input_data.get("prompt", "")
 
-    # Get current phase from parent state
-    state = load_state(agent_id)
-    phase = state.get("phase") or state.get("iterate_phase") or "none"
-
-    # Initialize subagent's isolated state with its phase
-    save_state({"phase": phase}, agent_id=agent_id)
+    # Initialize subagent with test_writing phase (TDD workflow start)
+    initial_phase = "test_writing"
+    save_state({"phase": initial_phase}, agent_id=agent_id)
 
     # Log the subagent spawn
-    log_subagent_start(agent_type, session_id, phase)
+    log_subagent_start(agent_type, session_id, initial_phase)
 
     # Build phase restrictions to inject
     phase_restrictions = ""
-    if phase and phase != "none":
-        try:
-            sys.path.insert(0, str(Path.home() / ".claude/plugins/agent-swarm/lib"))
-            from phase_model import get_phase_info, TOOL_CATEGORIES
-            phase_info = get_phase_info(phase)
-            if phase_info:
-                blocked = list(phase_info.blocked_tools)
-                for tool, cat in TOOL_CATEGORIES.items():
-                    if cat and cat not in phase_info.allowed_categories:
-                        if tool not in blocked:
-                            blocked.append(tool)
-                if blocked:
-                    phase_restrictions = f"""
+    try:
+        sys.path.insert(0, str(Path.home() / ".claude/plugins/agent-swarm/lib"))
+        from phase_model import get_phase_info, TOOL_CATEGORIES
+        phase_info = get_phase_info(initial_phase)
+        if phase_info:
+            blocked = list(phase_info.blocked_tools)
+            for tool, cat in TOOL_CATEGORIES.items():
+                if cat and cat not in phase_info.allowed_categories:
+                    if tool not in blocked:
+                        blocked.append(tool)
+            if blocked:
+                phase_restrictions = f"""
 ## SUBAGENT WORKFLOW - YOUR ID: {agent_id}
 
-**Current phase:** {phase}
+**Current phase:** {initial_phase}
 **Sequence:** test_writing → implement → test → coverage → review
 
-### To advance YOUR phase (NOT workflow.py - that's for orchestrator):
+### To advance YOUR phase:
 ```bash
-python3 -c "import sys; sys.path.insert(0, '/home/fearsidhe/.claude/plugins/agent-swarm/lib'); from agent_state import save_state; save_state({{'phase': 'NEXT_PHASE'}}, agent_id='{agent_id}')"
+python3 -c "import sys; sys.path.insert(0, '/home/fearsidhe/.claude/plugins/agent-swarm/lib'); from agent_state import save_state; save_state({{'phase': 'implement'}}, agent_id='{agent_id}')"
 ```
 
-**BLOCKED TOOLS in {phase} phase - DO NOT USE:**
+**BLOCKED TOOLS in {initial_phase} phase - DO NOT USE:**
 {chr(10).join(f'- {t}' for t in sorted(set(blocked))[:15])}
 
-When you complete {phase} phase work, advance to next phase, then continue.
+When you complete {initial_phase} phase work, advance to next phase, then continue.
 """
-        except Exception:
-            pass
+    except Exception:
+        pass
+
+    # Build visible banner for user
+    task_summary = prompt[:60] + "..." if len(prompt) > 60 else prompt
+    task_summary = task_summary.replace("\n", " ")
+    
+    banner = f"""
+[ITERATE] ═══════════════════════════════════════════════════════════════
+  Agent: {agent_id[:20]} | Phase: {initial_phase}
+  Task: {task_summary}
+═══════════════════════════════════════════════════════════════════════"""
 
     result = {
         "hookSpecificOutput": {
             "hookEventName": "SubagentStart",
             "additionalContext": phase_restrictions if phase_restrictions else None,
-            "message": f"Subagent {agent_type} started in phase {phase}"
+            "message": banner
         }
     }
 

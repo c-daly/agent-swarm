@@ -33,12 +33,12 @@ def main():
     session_id = input_data.get("session_id", input_data.get("sessionId", "unknown"))[:8]
     agent_type = input_data.get("agent_type", input_data.get("agentType", "unknown"))
     agent_id = f"{agent_type}-{session_id}"
-    result = input_data.get("result", {})
-    success = result.get("exitCode") == 0 if isinstance(result, dict) else False
+    result_data = input_data.get("result", {})
+    success = result_data.get("exitCode") == 0 if isinstance(result_data, dict) else False
 
-    # Get current phase
-    state = load_state()
-    phase = state.get("phase") or state.get("iterate_phase") or "none"
+    # Get current phase from subagent's state
+    state = load_state(agent_id=agent_id)
+    phase = state.get("phase") or "unknown"
 
     # Log the subagent completion
     log_subagent_stop(agent_type, session_id, phase)
@@ -47,16 +47,23 @@ def main():
     try:
         sys.path.insert(0, str(Path.home() / ".claude/plugins/agent-swarm/lib"))
         from subagent_logger import log_completion
-        summary = result.get("summary", "") if isinstance(result, dict) else str(result)
+        summary = result_data.get("summary", "") if isinstance(result_data, dict) else str(result_data)
         log_completion(agent_id, phase, success, summary[:100])
-    except Exception as e:
+    except Exception:
         pass  # Logging failure should not block completion
-    
+
+    # Build visible completion banner
+    status_icon = "✓" if success else "✗"
+    banner = f"""
+[ITERATE] ═══════════════════════════════════════════════════════════════
+  Agent: {agent_id[:20]} | {status_icon} COMPLETE
+  Final Phase: {phase}
+═══════════════════════════════════════════════════════════════════════"""
 
     result = {
         "hookSpecificOutput": {
             "hookEventName": "SubagentStop",
-            "message": f"Subagent {agent_type} completed in phase {phase}"
+            "message": banner
         }
     }
 
