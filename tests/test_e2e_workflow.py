@@ -255,10 +255,8 @@ class TestOrchestratorEnforcement:
         """Subagents (mode != orchestrate) should not be blocked."""
         state_dir, session_file = clean_state
 
-        # Subagent state - no orchestrate mode
+        # Subagent state - isolated state, no iterate mode
         state = {
-            "mode": "iterate-tdd",
-            "iterate_phase": "implement",
             "workflow_invoked": True,
         }
         save_state(state)

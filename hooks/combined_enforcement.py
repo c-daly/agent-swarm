@@ -207,6 +207,7 @@ GIT_TOOLS = {"Bash"}  # git commands via bash
 # Phase restrictions using category names
 PHASE_ALLOWED_CATEGORIES = {
     "intake": {"file_read", "file_search", "code_query", "user_interaction", "episodic_memory"},
+    "orchestrate": {"file_read", "file_search", "code_query", "subagent", "user_interaction", "episodic_memory"},
     "research": {"web_research", "file_read", "subagent", "user_interaction"},
     "explore": {"file_search", "file_read", "code_query", "subagent", "user_interaction"},
     "design": {"file_read", "file_search", "code_query", "subagent", "user_interaction"},
@@ -225,6 +226,7 @@ PHASE_ALLOWED_CATEGORIES = {
 # Legacy phase restrictions (keep for backward compatibility with specific tool checks)
 PHASE_ALLOWED_TOOLS = {
     "intake": {"Read", "Glob", "Grep", "AskUserQuestion"},
+    "orchestrate": {"Read", "Glob", "Grep", "Task", "AskUserQuestion"},
     "research": {"WebSearch", "WebFetch", "Read", "Task"},
     "explore": {"Glob", "Grep", "Read", "Task"},
     "design": {"Read", "Glob", "Grep", "Task", "AskUserQuestion"},
@@ -841,9 +843,11 @@ def check_orchestrator_restrictions(tool_name: str, tool_input: dict, state: dic
     """
     tool_input, state = _validate_inputs(tool_input=tool_input, state=state)
 
-    # Only enforce during orchestrate workflow
-    # Subagents have isolated state and won't have mode='orchestrate'
-    if state.get("mode") != "orchestrate":
+    # Only enforce during orchestrate or iterate workflows
+    # Subagents have isolated state and won't have mode='orchestrate' or 'iterate-*'
+    mode = state.get("mode", "")
+    is_orchestrator = mode == "orchestrate" or mode.startswith("iterate")
+    if not is_orchestrator:
         return None
     
     # Allow during recovery mode

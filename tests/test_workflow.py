@@ -20,12 +20,11 @@ class TestIterateWorkflowAlwaysTDD:
     """
 
     def test_iterate_workflow_uses_tdd_phases(self):
-        """IterateWorkflow should always use TDD phases."""
+        """IterateWorkflow should use orchestrate phase."""
         wf = IterateWorkflow()
 
-        # TDD phases start with test_writing
-        assert wf.PHASES[0] == "test_writing", "First phase must be test_writing"
-        assert "test_writing" in wf.PHASES, "TDD phases must include test_writing"
+        # IterateWorkflow now delegates to orchestrator
+        assert wf.PHASES == ["orchestrate"], "IterateWorkflow should have single orchestrate phase"
 
     def test_iterate_workflow_no_tdd_parameter(self):
         """IterateWorkflow should not accept a tdd parameter.
@@ -160,8 +159,8 @@ class TestPhaseBannerEnforcement:
         state["phase_banner_shown"] = True
         _save_state(state)
 
-        # Transition to next phase
-        Workflow.transition_phase("implement")
+        # Transition to orchestrate phase (only valid phase)
+        Workflow.transition_phase("orchestrate")
 
         state = _load_state()
         assert state.get("phase_banner_shown") is False, \
@@ -173,17 +172,15 @@ class TestPhaseBannerEnforcement:
 
         wf = IterateWorkflow()
 
-        # Simulate banner was shown
-        state = _load_state()
-        state["phase_banner_shown"] = True
-        _save_state(state)
+        # With single-phase workflow, advance_phase returns None (no advancement)
+        # This test now verifies that behavior
+        result = Workflow.advance_phase()
+        assert result is None, "Single-phase workflow should not advance"
 
-        # Advance phase
-        Workflow.advance_phase()
-
+        # Banner flag remains unchanged when no advancement occurs
         state = _load_state()
         assert state.get("phase_banner_shown") is False, \
-            "phase_banner_shown should reset on advance_phase"
+            "phase_banner_shown should remain False when no phase change"
 
     def test_mark_banner_shown_sets_flag(self):
         """SAFE.5.1: mark_banner_shown() should set flag to True."""
