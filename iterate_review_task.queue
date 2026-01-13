@@ -1,0 +1,56 @@
+{
+  "metadata": {
+    "created": "2026-01-13",
+    "source": "Greptile PR #6 review",
+    "total": 3,
+    "done": 0,
+    "verify": 0,
+    "pending": 3,
+    "priority_order": [
+      "CRITICAL",
+      "HIGH",
+      "MEDIUM",
+      "LOW",
+      "DONE"
+    ]
+  },
+  "tasks": [
+    {
+      "id": "G6.1",
+      "task": "Fix cache coherency bug in StateManager.load() - returns cached dict by reference without lock",
+      "status": "pending",
+      "priority": "CRITICAL",
+      "group": "AGENT_STATE",
+      "file": "lib/agent_state.py",
+      "line": "52-65",
+      "fix_options": [
+        "Always acquire lock in load()",
+        "Make load() return deep copy of cache",
+        "Document StateManager is NOT safe for cross-process use"
+      ],
+      "note": "Cross-process staleness: hook processes read stale state, counters/flags can be lost"
+    },
+    {
+      "id": "G6.2",
+      "task": "Fix save_state() aliasing bug - assigns dict to _cache without copying",
+      "status": "pending",
+      "priority": "HIGH",
+      "group": "AGENT_STATE",
+      "file": "lib/agent_state.py",
+      "line": "165-168",
+      "suggested_fix": "mgr._cache = state.copy()  # Defensive copy",
+      "note": "External code holds reference to internal cache, bypassing all locking"
+    },
+    {
+      "id": "G6.3",
+      "task": "Fix import path issue - agent_state import fails in standalone/test contexts",
+      "status": "pending",
+      "priority": "MEDIUM",
+      "group": "RECOVERY_MODE",
+      "file": "lib/recovery_mode.py",
+      "line": "24",
+      "suggested_fix": "Add sys.path.insert(0, str(Path(__file__).parent)) before import",
+      "note": "Works when imported from combined_enforcement.py but fails in tests"
+    }
+  ]
+}

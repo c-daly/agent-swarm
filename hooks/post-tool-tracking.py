@@ -133,8 +133,8 @@ def main():
     try:
         input_data = json.loads(sys.stdin.read())
     except json.JSONDecodeError:
-        # Invalid input, return empty response
-        print(json.dumps({}))
+        # Invalid input, return valid PostToolUse format
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse"}}))
         return
 
     tool_name = input_data.get("tool_name", "")
@@ -148,8 +148,8 @@ def main():
     # Detect signature changes
     detect_signature_change(tool_name, tool_input)
 
-    # PostToolUse hooks don't need to return anything
-    print(json.dumps({}))
+    # PostToolUse hooks must return valid format
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse"}}))
 
 if __name__ == "__main__":
     main()

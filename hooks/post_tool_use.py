@@ -29,6 +29,9 @@ def truncate_task_output(tool_result: dict) -> dict | None:
 
     Returns modified result dict if truncation needed, None otherwise.
     """
+    # Handle case where tool_result is a string instead of dict
+    if isinstance(tool_result, str):
+        return None
     content = tool_result.get("content", "")
     if not isinstance(content, str):
         return None

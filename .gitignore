@@ -3,7 +3,8 @@
 
 # Local settings
 .claude/settings.local.json
-
+.logs
+*.coverage
 # Cache
 __pycache__/
 *.pyc

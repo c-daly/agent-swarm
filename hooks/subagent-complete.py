@@ -29,10 +29,12 @@ def main():
     # Read hook input
     input_data = json.loads(sys.stdin.read())
 
-    # Extract info - note: field names are snake_case per Claude Code API
+    # Extract info - use Claude's agent_id directly, not constructed
     session_id = input_data.get("session_id", input_data.get("sessionId", "unknown"))[:8]
     agent_type = input_data.get("agent_type", input_data.get("agentType", "unknown"))
-    agent_id = f"{agent_type}-{session_id}"
+    # Use Claude's short agent_id (e.g., "aa289d0") not constructed ID
+    claude_agent_id = input_data.get("agent_id", "unknown")
+    agent_id = f"{agent_type}-{claude_agent_id}"
     result_data = input_data.get("result", {})
     success = result_data.get("exitCode") == 0 if isinstance(result_data, dict) else False
 
@@ -67,6 +69,8 @@ def main():
         }
     }
 
+    # Also write to stderr for terminal visibility
+    print(banner, file=sys.stderr)
     print(json.dumps(result))
 
 

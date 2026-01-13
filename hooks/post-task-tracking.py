@@ -221,10 +221,10 @@ def main():
     except Exception as e:
         log_warning(f"Caught exception: {e}")
 
-    # Return message if new plugins found
-    output = {"hookSpecificOutput": {}}
+    # Return valid PostToolUse format
+    output = {"hookSpecificOutput": {"hookEventName": "PostToolUse"}}
     if plugin_msg:
-        output["hookSpecificOutput"]["message"] = f"📦 {plugin_msg}"
+        output["hookSpecificOutput"]["additionalContext"] = f"📦 {plugin_msg}"
 
     print(json.dumps(output))
 
