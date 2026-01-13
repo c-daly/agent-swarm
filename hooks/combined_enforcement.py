@@ -2158,7 +2158,7 @@ def main():
             from datetime import datetime
             phase = "?"
             try:
-                state_data = load_state()
+                state_data = load_state(agent_id)
                 phase = state_data.get("phase") or state_data.get("iterate_phase") or "none"
             except:
                 pass
@@ -2167,7 +2167,7 @@ def main():
         pass  # Don't fail on logging errors
 
     # Load session state
-    state = load_state()
+    state = load_state(agent_id)
 
     # Detect new user turn (reset edits_this_response counter)
     # Check if there's a user message AFTER the last tool execution

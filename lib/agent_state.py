@@ -24,6 +24,7 @@ class StateManager:
     def __init__(self, agent_id: str = "main"):
         self.agent_id = agent_id
         self._cache: Optional[dict] = None
+        self._cache_mtime: Optional[float] = None
         self._dirty = False
 
     @classmethod
@@ -51,18 +52,33 @@ class StateManager:
         return self.state_file.parent / (self.state_file.name + ".lock")
 
     def load(self) -> dict:
-        """Load state, using cache if available."""
+        """Load state, checking mtime to detect external updates."""
+        # Check if cache is stale by comparing file mtime
+        if self._cache is not None and self.state_file.exists():
+            try:
+                current_mtime = self.state_file.stat().st_mtime
+                if not hasattr(self, '_cache_mtime') or self._cache_mtime != current_mtime:
+                    # File has been modified externally, invalidate cache
+                    self._cache = None
+            except OSError:
+                # If we can't stat the file, invalidate to be safe
+                self._cache = None
+        
         if self._cache is not None:
             return copy.deepcopy(self._cache)
+        
         lock = FileLock(str(self.lock_file))
         with lock:
             if not self.state_file.exists():
                 self._cache = {}
+                self._cache_mtime = None
             else:
                 try:
                     self._cache = json.loads(self.state_file.read_text())
+                    self._cache_mtime = self.state_file.stat().st_mtime
                 except (json.JSONDecodeError, OSError):
                     self._cache = {}
+                    self._cache_mtime = None
         return copy.deepcopy(self._cache)
 
     def save(self) -> None:
@@ -73,6 +89,11 @@ class StateManager:
         lock = FileLock(str(self.lock_file))
         with lock:
             self.state_file.write_text(json.dumps(self._cache, indent=2))
+            # Update mtime cache after write
+            try:
+                self._cache_mtime = self.state_file.stat().st_mtime
+            except OSError:
+                self._cache_mtime = None
         self._dirty = False
 
     def get_value(self, key: str, default: Any = None) -> Any:
@@ -103,6 +124,11 @@ class StateManager:
             updated = updater(state)
             self.state_file.write_text(json.dumps(updated, indent=2))
             self._cache = updated
+            # Update mtime cache after write
+            try:
+                self._cache_mtime = self.state_file.stat().st_mtime
+            except OSError:
+                self._cache_mtime = None
             self._dirty = False
             return updated
 

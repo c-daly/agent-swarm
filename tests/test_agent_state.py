@@ -294,3 +294,37 @@ class TestStateManager:
         external_dict["key"] = "MUTATED"
         mgr = agent_state.StateManager.get("g62-test")
         assert mgr._cache["key"] == "original", "save_state() stored reference"
+
+    def test_cross_process_cache_staleness(self, temp_state_dir):
+        """G6.1 CRITICAL: Cache staleness when file updated externally.
+        
+        Scenario: 
+        1. Process A gets StateManager, loads state (counter=0)
+        2. Process B directly writes file (counter=5) 
+        3. Process A reads again - should see counter=5, not cached 0
+        
+        Bug: StateManager.load() returns cached value without checking
+        if file was modified externally (by another process/direct write).
+        """
+        # Step 1: Process A loads initial state
+        mgr = agent_state.StateManager.get("stale-test")
+        mgr.set_value("counter", 0)
+        assert mgr.get_value("counter") == 0
+        
+        # Step 2: Simulate external process updating the file directly
+        # (bypasses this StateManager instance's cache)
+        import time
+        time.sleep(0.01)  # Ensure mtime changes (some filesystems have coarse granularity)
+        state_file = temp_state_dir / "session.stale-test.json"
+        state_file.write_text('{"counter": 5, "external_update": true}')
+        
+        # Step 3: Process A reads again - BUG: returns stale cached value
+        stale_counter = mgr.get_value("counter")
+        external_flag = mgr.get_value("external_update")
+        
+        # Without fix: load() returns cached {"counter": 0}
+        # Expected: load() should re-read file and return {"counter": 5}
+        assert stale_counter == 5, \
+            f"Expected counter=5 after external update, got {stale_counter} (cache not invalidated)"
+        assert external_flag is True, \
+            f"Expected external_update=True, got {external_flag} (missed external changes)"
