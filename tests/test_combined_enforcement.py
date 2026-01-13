@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for combined-enforcement.py hook.
+"""Tests for combined_enforcement.py hook.
 
 These tests verify the enforcement hook handles edge cases correctly.
 """
@@ -13,7 +13,7 @@ from pathlib import Path
 hooks_dir = Path(__file__).parent.parent / "hooks"
 spec = importlib.util.spec_from_file_location(
     "combined_enforcement",
-    hooks_dir / "combined-enforcement.py"
+    hooks_dir / "combined_enforcement.py"
 )
 combined_enforcement = importlib.util.module_from_spec(spec)
 sys.modules["combined_enforcement"] = combined_enforcement

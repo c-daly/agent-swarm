@@ -209,7 +209,7 @@ class TestPhaseBannerEnforcement:
 
 
 class TestPhaseBannerHook:
-    """Tests for check_phase_banner() in combined-enforcement.py."""
+    """Tests for check_phase_banner() in combined_enforcement.py."""
 
     def setup_method(self):
         """Setup test state."""

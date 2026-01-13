@@ -10,10 +10,10 @@ from importlib import import_module
 
 
 def get_normalize_function():
-    """Import the normalization function from combined-enforcement."""
+    """Import the normalization function from combined_enforcement."""
     # Import as module to avoid filename issues
     spec = __import__("importlib.util", fromlist=["spec_from_file_location", "module_from_spec"])
-    module_path = Path(__file__).parent.parent / "hooks" / "combined-enforcement.py"
+    module_path = Path(__file__).parent.parent / "hooks" / "combined_enforcement.py"
     spec = spec.spec_from_file_location("combined_enforcement", module_path)
     module = spec.loader.create_module(spec)
     if module is None:

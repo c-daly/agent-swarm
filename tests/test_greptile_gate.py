@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Tests for Greptile comment check gate in combined-enforcement.py.
+Tests for Greptile comment check gate in combined_enforcement.py.
 
 Tests that:
 1. Completion/commit is blocked when unaddressed P0 Greptile comments exist
@@ -71,7 +71,7 @@ class TestCheckGreptileComments:
 
 
 class TestGreptileGateIntegration:
-    """Test integration of Greptile gate with combined-enforcement."""
+    """Test integration of Greptile gate with combined_enforcement."""
 
     @pytest.fixture
     def mock_state(self):
@@ -88,7 +88,7 @@ class TestGreptileGateIntegration:
         # Import the check function
         sys.path.insert(0, str(Path(__file__).parent.parent / "hooks"))
 
-        # This will be implemented in combined-enforcement.py
+        # This will be implemented in combined_enforcement.py
         # For now, test the integration point exists
         try:
             from combined_enforcement import check_greptile_unaddressed

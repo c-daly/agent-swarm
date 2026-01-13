@@ -392,26 +392,35 @@ class TestTaskQueueMarkComplete:
 class TestTaskQueueMarkFailed:
     """Test TaskQueue.mark_failed method."""
 
-    def test_mark_failed_updates_status(self):
-        """mark_failed sets status to FAILED."""
+    def test_mark_failed_first_failure_resets_to_pending(self):
+        """mark_failed resets to PENDING on first failure for retry."""
         q = TaskQueue()
         q.add_task(make_task("task-012", status=TaskStatus.RUNNING))
-        q.mark_failed("task-012", "Error message")
-        assert q.tasks["task-012"].status == TaskStatus.FAILED
+        escalate = q.mark_failed("task-012", "Error message")
+        assert q.tasks["task-012"].status == TaskStatus.PENDING
+        assert q.tasks["task-012"].failure_count == 1
+        assert escalate is False
+        assert "task-012" not in q.failed
 
-    def test_mark_failed_adds_to_failed_list(self):
-        """mark_failed adds task ID to failed list."""
+    def test_mark_failed_escalates_after_max_retries(self):
+        """mark_failed sets FAILED and returns True after MAX_TASK_RETRIES."""
         q = TaskQueue()
         q.add_task(make_task("task-013", status=TaskStatus.RUNNING))
-        q.mark_failed("task-013", "Error")
+        # Fail 3 times (MAX_TASK_RETRIES = 3)
+        q.mark_failed("task-013", "Error 1")
+        q.mark_failed("task-013", "Error 2")
+        escalate = q.mark_failed("task-013", "Error 3")
+        assert q.tasks["task-013"].status == TaskStatus.FAILED
+        assert q.tasks["task-013"].failure_count == 3
         assert "task-013" in q.failed
+        assert escalate is True
 
-    def test_mark_failed_stores_error(self):
-        """mark_failed stores error in metadata."""
+    def test_mark_failed_stores_last_error(self):
+        """mark_failed stores last_error in metadata."""
         q = TaskQueue()
         q.add_task(make_task("task-014", status=TaskStatus.RUNNING))
         q.mark_failed("task-014", "Something went wrong")
-        assert q.tasks["task-014"].metadata.get("error") == "Something went wrong"
+        assert q.tasks["task-014"].metadata.get("last_error") == "Something went wrong"
 
 
 class TestTaskQueueQueryMethods:

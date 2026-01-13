@@ -2,8 +2,8 @@
 """
 PostToolUse hook for agent-swarm plugin.
 
-Tracks Bash command completions to update verification state
-(lint runs, test runs, format runs).
+- Tracks Bash command completions to update verification state
+- Truncates excessively long subagent (Task) outputs to prevent context bloat
 """
 
 import sys
@@ -20,6 +20,27 @@ try:
 except ImportError:
     REVIEW_GATE_AVAILABLE = False
 
+# Subagent output truncation threshold
+MAX_SUBAGENT_OUTPUT = 5000
+
+
+def truncate_task_output(tool_result: dict) -> dict | None:
+    """Truncate excessively long Task outputs to prevent context bloat.
+
+    Returns modified result dict if truncation needed, None otherwise.
+    """
+    content = tool_result.get("content", "")
+    if not isinstance(content, str):
+        return None
+
+    if len(content) <= MAX_SUBAGENT_OUTPUT:
+        return None
+
+    truncated = content[:MAX_SUBAGENT_OUTPUT]
+    removed = len(content) - MAX_SUBAGENT_OUTPUT
+    tool_result["content"] = f"{truncated}\n\n[TRUNCATED - {removed} chars removed to save context]"
+    return tool_result
+
 
 def main():
     """Handle PostToolUse events."""
@@ -32,7 +53,15 @@ def main():
     tool_input = input_data.get("tool_input", {})
     tool_result = input_data.get("tool_result", {})
 
-    # Only track Bash commands
+    # Handle Task output truncation
+    if tool_name == "Task":
+        modified = truncate_task_output(tool_result)
+        if modified:
+            # Output modified result for Claude Code to use
+            print(json.dumps({"modifiedResult": modified}))
+        return
+
+    # Only track Bash commands for verification
     if tool_name != "Bash":
         return
 

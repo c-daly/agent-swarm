@@ -51,6 +51,9 @@ PARALLEL_PHASES = {"test_writing", "implement"}  # Tasks run independently
 SYNC_PHASES = {"test", "coverage", "review"}     # Tasks sync per-PR
 
 
+MAX_TASK_RETRIES = 3  # Escalate after this many failures
+
+
 @dataclass
 class Task:
     """A task in the queue."""
@@ -65,6 +68,7 @@ class Task:
     created_at: str                  # ISO timestamp
     assigned_agent: Optional[str] = None  # Agent ID if currently running
     metadata: dict = field(default_factory=dict)  # Flexible storage
+    failure_count: int = 0           # Number of times this task has failed
 
 
 @dataclass
@@ -143,17 +147,33 @@ class TaskQueue:
         
         self.completed.append(task_id)
 
-    def mark_failed(self, task_id: str, error: str) -> None:
-        """Mark a task as failed with error message."""
+    def mark_failed(self, task_id: str, error: str) -> bool:
+        """Mark a task as failed with error message.
+
+        Tracks failure count and returns True if task should be escalated
+        (has failed MAX_TASK_RETRIES times). When not escalated, task is
+        reset to PENDING for retry.
+
+        Returns:
+            True if task needs escalation, False if reset for retry
+        """
         task = self.tasks.get(task_id)
         if not task:
             raise ValueError(f"Task {task_id} not found")
-        
-        task.status = TaskStatus.FAILED
+
+        task.failure_count += 1
         task.assigned_agent = None
-        task.metadata["error"] = error
-        
-        self.failed.append(task_id)
+        task.metadata["last_error"] = error
+
+        if task.failure_count >= MAX_TASK_RETRIES:
+            task.status = TaskStatus.FAILED
+            task.metadata["escalation_reason"] = f"Failed {task.failure_count} times"
+            self.failed.append(task_id)
+            return True  # Needs escalation
+
+        # Reset for retry
+        task.status = TaskStatus.PENDING
+        return False
 
 
     # Query methods
@@ -306,6 +326,7 @@ def save_queue(queue: "TaskQueue") -> None:
             "iteration": task.iteration,
             "created_at": task.created_at,
             "metadata": task.metadata,
+            "failure_count": task.failure_count,
         }
 
     # Serialize PRs
@@ -372,6 +393,7 @@ def load_queue() -> "TaskQueue":
                 iteration=task_dict.get("iteration", 0),
                 created_at=task_dict.get("created_at", ""),
                 metadata=task_dict.get("metadata", {}),
+                failure_count=task_dict.get("failure_count", 0),
             )
             queue.tasks[task_id] = task
         except Exception:
@@ -454,19 +476,21 @@ def advance_phase(direction: str = "next") -> None:
             print(f"[ITERATE] Phase: {state['iterate_phase']}")
 
     elif direction == "back":
-        # Kick-back logic
-        mode = state.get("mode")
+        # Kick-back logic for TDD:
+        # - test failure = implementation wrong → implement
+        # - coverage gap = missing tests → test_writing
+        # - review issues = fix code → implement
 
-        if current in ("test", "coverage"):
-            # Test/coverage failure - go back to appropriate phase
-            if mode == "iterate-tdd":
-                state["iterate_phase"] = "test_writing"
-                print("[ITERATE] Kicked back to TEST_WRITING (fix the spec)")
-            else:
-                state["iterate_phase"] = "implement"
-                print("[ITERATE] Kicked back to IMPLEMENT (fix the code)")
+        if current == "test":
+            # Tests fail = implementation is wrong
+            state["iterate_phase"] = "implement"
+            print("[ITERATE] Kicked back to IMPLEMENT (fix the code)")
+        elif current == "coverage":
+            # Coverage gap or test quality issues = need better tests
+            state["iterate_phase"] = "test_writing"
+            print("[ITERATE] Kicked back to TEST_WRITING (improve test coverage)")
         elif current == "review":
-            # Review failure - go back to implement
+            # Review issues = fix implementation
             state["iterate_phase"] = "implement"
             print("[ITERATE] Kicked back to IMPLEMENT (address review issues)")
         else:
