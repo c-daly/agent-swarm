@@ -162,9 +162,8 @@ class Workflow:
 class IterateWorkflow(Workflow):
     """Iterate workflow - always TDD."""
 
-    # Main agent stays in orchestrate phase, spawns subagents for TDD work
-    # Subagent phases are tracked separately in the task queue
-    PHASES = ["orchestrate"]
+    # TDD phases - subagents use these, orchestrator stays in "orchestrate"
+    PHASES = ["test_writing", "implement", "test", "coverage", "review"]
 
     def __init__(self, max_iterations: int = 5) -> None:
         """Initialize iterate workflow.

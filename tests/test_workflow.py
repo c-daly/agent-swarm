@@ -24,7 +24,7 @@ class TestIterateWorkflowAlwaysTDD:
         wf = IterateWorkflow()
 
         # IterateWorkflow now delegates to orchestrator
-        assert wf.PHASES == ["orchestrate"], "IterateWorkflow should have single orchestrate phase"
+        assert wf.PHASES == ["test_writing", "implement", "test", "coverage", "review"], "IterateWorkflow should have single orchestrate phase"
 
     def test_iterate_workflow_no_tdd_parameter(self):
         """IterateWorkflow should not accept a tdd parameter.
@@ -159,8 +159,8 @@ class TestPhaseBannerEnforcement:
         state["phase_banner_shown"] = True
         _save_state(state)
 
-        # Transition to orchestrate phase (only valid phase)
-        Workflow.transition_phase("orchestrate")
+        # Transition to implement phase
+        Workflow.transition_phase("implement")
 
         state = _load_state()
         assert state.get("phase_banner_shown") is False, \
@@ -172,15 +172,17 @@ class TestPhaseBannerEnforcement:
 
         wf = IterateWorkflow()
 
-        # With single-phase workflow, advance_phase returns None (no advancement)
-        # This test now verifies that behavior
-        result = Workflow.advance_phase()
-        assert result is None, "Single-phase workflow should not advance"
+        # Set banner shown, then advance phase
+        Workflow.mark_banner_shown()
+        assert Workflow.is_banner_shown() is True
 
-        # Banner flag remains unchanged when no advancement occurs
-        state = _load_state()
-        assert state.get("phase_banner_shown") is False, \
-            "phase_banner_shown should remain False when no phase change"
+        # Advance from test_writing to implement
+        result = Workflow.advance_phase()
+        assert result == "implement", "Should advance to implement"
+
+        # Banner flag should reset on phase change
+        assert Workflow.is_banner_shown() is False, \
+            "phase_banner_shown should reset on advance_phase"
 
     def test_mark_banner_shown_sets_flag(self):
         """SAFE.5.1: mark_banner_shown() should set flag to True."""
