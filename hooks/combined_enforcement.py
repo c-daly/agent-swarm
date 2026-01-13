@@ -87,7 +87,7 @@ def log_event(event_type: str, details: str):
     with open(LOG_FILE, "a") as f:
         f.write(f"[{timestamp}] {event_type}: {details}\n")
 
-def update_stats(allowed: bool, reason: str = None, tool_name: str = None):
+def update_stats(allowed: bool, reason: str | None = None, tool_name: str | None = None):
     """Update usage statistics."""
     stats = {}
     if STATS_FILE.exists():
@@ -226,7 +226,7 @@ PHASE_ALLOWED_CATEGORIES = {
 # Legacy phase restrictions (keep for backward compatibility with specific tool checks)
 PHASE_ALLOWED_TOOLS = {
     "intake": {"Read", "Glob", "Grep", "AskUserQuestion"},
-    "orchestrate": {"Read", "Glob", "Grep", "Task", "AskUserQuestion"},
+    "orchestrate": {"Read", "Glob", "Grep", "Task", "AskUserQuestion", "Bash"},
     "research": {"WebSearch", "WebFetch", "Read", "Task"},
     "explore": {"Glob", "Grep", "Read", "Task"},
     "design": {"Read", "Glob", "Grep", "Task", "AskUserQuestion"},
@@ -352,7 +352,7 @@ def _normalize_shell_command(cmd: str) -> str:
     return cmd
 
 
-def _validate_inputs(tool_name: str = None, tool_input: dict = None, state: dict = None) -> tuple:
+def _validate_inputs(tool_name: str | None = None, tool_input: dict | None = None, state: dict | None = None) -> tuple:
     """Validate and normalize inputs. Returns (tool_input, state) with defaults."""
     if tool_input is None:
         tool_input = {}
@@ -378,7 +378,7 @@ def save_state(state: dict) -> None:
     """Save session state using agent_state module."""
     agent_save_state(state)
 
-def allow(reason: str = None) -> dict:
+def allow(reason: str | None = None) -> dict:
     """Return allow decision."""
     result = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}
     if reason:

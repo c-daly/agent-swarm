@@ -16,20 +16,60 @@ class TestPhaseDefinitions:
 
     def test_all_phases_exist(self):
         """All expected phases are defined."""
-        expected_phases = {"test_writing", "implement", "test", "coverage", "review"}
+        expected_phases = {"orchestrate", "test_writing", "implement", "test", "coverage", "review"}
         assert set(ITERATE_PHASES.keys()) == expected_phases
 
     def test_phases_are_immutable(self):
         """Phase objects are frozen."""
         phase = ITERATE_PHASES["test_writing"]
         with pytest.raises(Exception):  # FrozenInstanceError or AttributeError
-            phase.name = "modified"
+            phase.name = "modified"  # type: ignore[misc]
 
     def test_phase_categories_are_frozen(self):
         """Phase allowed_categories are frozensets."""
         phase = ITERATE_PHASES["implement"]
         assert isinstance(phase.allowed_categories, frozenset)
         assert isinstance(phase.blocked_tools, frozenset)
+
+
+class TestOrchestratePhase:
+    """Test the orchestrate phase restrictions."""
+
+    def test_allows_task(self):
+        """Task (subagent) is allowed."""
+        allowed, _ = check_tool_allowed("Task", "orchestrate")
+        assert allowed
+
+    def test_allows_read_spec_file(self):
+        """Reading SPEC.md is allowed."""
+        allowed, _ = check_tool_allowed("Read", "orchestrate", "SPEC.md")
+        assert allowed
+
+    def test_allows_read_queue_file(self):
+        """Reading .queue files is allowed."""
+        allowed, _ = check_tool_allowed("Read", "orchestrate", "tasks.queue")
+        assert allowed
+
+    def test_blocks_read_other_files(self):
+        """Reading other files is blocked."""
+        allowed, reason = check_tool_allowed("Read", "orchestrate", "src/main.py")
+        assert not allowed
+        assert "not allowed" in reason.lower()
+
+    def test_blocks_edit(self):
+        """Edit is blocked."""
+        allowed, _ = check_tool_allowed("Edit", "orchestrate")
+        assert not allowed
+
+    def test_blocks_glob(self):
+        """Glob is blocked."""
+        allowed, _ = check_tool_allowed("Glob", "orchestrate")
+        assert not allowed
+
+    def test_blocks_grep(self):
+        """Grep is blocked."""
+        allowed, _ = check_tool_allowed("Grep", "orchestrate")
+        assert not allowed
 
 
 class TestTestWritingPhase:
@@ -281,8 +321,9 @@ class TestGetPhaseInfo:
     def test_returned_phase_is_immutable(self):
         """Returned phase object is immutable."""
         phase = get_phase_info("test")
+        assert phase is not None
         with pytest.raises(Exception):
-            phase.name = "modified"
+            phase.name = "modified"  # type: ignore[misc]
 
 
 class TestPhaseProgression:
@@ -312,4 +353,4 @@ class TestPhaseProgression:
             for name, phase in ITERATE_PHASES.items()
             if not phase.requires_verification
         ]
-        assert set(non_verification_phases) == {"test_writing", "implement"}
+        assert set(non_verification_phases) == {"orchestrate", "test_writing", "implement"}

@@ -32,10 +32,25 @@ class Phase:
     allowed_categories: FrozenSet[ToolCategory]
     blocked_tools: FrozenSet[str]
     requires_verification: bool
+    allowed_paths: FrozenSet[str] = frozenset()  # Regex patterns for FILE_READ restriction
 
 
 # Iterate workflow phases with tool restrictions
 ITERATE_PHASES = {
+    "orchestrate": Phase(
+        name="orchestrate",
+        allowed_categories=frozenset({
+            ToolCategory.SUBAGENT,
+            ToolCategory.FILE_READ,
+        }),
+        blocked_tools=frozenset(),
+        requires_verification=False,
+        allowed_paths=frozenset({
+            r".*SPEC\.md$",
+            r".*\.spec$",
+            r".*\.queue$",
+        }),
+    ),
     "test_writing": Phase(
         name="test_writing",
         allowed_categories=frozenset({
@@ -147,43 +162,32 @@ TOOL_CATEGORIES = {
 }
 
 
-def check_tool_allowed(tool_name: str, phase: str) -> tuple[bool, str]:
-    """Check if a tool is allowed in the given phase.
+def check_tool_allowed(tool_name: str, phase: str, file_path: str = "") -> tuple[bool, str]:
+    """Check if a tool is allowed in the given phase."""
+    import re
 
-    Args:
-        tool_name: Name of the tool to check
-        phase: Name of the phase (e.g., "test_writing", "implement")
-
-    Returns:
-        Tuple of (allowed: bool, reason: str)
-        - If allowed: (True, "")
-        - If blocked: (False, "reason for blocking")
-    """
-    # Get phase definition
     if phase not in ITERATE_PHASES:
-        return True, ""  # Unknown phase, allow by default
+        return True, ""
 
     phase_def = ITERATE_PHASES[phase]
 
-    # Check if tool is explicitly blocked
     if tool_name in phase_def.blocked_tools:
-        return False, f"{tool_name} is blocked in {phase} phase"
+        return False, f"{tool_name} blocked in {phase} phase"
 
-    # Check tool category
     if tool_name not in TOOL_CATEGORIES:
-        # Unknown tool, allow by default (defensive)
         return True, ""
 
     tool_category = TOOL_CATEGORIES[tool_name]
 
-    # Bash/shell requires special handling
     if tool_category is None:
-        # Will be handled by shell_virtualizer
         return True, ""
 
-    # Check if category is allowed in this phase
     if tool_category not in phase_def.allowed_categories:
         return False, f"{tool_name} ({tool_category.name}) not allowed in {phase} phase"
+
+    if phase_def.allowed_paths and file_path:
+        if not any(re.match(p, file_path) for p in phase_def.allowed_paths):
+            return False, f"Path not allowed in {phase} phase"
 
     return True, ""
 
