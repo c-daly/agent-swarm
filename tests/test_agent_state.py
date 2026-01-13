@@ -275,3 +275,22 @@ class TestStateManager:
 
         agent_state.StateManager.clear_cache()
         assert len(agent_state.StateManager._instances) == 0
+
+    def test_load_returns_copy_not_reference(self, temp_state_dir):
+        """G6.1: load() must return copy, not reference to internal cache."""
+        mgr = agent_state.StateManager.get("g61-test")
+        mgr._cache = {"key": "original", "nested": {"val": 1}}
+        loaded = mgr.load()
+        loaded["key"] = "MUTATED"
+        loaded["nested"]["val"] = 999
+        assert mgr._cache["key"] == "original", "load() returned reference"
+        assert mgr._cache["nested"]["val"] == 1, "shallow copy - nested corrupted"
+
+
+    def test_save_state_makes_defensive_copy(self, temp_state_dir):
+        """G6.2: save_state() must copy dict, not store reference."""
+        external_dict = {"key": "original"}
+        agent_state.save_state(external_dict, "g62-test")
+        external_dict["key"] = "MUTATED"
+        mgr = agent_state.StateManager.get("g62-test")
+        assert mgr._cache["key"] == "original", "save_state() stored reference"

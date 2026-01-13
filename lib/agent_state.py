@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from filelock import FileLock
+import copy
 
 STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
 
@@ -52,7 +53,7 @@ class StateManager:
     def load(self) -> dict:
         """Load state, using cache if available."""
         if self._cache is not None:
-            return self._cache
+            return copy.deepcopy(self._cache)
         lock = FileLock(str(self.lock_file))
         with lock:
             if not self.state_file.exists():
@@ -62,7 +63,7 @@ class StateManager:
                     self._cache = json.loads(self.state_file.read_text())
                 except (json.JSONDecodeError, OSError):
                     self._cache = {}
-        return self._cache
+        return copy.deepcopy(self._cache)
 
     def save(self) -> None:
         """Save cached state to disk."""
@@ -76,12 +77,13 @@ class StateManager:
 
     def get_value(self, key: str, default: Any = None) -> Any:
         """Get a value from state."""
-        return self.load().get(key, default)
+        self.load()  # Ensure cache is loaded
+        return self._cache.get(key, default)
 
     def set_value(self, key: str, value: Any, persist: bool = True) -> None:
         """Set a value in state."""
-        state = self.load()
-        state[key] = value
+        self.load()  # Ensure cache is loaded
+        self._cache[key] = value
         self._dirty = True
         if persist:
             self.save()
@@ -164,7 +166,7 @@ def load_state(agent_id: Optional[str] = None) -> dict:
 
 def save_state(state: dict, agent_id: Optional[str] = None) -> None:
     mgr = StateManager.get(agent_id)
-    mgr._cache = state
+    mgr._cache = copy.deepcopy(state)
     mgr.save()
 
 def update_state(updater: Callable[[dict], dict], agent_id: Optional[str] = None) -> dict:
