@@ -20,6 +20,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
+# Add lib/ to path for agent_state import
+import sys
+sys.path.insert(0, str(Path(__file__).parent))
+
 # Import agent_state module for per-agent state isolation
 from agent_state import load_state, save_state
 
