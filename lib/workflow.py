@@ -165,15 +165,40 @@ class IterateWorkflow(Workflow):
     # TDD phases - subagents use these, orchestrator stays in "orchestrate"
     PHASES = ["test_writing", "implement", "test", "coverage", "review"]
 
-    def __init__(self, max_iterations: int = 5) -> None:
+    def __init__(self, max_iterations: int = 5, is_orchestrator: bool = False) -> None:
         """Initialize iterate workflow.
 
         Args:
             max_iterations: Maximum iterations before forced exit
+            is_orchestrator: If True, set phase to "orchestrate" (main agent)
         """
-        # PHASES is set at class level
         self.MODE = "iterate-tdd"
+        self._is_orchestrator = is_orchestrator
         super().__init__(max_iterations)
+
+    def _init_state(self) -> None:
+        """Initialize workflow state. Orchestrator gets 'orchestrate' phase."""
+        state = _load_state()
+        state["mode"] = self.MODE
+        state["iterate_phases"] = self.PHASES
+        # Orchestrator stays in "orchestrate", subagents start at first TDD phase
+        if self._is_orchestrator:
+            initial_phase = "orchestrate"
+        else:
+            initial_phase = self.PHASES[0] if self.PHASES else None
+        state["iterate_phase"] = initial_phase
+        state["phase"] = initial_phase
+        state["iteration"] = 0
+        state["max_iterations"] = self.max_iterations
+        state["exit_reason"] = None
+        state["workflow_invoked"] = True
+        state["phase_banner_shown"] = False
+        # Reset enforcement counters
+        state["search_count"] = 0
+        state["read_count"] = 0
+        state["mcp_call_counts"] = {}
+        state["blocked_at"] = None
+        _save_state(state)
 
     def show_status(self) -> str:
         """Return human-readable status string."""
@@ -404,7 +429,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.command == "iterate":
-        wf = IterateWorkflow(max_iterations=args.max)
+        # CLI invocation is always the orchestrator (main agent)
+        wf = IterateWorkflow(max_iterations=args.max, is_orchestrator=True)
         print(wf.show_status())
     elif args.command == "orchestrate":
         wf = OrchestrateWorkflow(max_iterations=args.max)
