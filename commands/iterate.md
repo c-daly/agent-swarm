@@ -1,6 +1,6 @@
 ---
 name: iterate
-description: Autonomous implementation workflow with TDD and Greptile review
+description: Autonomous TDD implementation workflow with phase gates
 arguments:
   - name: --max
     description: Maximum iterations before forced exit (default 5)
@@ -19,14 +19,75 @@ allowed_tools:
   - mcp__plugin_greptile_greptile__*
 ---
 
-# /iterate - Autonomous Implementation Workflow
+# /iterate - TDD Implementation Workflow
 
-You are now in **iterate mode** - an autonomous implementation workflow.
+You are now in **iterate mode** - a TDD development loop with phase gates.
 
-## CRITICAL: Phase Output Requirements
+## Initialize
 
-**At the START of each phase, output a clear banner:**
+```bash
+python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py start "$ARGUMENTS" ${--max:-5}
+```
 
+## Phases
+
+| Phase | Purpose | What to Do |
+|-------|---------|------------|
+| **test_writing** | Write tests first | Create failing tests that define expected behavior |
+| **implement** | Make tests pass | Write code until tests pass |
+| **test** | Verify everything | Run pytest, lint, coverage. Record results. |
+| **review** | Fix review issues | Address Greptile comments |
+
+## Phase Flow
+
+```
+test_writing → implement → test → review → done
+      ↑            ↑         |       |
+      |            |         v       v
+      +-- coverage +-- fail -+  issues
+```
+
+## Per-Phase Instructions
+
+### test_writing
+1. Write tests that define expected behavior
+2. Tests should FAIL initially (TDD red)
+3. When done: `python3 lib/iterate_workflow.py advance`
+
+### implement
+1. Write/modify code to make tests pass
+2. Commit changes frequently
+3. When done: `python3 lib/iterate_workflow.py advance`
+
+### test (NO EDITING ALLOWED)
+Run verification, then record results:
+```bash
+# Run tests
+pytest tests/ -v
+
+# Run lint
+ruff check .
+
+# Run coverage
+pytest --cov=. --cov-report=term-missing
+
+# Record results (1=pass, 0=fail)
+python3 lib/iterate_workflow.py test <tests> <lint> <coverage>
+
+# Advance (kick-back or proceed)
+python3 lib/iterate_workflow.py advance
+```
+
+### review
+1. Push to remote (triggers Greptile)
+2. Check for review comments
+3. Fix any issues found
+4. Record: `python3 lib/iterate_workflow.py review <1=clean|0=issues>`
+5. Advance: `python3 lib/iterate_workflow.py advance`
+
+## Phase Banners
+
+Output at START of each phase:
 ```
 [ITERATE] ═══════════════════════════════════════════════════════════════
   Phase: <PHASE_NAME> | Iteration: <N>/<MAX>
@@ -34,72 +95,28 @@ You are now in **iterate mode** - an autonomous implementation workflow.
 ═══════════════════════════════════════════════════════════════════════
 ```
 
-**At the END of each phase, output completion:**
-
+Output at END of each phase:
 ```
 [ITERATE] Phase complete: <PHASE_NAME>
   <summary of what was done>
   Advancing to: <NEXT_PHASE>
 ```
 
-**This is MANDATORY. The user must be able to see discrete phase transitions.**
-
-## Workflow Initialization
-
-Initialize the workflow state:
+## Check Status
 
 ```bash
-python3 ~/.claude/plugins/agent-swarm/lib/workflow.py iterate
+python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py status
 ```
 
-Then immediately output the phase banner.
+## Exit Conditions
 
-## Phases
+- `review_approved` - Review clean, workflow complete
+- `max_iterations` - Hit limit (default: 5)
+- `user_stopped` - User ran `/iterate stop`
 
-1. `test_writing` - Write failing tests first
-2. `implement` - Write code to make tests pass
-3. `test` - Run tests and fix failures
-4. `coverage` - Check coverage, add tests if needed
-5. `review` - Trigger Greptile review and address feedback
+## DO NOT
 
-## Phase Execution Pattern
-
-For EACH phase:
-
-```
-1. Output phase banner
-2. Check phase: python3 ~/.../workflow.py status
-3. Do the work for this phase
-4. Verify phase completion criteria met
-5. Output phase completion
-6. Advance: python3 ~/.../workflow.py advance
-7. Repeat for next phase
-```
-
-## Phase Completion Criteria
-
-| Phase | Complete When |
-|-------|---------------|
-| test_writing | Tests written that fail (TDD red) |
-| implement | Code written, tests should pass |
-| test | All tests pass, no lint/type errors |
-| coverage | Coverage meets threshold (80%) |
-| review | Greptile review complete, issues addressed |
-
-## Compliance Signals
-
-Output these as you work:
-```
-[ITERATE] Tests: 12 passed, 0 failed
-[ITERATE] Coverage: 85% (target: 80%)
-[ITERATE] Review: Triggered, waiting for results
-[ITERATE] Complete: All checks passed
-```
-
-## Important
-
-- **ALWAYS output phase banners** - user must see discrete phases
-- Stay autonomous - only escalate on blockers
-- Commit frequently with descriptive messages
-- Run tests after every significant change
-- Address ALL review comments before completing
+- Skip phases (follow the order)
+- Use Edit/Write in test phase (blocked by hook)
+- Ignore kick-back logic
+- Bypass verification

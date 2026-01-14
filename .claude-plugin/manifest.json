@@ -12,8 +12,8 @@
   ],
   "hooks": {
     "preToolUse": {
-      "script": "../hooks/combined-enforcement.py",
-      "description": "Enforces phase restrictions, token efficiency, and parallel execution patterns"
+      "script": "../hooks/iterate-enforcement.py",
+      "description": "Enforces iterate workflow phase restrictions"
     },
     "postToolUse": {
       "script": "../hooks/post-task-tracking.py",
