@@ -413,6 +413,174 @@ def status() -> str:
     )
 
 
+# ============================================================================
+# INTAKE PHASE AUTOMATION
+# ============================================================================
+
+
+def add_requirement(requirement: str) -> None:
+    """Add a requirement discovered during intake phase.
+
+    Args:
+        requirement: A requirement string to store.
+
+    Raises:
+        ValueError: If not in intake phase.
+    """
+    phase = get_phase()
+    if phase != Phase.INTAKE:
+        raise ValueError("add_requirement only allowed in intake phase")
+
+    state = _load_state()
+    if "requirements" not in state:
+        state["requirements"] = []
+    state["requirements"].append(requirement)
+    _save_state(state)
+    _log("info", "Requirement added", requirement=requirement[:50])
+
+
+def get_requirements() -> list[str]:
+    """Get all requirements gathered during intake.
+
+    Returns:
+        List of requirement strings.
+    """
+    state = _load_state()
+    return state.get("requirements", [])
+
+
+# ============================================================================
+# DESIGN PHASE AUTOMATION
+# ============================================================================
+
+
+def set_spec_file(path: str) -> None:
+    """Set the spec file path for design phase decomposition.
+
+    Args:
+        path: Absolute or relative path to the spec markdown file.
+    """
+    state = _load_state()
+    state["spec_file"] = path
+    _save_state(state)
+    _log("info", "Spec file set", path=path)
+
+
+def decompose_spec_to_queue() -> list[dict]:
+    """Decompose the spec file into task queue items.
+
+    Uses the decomposer to parse the spec and create implementation tasks.
+
+    Returns:
+        List of task dictionaries created.
+
+    Raises:
+        ValueError: If not in design phase or no spec file set.
+    """
+    phase = get_phase()
+    if phase != Phase.DESIGN:
+        raise ValueError("decompose_spec_to_queue only allowed in design phase")
+
+    state = _load_state()
+    spec_file = state.get("spec_file")
+    if not spec_file:
+        raise ValueError("No spec file set. Call set_spec_file() first.")
+
+    # Import decomposer (in scripts directory)
+    import sys
+    scripts_dir = Path(__file__).parent.parent / "scripts"
+    sys.path.insert(0, str(scripts_dir))
+    from decomposer import decompose_spec
+
+    # Generate a PR ID for task grouping
+    pr_id = state.get("pr_id", "workflow-" + state.get("task", "default")[:20])
+
+    tasks = decompose_spec(spec_file, pr_id, group_enums=True)
+
+    # Store task count in state
+    state["decomposed_task_count"] = len(tasks)
+    _save_state(state)
+
+    _log("info", "Spec decomposed", task_count=len(tasks), spec_file=spec_file)
+    return tasks
+
+
+# ============================================================================
+# REVIEW PHASE AUTOMATION
+# ============================================================================
+
+
+def _get_workflow_queue():
+    """Get or create WorkflowQueue instance."""
+    from workflow_queue import WorkflowQueue
+    state = _load_state()
+    pr_id = state.get("pr_id", "current")
+    return WorkflowQueue(pr_id=pr_id)
+
+
+def add_review_comment(comment: dict) -> dict:
+    """Add a PR comment as a review task.
+
+    Args:
+        comment: Dict with 'id', 'body', and optionally 'severity', 'path'.
+
+    Returns:
+        The created task dictionary.
+
+    Raises:
+        ValueError: If not in review phase.
+    """
+    phase = get_phase()
+    if phase != Phase.REVIEW:
+        raise ValueError("add_review_comment only allowed in review phase")
+
+    wq = _get_workflow_queue()
+    task = wq.add_pr_comment(comment)
+
+    _log("info", "Review comment added", comment_id=comment.get("id"))
+    return {
+        "id": task.id,
+        "description": task.description,
+        "status": task.status.value,
+    }
+
+
+def get_pending_review_tasks() -> list[dict]:
+    """Get all unaddressed PR comment tasks.
+
+    Returns:
+        List of task dictionaries that are still pending.
+    """
+    wq = _get_workflow_queue()
+    tasks = wq.get_unaddressed_comments()
+    return [
+        {"id": t.id, "description": t.description, "status": t.status.value}
+        for t in tasks
+    ]
+
+
+def mark_review_task_done(task_id: str, result: Optional[dict] = None) -> None:
+    """Mark a review task as completed.
+
+    Args:
+        task_id: ID of the task to complete.
+        result: Optional result metadata.
+    """
+    wq = _get_workflow_queue()
+    wq.mark_done(task_id, result)
+    _log("info", "Review task completed", task_id=task_id)
+
+
+def is_review_blocked() -> bool:
+    """Check if review phase advancement is blocked.
+
+    Returns:
+        True if there are unaddressed PR comments.
+    """
+    wq = _get_workflow_queue()
+    return not wq.can_commit()
+
+
 # CLI interface
 if __name__ == "__main__":
     import sys
