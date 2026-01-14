@@ -26,103 +26,64 @@ from iterate_state import (
 class TestTaskStatusEnum:
     """Test TaskStatus enum."""
 
-    def test_has_pending_status(self):
-        """TaskStatus has PENDING value."""
-        assert TaskStatus.PENDING == "pending"
-
-    def test_has_running_status(self):
-        """TaskStatus has RUNNING value."""
-        assert TaskStatus.RUNNING == "running"
-
-    def test_has_completed_status(self):
-        """TaskStatus has COMPLETED value."""
-        assert TaskStatus.COMPLETED == "completed"
-
-    def test_has_failed_status(self):
-        """TaskStatus has FAILED value."""
-        assert TaskStatus.FAILED == "failed"
-
-    def test_is_string_enum(self):
-        """TaskStatus values are strings and comparable with strings."""
-        assert isinstance(TaskStatus.PENDING.value, str)
-        # String enum allows direct comparison with strings
-        assert TaskStatus.PENDING == "pending"
-        # Use .value for explicit string conversion
-        assert TaskStatus.PENDING.value == "pending"
+    @pytest.mark.parametrize("member,expected", [
+        (TaskStatus.PENDING, "pending"),
+        (TaskStatus.RUNNING, "running"),
+        (TaskStatus.COMPLETED, "completed"),
+        (TaskStatus.FAILED, "failed"),
+    ])
+    def test_status_values(self, member, expected):
+        """TaskStatus enum has correct string values."""
+        assert member == expected
+        assert member.value == expected
+        assert isinstance(member.value, str)
 
 
 class TestTaskSourceEnum:
     """Test TaskSource enum."""
 
-    def test_has_original_source(self):
-        """TaskSource has ORIGINAL value."""
-        assert TaskSource.ORIGINAL == "original"
-
-    def test_has_greptile_source(self):
-        """TaskSource has GREPTILE value."""
-        assert TaskSource.GREPTILE == "greptile"
-
-    def test_has_test_failure_source(self):
-        """TaskSource has TEST_FAILURE value."""
-        assert TaskSource.TEST_FAILURE == "test_failure"
-
-    def test_has_coverage_gap_source(self):
-        """TaskSource has COVERAGE_GAP value."""
-        assert TaskSource.COVERAGE_GAP == "coverage_gap"
-
-    def test_is_string_enum(self):
-        """TaskSource values are strings and comparable with strings."""
-        assert isinstance(TaskSource.ORIGINAL.value, str)
-        # String enum allows direct comparison with strings
-        assert TaskSource.ORIGINAL == "original"
-        # Use .value for explicit string conversion
-        assert TaskSource.ORIGINAL.value == "original"
+    @pytest.mark.parametrize("member,expected", [
+        (TaskSource.ORIGINAL, "original"),
+        (TaskSource.GREPTILE, "greptile"),
+        (TaskSource.TEST_FAILURE, "test_failure"),
+        (TaskSource.COVERAGE_GAP, "coverage_gap"),
+    ])
+    def test_source_values(self, member, expected):
+        """TaskSource enum has correct string values."""
+        assert member == expected
+        assert member.value == expected
+        assert isinstance(member.value, str)
 
 
 class TestPriorityConstants:
     """Test priority constants."""
 
-    def test_test_failure_highest_priority(self):
-        """Test failures have highest priority (0)."""
-        assert PRIORITY_TEST_FAILURE == 0
-
-    def test_greptile_critical_priority(self):
-        """Greptile critical issues have priority 1."""
-        assert PRIORITY_GREPTILE_CRITICAL == 1
-
-    def test_greptile_warning_priority(self):
-        """Greptile warnings have priority 2."""
-        assert PRIORITY_GREPTILE_WARNING == 2
-
-    def test_original_priority(self):
-        """Original tasks have priority 3."""
-        assert PRIORITY_ORIGINAL == 3
-
-    def test_coverage_gap_lowest_priority(self):
-        """Coverage gaps have lowest priority (4)."""
-        assert PRIORITY_COVERAGE_GAP == 4
+    @pytest.mark.parametrize("constant,expected", [
+        (PRIORITY_TEST_FAILURE, 0),
+        (PRIORITY_GREPTILE_CRITICAL, 1),
+        (PRIORITY_GREPTILE_WARNING, 2),
+        (PRIORITY_ORIGINAL, 3),
+        (PRIORITY_COVERAGE_GAP, 4),
+    ])
+    def test_priority_values(self, constant, expected):
+        """Priority constants have correct values (lower = more urgent)."""
+        assert constant == expected
 
     def test_priority_ordering(self):
         """Priorities are correctly ordered (lower = more urgent)."""
-        assert PRIORITY_TEST_FAILURE < PRIORITY_GREPTILE_CRITICAL
-        assert PRIORITY_GREPTILE_CRITICAL < PRIORITY_GREPTILE_WARNING
-        assert PRIORITY_GREPTILE_WARNING < PRIORITY_ORIGINAL
-        assert PRIORITY_ORIGINAL < PRIORITY_COVERAGE_GAP
+        priorities = [PRIORITY_TEST_FAILURE, PRIORITY_GREPTILE_CRITICAL,
+                      PRIORITY_GREPTILE_WARNING, PRIORITY_ORIGINAL, PRIORITY_COVERAGE_GAP]
+        assert priorities == sorted(priorities)
 
 
 class TestPhaseConstants:
     """Test phase constants."""
 
-    def test_parallel_phases_defined(self):
-        """Parallel phases include test_writing and implement."""
-        assert "test_writing" in PARALLEL_PHASES
-        assert "implement" in PARALLEL_PHASES
-
-    def test_sync_phases_defined(self):
-        """Sync phases include test, coverage, review."""
-        assert "test" in SYNC_PHASES
-        assert "coverage" in SYNC_PHASES
-        assert "review" in SYNC_PHASES
+    def test_phase_sets_defined(self):
+        """Phase sets contain expected values and are disjoint."""
+        assert {"test_writing", "implement"} <= PARALLEL_PHASES
+        assert {"test", "coverage", "review"} <= SYNC_PHASES
+        assert PARALLEL_PHASES.isdisjoint(SYNC_PHASES)
 
     def test_phases_are_disjoint(self):
         """Parallel and sync phases don't overlap."""
