@@ -21,7 +21,7 @@ try:
     from iterate_workflow import is_tool_allowed, is_active, get_phase, status
 except ImportError as e:
     # If module not available, allow everything
-    def is_tool_allowed(tool_name):
+    def is_tool_allowed(tool_name, command=None):
         return True, ""
     def is_active():
         return False
@@ -65,14 +65,18 @@ def main():
         return
 
     tool_name = input_data.get("tool_name", "")
+    tool_input = input_data.get("tool_input", {})
 
     # Skip if no iterate workflow active
     if not is_active():
         print(json.dumps(allow("No active iterate workflow")))
         return
 
+    # Extract command for Bash tool (for git/gh blocking)
+    command = tool_input.get("command") if tool_name == "Bash" else None
+
     # Check if tool is allowed in current phase
-    allowed, reason = is_tool_allowed(tool_name)
+    allowed, reason = is_tool_allowed(tool_name, command=command)
 
     if not allowed:
         # Add current phase info to the reason

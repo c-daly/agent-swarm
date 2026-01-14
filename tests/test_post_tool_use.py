@@ -289,10 +289,12 @@ class TestEdgeCases:
     def test_module_run_as_script(self):
         """Test the if __name__ == '__main__' block."""
         import subprocess
+        project_root = Path(__file__).parent.parent
+        hook_path = project_root / "hooks" / "post_tool_use.py"
         result = subprocess.run(
             ['python3', '-c',
-             "import sys; sys.stdin = __import__('io').StringIO('{}'); "
-             "exec(open('/home/fearsidhe/.claude/plugins/agent-swarm/hooks/post_tool_use.py').read())"],
+             f"import sys; sys.stdin = __import__('io').StringIO('{{}}'); "
+             f"exec(open('{hook_path}').read())"],
             capture_output=True,
             text=True
         )

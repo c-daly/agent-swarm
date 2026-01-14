@@ -17,7 +17,9 @@ from pathlib import Path
 from typing import Optional
 from enum import Enum
 
-STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
+# Allow override via environment variable for test isolation
+_state_dir_override = os.environ.get("ITERATE_STATE_DIR")
+STATE_DIR = Path(_state_dir_override) if _state_dir_override else Path.home() / ".claude/plugins/agent-swarm/.state"
 STATE_FILE = STATE_DIR / "iterate.json"
 LOG_FILE = STATE_DIR / "iterate.log"
 
@@ -202,6 +204,8 @@ def start(
         "coverage_ok": None,      # True/False - is coverage sufficient?
         # Review phase result
         "review_status": None,    # clean/issues after review phase
+        # PR tracking for auto-refresh
+        "pr_number": None,        # PR number for GitHub review polling
     }
     _save_state(state)
     _log("info", "Workflow started", task=task, max_iterations=max_iterations,
@@ -234,6 +238,42 @@ def is_active() -> bool:
     return state.get("active", False)
 
 
+def verify_active(expected_phase: Optional[Phase] = None) -> None:
+    """Verify workflow is still active and optionally in expected phase.
+
+    Call this before critical operations to detect premature termination.
+
+    Args:
+        expected_phase: If provided, also verify we're in this phase.
+
+    Raises:
+        RuntimeError: If workflow is not active or not in expected phase.
+    """
+    if not STATE_FILE.exists():
+        raise RuntimeError(
+            "[WORKFLOW TERMINATED] State file was deleted unexpectedly. "
+            "This may be caused by test fixtures using production state. "
+            "Workflow must be restarted."
+        )
+
+    state = _load_state()
+    if not state.get("active"):
+        raise RuntimeError(
+            "[WORKFLOW TERMINATED] Workflow is no longer active. "
+            f"Exit reason: {state.get('exit_reason', 'unknown')}. "
+            "State may have been corrupted or workflow stopped externally."
+        )
+
+    if expected_phase is not None:
+        current = Phase(state["phase"]) if state.get("phase") else None
+        if current != expected_phase:
+            raise RuntimeError(
+                f"[WORKFLOW PHASE MISMATCH] Expected {expected_phase.value}, "
+                f"got {current.value if current else 'None'}. "
+                "Phase may have changed unexpectedly."
+            )
+
+
 def set_phase(phase: Phase) -> None:
     """Manually set phase (for kick-back scenarios)."""
     state = _load_state()
@@ -258,7 +298,11 @@ def advance_phase() -> Optional[Phase]:
     """
     state = _load_state()
     if not state.get("active"):
-        return None
+        exit_reason = state.get("exit_reason", "unknown")
+        raise RuntimeError(
+            f"[NO ACTIVE WORKFLOW] Cannot advance phase. "
+            f"Exit reason: {exit_reason}. Start a new workflow with 'start' command."
+        )
 
     current = Phase(state["phase"])
 
@@ -290,6 +334,13 @@ def advance_phase() -> Optional[Phase]:
         if tests_ok and lint_ok and coverage_ok:
             # Everything passes, move to review
             state["phase"] = Phase.REVIEW.value
+            # Save state first, then auto-fetch PR comments
+            _save_state(state)
+            pr = state.get("pr_number")
+            if pr:
+                _log("info", "Auto-fetching PR review comments", pr=pr)
+                # Import here to avoid circular dependency issues
+                refresh_review_status(pr)
         else:
             # Something failed, determine kick-back target
             state["iteration"] = state.get("iteration", 0) + 1
@@ -335,6 +386,11 @@ def advance_phase() -> Optional[Phase]:
     _save_state(state)
     _log("info", "Phase transition", from_phase=current.value, to_phase=state["phase"],
          iteration=state.get("iteration", 0))
+
+    # Notify loudly if workflow just ended
+    if not state.get("active"):
+        _notify_workflow_end(state.get("exit_reason", "unknown"), state.get("task", ""))
+
     return Phase(state["phase"]) if state.get("active") else None
 
 
@@ -345,7 +401,12 @@ def set_test_results(tests_passed: bool, lint_passed: bool, coverage_ok: bool) -
         tests_passed: Did pytest pass?
         lint_passed: Did lint/type checks pass?
         coverage_ok: Is coverage above threshold?
+
+    Raises:
+        RuntimeError: If no active workflow.
     """
+    if not is_active():
+        raise RuntimeError("No active workflow - cannot record test results")
     state = _load_state()
     state["tests_passed"] = tests_passed
     state["lint_passed"] = lint_passed
@@ -355,24 +416,51 @@ def set_test_results(tests_passed: bool, lint_passed: bool, coverage_ok: bool) -
 
 
 def set_review_status(clean: bool) -> None:
-    """Record review status (no issues = clean)."""
+    """Record review status (no issues = clean).
+
+    Raises:
+        RuntimeError: If no active workflow.
+    """
+    if not is_active():
+        raise RuntimeError("No active workflow - cannot record review status")
     state = _load_state()
     state["review_status"] = "clean" if clean else "issues"
     _save_state(state)
     _log("info", "Review status recorded", clean=clean)
 
 
+def _notify_workflow_end(reason: str, task: str = "") -> None:
+    """Output loud notification when workflow ends - impossible to miss."""
+    import sys
+    banner = f"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  ⚠️  WORKFLOW TERMINATED: {reason:<50} ║
+║  Task: {task[:66]:<66} ║
+║                                                                              ║
+║  You are NO LONGER in /iterate mode. To continue:                            ║
+║    python3 lib/iterate_workflow.py start "<task>" [max_iterations]           ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+"""
+    print(banner, file=sys.stderr)
+
+
 def stop(reason: str = "user_stopped") -> None:
     """Stop the iterate workflow."""
     state = _load_state()
+    task = state.get("task", "unknown")
     state["active"] = False
     state["exit_reason"] = reason
     _save_state(state)
     _log("info", "Workflow stopped", reason=reason)
+    _notify_workflow_end(reason, task)
 
 
-def is_tool_allowed(tool_name: str) -> tuple[bool, str]:
+def is_tool_allowed(tool_name: str, command: str | None = None) -> tuple[bool, str]:
     """Check if a tool is allowed in current phase.
+
+    Args:
+        tool_name: Name of the tool being invoked.
+        command: For Bash tool, the command string (used for git/gh blocking).
 
     Returns:
         (allowed: bool, reason: str)
@@ -385,6 +473,30 @@ def is_tool_allowed(tool_name: str) -> tuple[bool, str]:
 
     if tool_name in phase_config["blocked"]:
         return False, f"[BLOCKED] {tool_name} not allowed in {phase.value} phase. Run tests first."
+
+    # Check for git/gh commands in Bash (WORKFLOW.5)
+    if tool_name == "Bash" and command:
+        cmd_lower = command.strip().lower()
+        is_git_cmd = cmd_lower.startswith("git ") or cmd_lower == "git"
+        is_gh_cmd = cmd_lower.startswith("gh ")
+
+        if is_git_cmd or is_gh_cmd:
+            # Git/gh only allowed in REVIEW phase
+            if phase != Phase.REVIEW:
+                return False, f"[BLOCKED] git/gh commands only allowed in review phase. Current: {phase.value}"
+
+            # In REVIEW phase, check coverage requirement for commit/push (WORKFLOW.1)
+            state = _load_state()
+            # Use word-boundary matching to avoid false positives like "commitfile.txt"
+            cmd_parts = cmd_lower.split()
+            is_commit_or_push = any(part in ["commit", "push"] for part in cmd_parts)
+
+            if is_commit_or_push:
+                coverage_ok = state.get("coverage_ok")
+                if coverage_ok is None:
+                    return False, "[BLOCKED] Run tests and record coverage before commit/push"
+                if not coverage_ok:
+                    return False, "[BLOCKED] Coverage threshold not met - cannot commit/push"
 
     # Allow MCP variants of allowed tools
     base_tool = tool_name.split("__")[-1] if "__" in tool_name else tool_name
@@ -582,6 +694,136 @@ def is_review_blocked() -> bool:
     """
     wq = _get_workflow_queue()
     return not wq.can_commit()
+
+
+def set_pr_number(pr_number: int) -> None:
+    """Set the PR number for review status polling.
+
+    Args:
+        pr_number: The GitHub PR number to track.
+    """
+    if not is_active():
+        raise RuntimeError("Cannot set PR number: no active workflow")
+
+    state = _load_state()
+    state["pr_number"] = pr_number
+    _save_state(state)
+    _log("info", "PR number set", pr_number=pr_number)
+
+
+def get_pr_number() -> Optional[int]:
+    """Get the stored PR number for review polling.
+
+    Returns:
+        The PR number if set, None otherwise.
+    """
+    state = _load_state()
+    return state.get("pr_number")
+
+
+def fetch_pr_review_status(pr_number: int) -> list[dict]:
+    """Fetch unresolved PR review comments from GitHub.
+
+    Uses `gh` CLI to fetch review comments for the given PR.
+    Filters out resolved comments.
+
+    Args:
+        pr_number: The GitHub PR number to check.
+
+    Returns:
+        List of unresolved comment dictionaries with 'id', 'body', etc.
+    """
+    import subprocess
+
+    try:
+        # Fetch PR review comments using gh CLI
+        result = subprocess.run(
+            ["gh", "pr", "view", str(pr_number), "--json", "reviews,comments",
+             "--jq", '.reviews[].comments[]? // .comments[] | select(.isResolved != true) | {id: .id, body: .body, path: .path, isResolved: .isResolved}'],
+            capture_output=True, text=True, timeout=30
+        )
+
+        if result.returncode != 0:
+            _log("warning", "gh pr view failed", pr=pr_number, stderr=result.stderr)
+            return []
+
+        # Parse JSON output - handle both JSON array and line-by-line format
+        stdout = result.stdout.strip()
+        if not stdout:
+            return []
+
+        comments = []
+        try:
+            # First try parsing as JSON array
+            parsed = json.loads(stdout)
+            if isinstance(parsed, list):
+                for comment in parsed:
+                    if isinstance(comment, dict) and not comment.get("isResolved", False):
+                        comments.append(comment)
+            elif isinstance(parsed, dict):
+                # Single object
+                if not parsed.get("isResolved", False):
+                    comments.append(parsed)
+        except json.JSONDecodeError:
+            # Fall back to line-by-line parsing (jq output format)
+            for line in stdout.split('\n'):
+                if line:
+                    try:
+                        comment = json.loads(line)
+                        if isinstance(comment, dict) and not comment.get("isResolved", False):
+                            comments.append(comment)
+                    except json.JSONDecodeError:
+                        continue
+
+        _log("info", "Fetched PR comments", pr=pr_number, count=len(comments))
+        return comments
+
+    except subprocess.TimeoutExpired:
+        _log("error", "gh pr view timed out", pr=pr_number)
+        return []
+    except FileNotFoundError:
+        _log("error", "gh CLI not found")
+        return []
+
+
+def refresh_review_status(pr_number: Optional[int] = None) -> int:
+    """Refresh review queue by fetching latest PR comments.
+
+    Fetches unresolved comments from GitHub and adds any new ones
+    to the review task queue.
+
+    Args:
+        pr_number: PR number to fetch, or None to use stored number.
+
+    Returns:
+        Number of new comments added to queue.
+    """
+    if pr_number is None:
+        pr_number = get_pr_number()
+
+    if pr_number is None:
+        _log("warning", "No PR number available for refresh")
+        return 0
+
+    phase = get_phase()
+    if phase != Phase.REVIEW:
+        _log("warning", "refresh_review_status called outside review phase")
+        return 0
+
+    comments = fetch_pr_review_status(pr_number)
+
+    # Add new comments to queue
+    added = 0
+    for comment in comments:
+        try:
+            add_review_comment(comment)
+            added += 1
+        except Exception as e:
+            # Comment might already exist in queue
+            _log("debug", "Could not add comment", comment_id=comment.get("id"), error=str(e))
+
+    _log("info", "Review status refreshed", pr=pr_number, added=added)
+    return added
 
 
 # CLI interface

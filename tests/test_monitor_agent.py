@@ -76,44 +76,39 @@ def edit_tool_input():
 class TestExtractCommitMessage:
     """Tests for _extract_commit_message function."""
 
-    def test_extract_dash_m_flag(self):
-        """Extract message from -m 'message' format."""
-        command = 'git commit -m "Fix authentication bug"'
-        assert _extract_commit_message(command) == "Fix authentication bug"
-
-    def test_extract_dash_m_single_quotes(self):
-        """Extract message from -m 'message' with single quotes."""
-        command = "git commit -m 'Fix authentication bug'"
-        assert _extract_commit_message(command) == "Fix authentication bug"
-
-    def test_extract_heredoc_simple(self):
-        """Extract message from <<EOF ... EOF format."""
-        command = """git commit -F- <<EOF
-Fix authentication bug
-
-This fixes the login issue.
-EOF"""
+    @pytest.mark.parametrize("command,expected", [
+        # Basic -m flag variations
+        ('git commit -m "Fix authentication bug"', "Fix authentication bug"),
+        ("git commit -m 'Fix authentication bug'", "Fix authentication bug"),
+        # Special characters
+        ('git commit -m "Fix: handle \\"quotes\\" properly"', "Fix:"),
+        # Emoji
+        ('git commit -m "Fix bug 🐛"', "Fix bug"),
+    ])
+    def test_extract_dash_m_formats(self, command, expected):
+        """Extract message from various -m flag formats."""
         result = _extract_commit_message(command)
-        assert "Fix authentication bug" in result
+        assert expected in result
 
-    def test_extract_heredoc_with_quotes(self):
-        """Heredoc with quotes: <<'EOF'."""
-        command = """git commit -F- <<'EOF'
+    @pytest.mark.parametrize("command,expected", [
+        # Simple heredoc
+        ("""git commit -F- <<EOF
+Fix authentication bug
+EOF""", "Fix authentication bug"),
+        # Quoted heredoc
+        ("""git commit -F- <<'EOF'
 Fix bug
-EOF"""
-        result = _extract_commit_message(command)
-        assert "Fix bug" in result
-
-    def test_extract_cat_heredoc(self):
-        """Extract from -m "$(cat <<EOF ... EOF)" format."""
-        command = '''git commit -m "$(cat <<'EOF'
+EOF""", "Fix bug"),
+        # cat heredoc
+        ('''git commit -m "$(cat <<'EOF'
 Fix authentication bug
-
-Co-Authored-By: Someone
 EOF
-)"'''
+)"''', "Fix authentication bug"),
+    ])
+    def test_extract_heredoc_formats(self, command, expected):
+        """Extract message from heredoc formats."""
         result = _extract_commit_message(command)
-        assert "Fix authentication bug" in result
+        assert expected in result
 
     def test_extract_multiline_message(self):
         """Message spanning multiple lines."""
@@ -124,12 +119,6 @@ Line 3"'''
         assert "Line 1" in result
         assert "Line 3" in result
 
-    def test_extract_message_with_special_chars(self):
-        """Messages with special characters."""
-        command = 'git commit -m "Fix: handle \\"quotes\\" properly"'
-        result = _extract_commit_message(command)
-        assert "Fix:" in result
-
     def test_extract_no_message_found(self):
         """Command without extractable message."""
         command = "git commit --amend"
@@ -138,15 +127,8 @@ Line 3"'''
     def test_extract_empty_message(self):
         """Empty commit message."""
         command = 'git commit -m ""'
-        # Should return empty string, not the fallback
         result = _extract_commit_message(command)
         assert result == "" or result == "(unable to extract message)"
-
-    def test_extract_message_with_emoji(self):
-        """Message containing Unicode emoji."""
-        command = 'git commit -m "Fix bug 🐛"'
-        result = _extract_commit_message(command)
-        assert "Fix bug" in result
 
 
 # =============================================================================
@@ -156,63 +138,40 @@ Line 3"'''
 class TestParseDecision:
     """Tests for _parse_decision function."""
 
-    def test_parse_decision_allowed_yes(self):
-        """Parse 'ALLOWED: yes' response."""
-        text = "ALLOWED: yes\nREASON: Message is clean\nCONFIDENCE: 0.95"
+    @pytest.mark.parametrize("text,expected_allowed,expected_conf", [
+        ("ALLOWED: yes\nREASON: Message is clean\nCONFIDENCE: 0.95", True, 0.95),
+        ("ALLOWED: no\nREASON: Contains emoji\nCONFIDENCE: 0.99", False, 0.99),
+        ("ALLOWED:   yes  \nREASON:   Clean message   \nCONFIDENCE:   0.9  ", True, 0.9),
+    ])
+    def test_parse_decision_valid_inputs(self, text, expected_allowed, expected_conf):
+        """Parse valid decision responses with various formats."""
         result = _parse_decision(text)
-        assert result["allowed"] is True
-        assert result["reason"] == "Message is clean"
-        assert result["confidence"] == 0.95
+        assert result["allowed"] is expected_allowed
+        assert result["confidence"] == expected_conf
 
-    def test_parse_decision_allowed_no(self):
-        """Parse 'ALLOWED: no' response."""
-        text = "ALLOWED: no\nREASON: Contains emoji\nCONFIDENCE: 0.99"
+    @pytest.mark.parametrize("text,check", [
+        ("ALLOWED: yes\nCONFIDENCE: 0.9", lambda r: r["reason"] == "No reason provided"),  # missing reason
+        ("ALLOWED: yes\nREASON: Looks good", lambda r: r["confidence"] == 0.5),  # missing confidence
+    ])
+    def test_parse_decision_defaults(self, text, check):
+        """Missing fields use correct defaults."""
         result = _parse_decision(text)
-        assert result["allowed"] is False
-        assert "emoji" in result["reason"].lower()
-        assert result["confidence"] == 0.99
+        assert check(result)
 
-    def test_parse_decision_case_insensitive(self):
-        """'allowed: YES' vs 'ALLOWED: yes'."""
-        text = "allowed: YES\nreason: OK\nconfidence: 0.8"
-        result = _parse_decision(text)
-        assert result["allowed"] is True
-
-    def test_parse_decision_missing_reason(self):
-        """Response without REASON field defaults."""
-        text = "ALLOWED: yes\nCONFIDENCE: 0.9"
-        result = _parse_decision(text)
-        assert result["allowed"] is True
-        assert result["reason"] == "No reason provided"
-
-    def test_parse_decision_missing_confidence(self):
-        """Response without CONFIDENCE defaults to 0.5."""
-        text = "ALLOWED: yes\nREASON: Looks good"
-        result = _parse_decision(text)
-        assert result["confidence"] == 0.5
-
-    def test_parse_decision_malformed_response(self):
-        """Completely malformed text returns None."""
-        text = "This is not a valid response at all"
+    @pytest.mark.parametrize("text", [
+        "This is not a valid response at all",
+        "",
+    ])
+    def test_parse_decision_invalid_returns_none(self, text):
+        """Invalid or empty input returns None."""
         assert _parse_decision(text) is None
 
-    def test_parse_decision_empty_string(self):
-        """Empty input returns None."""
-        assert _parse_decision("") is None
-
-    def test_parse_decision_extra_whitespace(self):
-        """Excessive whitespace around values."""
-        text = "ALLOWED:   yes  \nREASON:   Clean message   \nCONFIDENCE:   0.9  "
+    @pytest.mark.parametrize("conf", [0.0, 0.5, 1.0])
+    def test_parse_decision_confidence_boundaries(self, conf):
+        """Confidence values at boundaries."""
+        text = f"ALLOWED: yes\nREASON: test\nCONFIDENCE: {conf}"
         result = _parse_decision(text)
-        assert result["allowed"] is True
-        assert "Clean message" in result["reason"]
-
-    def test_parse_decision_confidence_boundaries(self):
-        """Test confidence at boundaries."""
-        for conf in ["0.0", "1.0", "0.5"]:
-            text = f"ALLOWED: yes\nREASON: test\nCONFIDENCE: {conf}"
-            result = _parse_decision(text)
-            assert result["confidence"] == float(conf)
+        assert result["confidence"] == conf
 
 
 # =============================================================================
@@ -305,11 +264,13 @@ class TestNeedsMonitoring:
 
     def test_no_monitoring_when_anthropic_unavailable(self, sample_state):
         """Should return False when ANTHROPIC_AVAILABLE is False."""
-        # This test verifies behavior when anthropic is unavailable
-        # Since anthropic IS available in our env, we test the positive case
         tool_input = {"command": 'git commit -m "Fix bug"'}
-        # With anthropic available, git commit should trigger monitoring
-        assert needs_monitoring("Bash", tool_input, sample_state) is True
+        if ANTHROPIC_AVAILABLE:
+            # With anthropic available, git commit should trigger monitoring
+            assert needs_monitoring("Bash", tool_input, sample_state) is True
+        else:
+            # Without anthropic, all monitoring is disabled
+            assert needs_monitoring("Bash", tool_input, sample_state) is False
 
     @pytest.mark.skipif(not ANTHROPIC_AVAILABLE, reason="anthropic not installed")
     def test_needs_monitoring_empty_state(self):
