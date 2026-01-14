@@ -79,7 +79,18 @@ def _reset_logger() -> None:
 
 
 class Phase(Enum):
-    """TDD workflow phases."""
+    """TDD workflow phases.
+
+    Optional discovery phases (before TDD loop):
+        INTAKE -> DESIGN -> [TDD loop]
+
+    TDD loop:
+        TEST_WRITING -> IMPLEMENT -> TEST -> REVIEW -> DONE
+    """
+    # Optional discovery phases
+    INTAKE = "intake"              # Gather requirements (no editing)
+    DESIGN = "design"              # Write spec, decompose into task_queue
+    # TDD loop phases
     TEST_WRITING = "test_writing"  # Write tests first (the spec)
     IMPLEMENT = "implement"        # Make tests pass
     TEST = "test"                  # Run pytest, lint, coverage
@@ -89,6 +100,16 @@ class Phase(Enum):
 
 # Tools allowed in each phase
 PHASE_TOOLS = {
+    Phase.INTAKE: {
+        # Intake phase: gather requirements, research, no editing
+        "allowed": {"Read", "Glob", "Grep", "WebSearch", "WebFetch", "Task"},
+        "blocked": {"Edit", "Write"},
+    },
+    Phase.DESIGN: {
+        # Design phase: write spec, run decomposer
+        "allowed": {"Read", "Glob", "Grep", "Write", "Bash", "Task"},
+        "blocked": set(),
+    },
     Phase.TEST_WRITING: {
         "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "Bash", "Task"},
         "blocked": set(),
@@ -131,22 +152,50 @@ def _save_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state, indent=2))
 
 
-def start(task: str, max_iterations: int = 5) -> dict:
+def start(
+    task: str,
+    max_iterations: int = 5,
+    needs_intake: bool = False,
+    needs_design: bool = False,
+) -> dict:
     """Start a new iterate workflow.
 
     Args:
         task: Description of what to implement
         max_iterations: Max loops before requiring user checkpoint
+        needs_intake: Start with intake phase (gather requirements)
+        needs_design: Include design phase (write spec, create task_queue)
 
     Returns:
         Current state
+
+    Phase flow based on flags:
+        - needs_intake=True, needs_design=True:
+            intake -> design -> test_writing -> ...
+        - needs_intake=True, needs_design=False:
+            intake -> test_writing -> ...
+        - needs_intake=False, needs_design=True:
+            design -> test_writing -> ...
+        - needs_intake=False, needs_design=False (default):
+            test_writing -> ...
     """
+    # Determine initial phase
+    if needs_intake:
+        initial_phase = Phase.INTAKE
+    elif needs_design:
+        initial_phase = Phase.DESIGN
+    else:
+        initial_phase = Phase.TEST_WRITING
+
     state = {
         "active": True,
         "task": task,
-        "phase": Phase.TEST_WRITING.value,
+        "phase": initial_phase.value,
         "iteration": 0,
         "max_iterations": max_iterations,
+        # Discovery phase flags
+        "needs_intake": needs_intake,
+        "needs_design": needs_design,
         # Test phase results (determines kick-back target)
         "tests_passed": None,     # True/False - did pytest pass?
         "lint_passed": None,      # True/False - did lint pass?
@@ -155,7 +204,8 @@ def start(task: str, max_iterations: int = 5) -> dict:
         "review_status": None,    # clean/issues after review phase
     }
     _save_state(state)
-    _log("info", "Workflow started", task=task, max_iterations=max_iterations)
+    _log("info", "Workflow started", task=task, max_iterations=max_iterations,
+         needs_intake=needs_intake, needs_design=needs_design)
     return state
 
 
@@ -195,6 +245,8 @@ def advance_phase() -> Optional[Phase]:
     """Advance to next phase based on current state.
 
     Phase transitions:
+    - intake -> design (if needs_design) OR test_writing
+    - design -> test_writing
     - test_writing -> implement
     - implement -> test
     - test -> review (if all pass) OR kick-back:
@@ -210,7 +262,18 @@ def advance_phase() -> Optional[Phase]:
 
     current = Phase(state["phase"])
 
-    if current == Phase.TEST_WRITING:
+    if current == Phase.INTAKE:
+        # Intake complete, check if design phase is needed
+        if state.get("needs_design"):
+            state["phase"] = Phase.DESIGN.value
+        else:
+            state["phase"] = Phase.TEST_WRITING.value
+
+    elif current == Phase.DESIGN:
+        # Design complete, move to TDD loop
+        state["phase"] = Phase.TEST_WRITING.value
+
+    elif current == Phase.TEST_WRITING:
         # Tests written, now implement
         state["phase"] = Phase.IMPLEMENT.value
 
