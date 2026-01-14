@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Minimal iterate workflow enforcement hook.
+"""Iterate workflow enforcement hook.
 
-This hook enforces phase-based tool restrictions for the iterate workflow.
-It's intentionally simple - only checks if tools are allowed in the current phase.
+This hook enforces phase-based tool restrictions for the /iterate workflow.
+It ONLY applies when /iterate is active - base-enforcement.py handles the
+"no workflow = no editing" rule.
 
-Output format (PreToolUse):
-- {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}
-- {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "block", "permissionDecisionReason": "..."}}
+Each workflow owns its own enforcement logic.
 """
 
 import sys
@@ -18,20 +17,18 @@ lib_dir = Path(__file__).parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
 try:
-    from iterate_workflow import is_tool_allowed, is_active, get_phase, status
-except ImportError as e:
-    # If module not available, allow everything
-    def is_tool_allowed(tool_name, command=None):
+    from iterate_workflow import is_tool_allowed, is_active, get_phase
+except ImportError:
+    # If module not available, allow everything (fail-open)
+    def is_tool_allowed(tool_name: str, command: str | None = None) -> tuple[bool, str]:
         return True, ""
-    def is_active():
+    def is_active() -> bool:
         return False
     def get_phase():
         return None
-    def status():
-        return "[ITERATE] Module not available"
 
 
-def allow(reason: str = None) -> dict:
+def allow(reason: str = "") -> dict:
     """Return allow decision."""
     result = {
         "hookSpecificOutput": {
@@ -56,7 +53,7 @@ def block(reason: str) -> dict:
 
 
 def main():
-    """Main enforcement logic."""
+    """Main enforcement logic - only applies when /iterate is active."""
     # Parse input
     try:
         input_data = json.loads(sys.stdin.read())
@@ -64,22 +61,21 @@ def main():
         print(json.dumps(allow()))
         return
 
+    # Skip if /iterate is not active - base-enforcement handles no-workflow case
+    if not is_active():
+        print(json.dumps(allow()))
+        return
+
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input", {})
-
-    # Skip if no iterate workflow active
-    if not is_active():
-        print(json.dumps(allow("No active iterate workflow")))
-        return
 
     # Extract command for Bash tool (for git/gh blocking)
     command = tool_input.get("command") if tool_name == "Bash" else None
 
-    # Check if tool is allowed in current phase
+    # Check phase-based restrictions
     allowed, reason = is_tool_allowed(tool_name, command=command)
 
     if not allowed:
-        # Add current phase info to the reason
         phase = get_phase()
         phase_name = phase.value if phase else "unknown"
         full_reason = f"[ITERATE:{phase_name}] {reason}"
