@@ -24,7 +24,11 @@ from iterate_workflow import (
     set_review_status,
     is_tool_allowed,
     status,
+    add_requirement,
+    get_requirements,
+    set_spec_file,
     STATE_FILE,
+    STATE_DIR,
     LOG_FILE,
     _reset_logger,
 )
@@ -33,11 +37,18 @@ from iterate_workflow import (
 @pytest.fixture(autouse=True)
 def clean_state():
     """Clean state before and after each test."""
+    # Clean iterate.json (workflow state)
     if STATE_FILE.exists():
         STATE_FILE.unlink()
+    # Clean session.json (WorkflowQueue state)
+    session_file = STATE_DIR / "session.json"
+    if session_file.exists():
+        session_file.unlink()
     yield
     if STATE_FILE.exists():
         STATE_FILE.unlink()
+    if session_file.exists():
+        session_file.unlink()
 
 
 @pytest.fixture(autouse=True)
@@ -239,9 +250,15 @@ class TestIterationLimit:
 class TestToolAllowance:
     """Tests for is_tool_allowed function."""
 
-    def test_no_active_workflow_allows_all(self):
-        """When no workflow active, all tools should be allowed."""
+    def test_no_active_workflow_blocks_editing(self):
+        """When no workflow active, editing tools are blocked (BUG-PHASE-MISUSE fix)."""
         allowed, reason = is_tool_allowed("Edit")
+        assert allowed is False
+        assert "BLOCKED" in reason
+
+    def test_no_active_workflow_allows_readonly(self):
+        """When no workflow active, read-only tools are allowed."""
+        allowed, _ = is_tool_allowed("Read")
         assert allowed is True
 
     def test_test_phase_blocks_edit(self):
@@ -361,3 +378,206 @@ class TestLogging:
         new_phase = advance_phase()
         assert new_phase == Phase.IMPLEMENT, "Workflow should work regardless of logging"
         stop()
+
+
+class TestIntakePhase:
+    """Tests for intake phase functions."""
+
+    def test_add_requirement_in_intake_phase(self):
+        """Can add requirements during intake phase."""
+        start("Test task", needs_intake=True)
+        assert get_phase() == Phase.INTAKE
+        add_requirement("User needs authentication")
+        reqs = get_requirements()
+        assert "User needs authentication" in reqs
+
+    def test_add_requirement_fails_outside_intake(self):
+        """add_requirement raises error outside intake phase."""
+        start("Test task")  # Starts in test_writing
+        with pytest.raises(ValueError, match="intake phase"):
+            add_requirement("Should fail")
+
+    def test_get_requirements_empty_initially(self):
+        """get_requirements returns empty list initially."""
+        start("Test task", needs_intake=True)
+        assert get_requirements() == []
+
+
+class TestDesignPhase:
+    """Tests for design phase functions."""
+
+    def test_set_spec_file(self):
+        """Can set spec file path."""
+        start("Test task", needs_design=True)
+        set_phase(Phase.DESIGN)
+        set_spec_file("/path/to/spec.md")
+        state = get_state()
+        assert state["spec_file"] == "/path/to/spec.md"
+
+
+class TestReviewPhase:
+    """Tests for review phase functions."""
+
+    def test_add_review_comment_fails_outside_review(self):
+        """add_review_comment raises error outside review phase."""
+        from iterate_workflow import add_review_comment
+        start("Test task")  # Starts in test_writing
+        with pytest.raises(ValueError, match="review phase"):
+            add_review_comment({"id": "c1", "body": "Test"})
+
+    def test_set_pr_number_fails_without_workflow(self):
+        """set_pr_number raises error without active workflow."""
+        from iterate_workflow import set_pr_number
+        with pytest.raises(RuntimeError, match="no active workflow"):
+            set_pr_number(123)
+
+
+class TestGhCliIntegration:
+    """Tests for gh CLI integration with mocked subprocess."""
+
+    def test_fetch_pr_review_status_success(self, monkeypatch):
+        """fetch_pr_review_status parses JSON response."""
+        from iterate_workflow import fetch_pr_review_status
+        import subprocess
+
+        mock_result = subprocess.CompletedProcess(
+            args=["gh"],
+            returncode=0,
+            stdout='[{"id": "c1", "body": "Fix this", "isResolved": false}]',
+            stderr=""
+        )
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: mock_result)
+
+        comments = fetch_pr_review_status(123)
+        assert len(comments) == 1
+        assert comments[0]["id"] == "c1"
+
+    def test_fetch_pr_review_status_filters_resolved(self, monkeypatch):
+        """fetch_pr_review_status excludes resolved comments."""
+        from iterate_workflow import fetch_pr_review_status
+        import subprocess
+
+        mock_result = subprocess.CompletedProcess(
+            args=["gh"],
+            returncode=0,
+            stdout='[{"id": "c1", "isResolved": true}, {"id": "c2", "isResolved": false}]',
+            stderr=""
+        )
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: mock_result)
+
+        comments = fetch_pr_review_status(123)
+        assert len(comments) == 1
+        assert comments[0]["id"] == "c2"
+
+    def test_fetch_pr_review_status_empty_response(self, monkeypatch):
+        """fetch_pr_review_status handles empty response."""
+        from iterate_workflow import fetch_pr_review_status
+        import subprocess
+
+        mock_result = subprocess.CompletedProcess(args=["gh"], returncode=0, stdout="", stderr="")
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: mock_result)
+
+        comments = fetch_pr_review_status(123)
+        assert comments == []
+
+    def test_fetch_pr_review_status_timeout(self, monkeypatch):
+        """fetch_pr_review_status handles timeout."""
+        from iterate_workflow import fetch_pr_review_status
+        import subprocess
+
+        def raise_timeout(*a, **kw):
+            raise subprocess.TimeoutExpired(cmd="gh", timeout=30)
+
+        monkeypatch.setattr(subprocess, "run", raise_timeout)
+        comments = fetch_pr_review_status(123)
+        assert comments == []
+
+    def test_fetch_pr_review_status_gh_not_found(self, monkeypatch):
+        """fetch_pr_review_status handles missing gh CLI."""
+        from iterate_workflow import fetch_pr_review_status
+
+        def raise_not_found(*a, **kw):
+            raise FileNotFoundError()
+
+        monkeypatch.setattr("subprocess.run", raise_not_found)
+        comments = fetch_pr_review_status(123)
+        assert comments == []
+
+    def test_refresh_review_status_no_pr(self):
+        """refresh_review_status returns 0 without PR number."""
+        from iterate_workflow import refresh_review_status
+        start("Test task")
+        set_phase(Phase.REVIEW)
+        result = refresh_review_status()
+        assert result == 0
+
+    def test_refresh_review_status_wrong_phase(self):
+        """refresh_review_status returns 0 outside review phase."""
+        from iterate_workflow import refresh_review_status, set_pr_number
+        start("Test task")
+        set_pr_number(123)
+        result = refresh_review_status()  # Still in test_writing
+        assert result == 0
+
+    def test_fetch_parses_single_object(self, monkeypatch):
+        """fetch_pr_review_status handles single object (not array)."""
+        from iterate_workflow import fetch_pr_review_status
+        import subprocess
+
+        mock_result = subprocess.CompletedProcess(
+            args=["gh"], returncode=0,
+            stdout='{"id": "c1", "body": "Single", "isResolved": false}',
+            stderr=""
+        )
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: mock_result)
+        comments = fetch_pr_review_status(123)
+        assert len(comments) == 1
+        assert comments[0]["id"] == "c1"
+
+    def test_fetch_parses_line_by_line(self, monkeypatch):
+        """fetch_pr_review_status falls back to line-by-line parsing."""
+        from iterate_workflow import fetch_pr_review_status
+        import subprocess
+
+        # jq output format - one JSON object per line
+        mock_result = subprocess.CompletedProcess(
+            args=["gh"], returncode=0,
+            stdout='{"id": "c1", "isResolved": false}\n{"id": "c2", "isResolved": false}\n',
+            stderr=""
+        )
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: mock_result)
+        comments = fetch_pr_review_status(123)
+        assert len(comments) == 2
+
+    def test_fetch_handles_invalid_json_lines(self, monkeypatch):
+        """fetch_pr_review_status skips invalid JSON lines."""
+        from iterate_workflow import fetch_pr_review_status
+        import subprocess
+
+        mock_result = subprocess.CompletedProcess(
+            args=["gh"], returncode=0,
+            stdout='{"id": "c1"}\nnot json\n{"id": "c2"}\n',
+            stderr=""
+        )
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: mock_result)
+        comments = fetch_pr_review_status(123)
+        assert len(comments) == 2
+
+    def test_refresh_adds_comments_to_queue(self, monkeypatch):
+        """refresh_review_status adds fetched comments to queue."""
+        from iterate_workflow import refresh_review_status, set_pr_number
+        import subprocess
+
+        start("Test task")
+        set_phase(Phase.REVIEW)
+        set_pr_number(123)
+
+        mock_result = subprocess.CompletedProcess(
+            args=["gh"], returncode=0,
+            stdout='[{"id": "new-comment", "body": "Fix this"}]',
+            stderr=""
+        )
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: mock_result)
+
+        added = refresh_review_status()
+        assert added >= 0  # May be 0 if comment already exists

@@ -7,7 +7,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/combined-enforcement.py",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/base-enforcement.py",
+            "timeout": 3
+          },
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/iterate-enforcement.py",
             "timeout": 3
           }
         ]
