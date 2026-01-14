@@ -79,7 +79,18 @@ def _reset_logger() -> None:
 
 
 class Phase(Enum):
-    """TDD workflow phases."""
+    """TDD workflow phases.
+
+    Optional discovery phases (before TDD loop):
+        INTAKE -> DESIGN -> [TDD loop]
+
+    TDD loop:
+        TEST_WRITING -> IMPLEMENT -> TEST -> REVIEW -> DONE
+    """
+    # Optional discovery phases
+    INTAKE = "intake"              # Gather requirements (no editing)
+    DESIGN = "design"              # Write spec, decompose into task_queue
+    # TDD loop phases
     TEST_WRITING = "test_writing"  # Write tests first (the spec)
     IMPLEMENT = "implement"        # Make tests pass
     TEST = "test"                  # Run pytest, lint, coverage
@@ -89,6 +100,16 @@ class Phase(Enum):
 
 # Tools allowed in each phase
 PHASE_TOOLS = {
+    Phase.INTAKE: {
+        # Intake phase: gather requirements, research, no editing
+        "allowed": {"Read", "Glob", "Grep", "WebSearch", "WebFetch", "Task"},
+        "blocked": {"Edit", "Write"},
+    },
+    Phase.DESIGN: {
+        # Design phase: write spec, run decomposer
+        "allowed": {"Read", "Glob", "Grep", "Write", "Bash", "Task"},
+        "blocked": set(),
+    },
     Phase.TEST_WRITING: {
         "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "Bash", "Task"},
         "blocked": set(),
@@ -131,22 +152,50 @@ def _save_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state, indent=2))
 
 
-def start(task: str, max_iterations: int = 5) -> dict:
+def start(
+    task: str,
+    max_iterations: int = 5,
+    needs_intake: bool = False,
+    needs_design: bool = False,
+) -> dict:
     """Start a new iterate workflow.
 
     Args:
         task: Description of what to implement
         max_iterations: Max loops before requiring user checkpoint
+        needs_intake: Start with intake phase (gather requirements)
+        needs_design: Include design phase (write spec, create task_queue)
 
     Returns:
         Current state
+
+    Phase flow based on flags:
+        - needs_intake=True, needs_design=True:
+            intake -> design -> test_writing -> ...
+        - needs_intake=True, needs_design=False:
+            intake -> test_writing -> ...
+        - needs_intake=False, needs_design=True:
+            design -> test_writing -> ...
+        - needs_intake=False, needs_design=False (default):
+            test_writing -> ...
     """
+    # Determine initial phase
+    if needs_intake:
+        initial_phase = Phase.INTAKE
+    elif needs_design:
+        initial_phase = Phase.DESIGN
+    else:
+        initial_phase = Phase.TEST_WRITING
+
     state = {
         "active": True,
         "task": task,
-        "phase": Phase.TEST_WRITING.value,
+        "phase": initial_phase.value,
         "iteration": 0,
         "max_iterations": max_iterations,
+        # Discovery phase flags
+        "needs_intake": needs_intake,
+        "needs_design": needs_design,
         # Test phase results (determines kick-back target)
         "tests_passed": None,     # True/False - did pytest pass?
         "lint_passed": None,      # True/False - did lint pass?
@@ -155,7 +204,8 @@ def start(task: str, max_iterations: int = 5) -> dict:
         "review_status": None,    # clean/issues after review phase
     }
     _save_state(state)
-    _log("info", "Workflow started", task=task, max_iterations=max_iterations)
+    _log("info", "Workflow started", task=task, max_iterations=max_iterations,
+         needs_intake=needs_intake, needs_design=needs_design)
     return state
 
 
@@ -195,6 +245,8 @@ def advance_phase() -> Optional[Phase]:
     """Advance to next phase based on current state.
 
     Phase transitions:
+    - intake -> design (if needs_design) OR test_writing
+    - design -> test_writing
     - test_writing -> implement
     - implement -> test
     - test -> review (if all pass) OR kick-back:
@@ -210,7 +262,18 @@ def advance_phase() -> Optional[Phase]:
 
     current = Phase(state["phase"])
 
-    if current == Phase.TEST_WRITING:
+    if current == Phase.INTAKE:
+        # Intake complete, check if design phase is needed
+        if state.get("needs_design"):
+            state["phase"] = Phase.DESIGN.value
+        else:
+            state["phase"] = Phase.TEST_WRITING.value
+
+    elif current == Phase.DESIGN:
+        # Design complete, move to TDD loop
+        state["phase"] = Phase.TEST_WRITING.value
+
+    elif current == Phase.TEST_WRITING:
         # Tests written, now implement
         state["phase"] = Phase.IMPLEMENT.value
 
@@ -248,14 +311,17 @@ def advance_phase() -> Optional[Phase]:
         state["coverage_ok"] = None
 
     elif current == Phase.REVIEW:
-        # Check review status
-        if state.get("review_status") == "clean":
-            # No issues, we're done!
+        # Check review status AND that all PR comments are addressed
+        review_clean = state.get("review_status") == "clean"
+        comments_addressed = not is_review_blocked()
+
+        if review_clean and comments_addressed:
+            # No issues and all comments addressed, we're done!
             state["phase"] = Phase.DONE.value
             state["active"] = False
             state["exit_reason"] = "review_approved"
         else:
-            # Issues to fix, back to implement
+            # Issues to fix or comments unaddressed, back to implement
             state["iteration"] = state.get("iteration", 0) + 1
             if state["iteration"] >= state.get("max_iterations", 5):
                 state["phase"] = Phase.DONE.value
@@ -348,6 +414,174 @@ def status() -> str:
         f"  Phase: {phase}\n"
         f"  Iteration: {iteration}/{max_iter}"
     )
+
+
+# ============================================================================
+# INTAKE PHASE AUTOMATION
+# ============================================================================
+
+
+def add_requirement(requirement: str) -> None:
+    """Add a requirement discovered during intake phase.
+
+    Args:
+        requirement: A requirement string to store.
+
+    Raises:
+        ValueError: If not in intake phase.
+    """
+    phase = get_phase()
+    if phase != Phase.INTAKE:
+        raise ValueError("add_requirement only allowed in intake phase")
+
+    state = _load_state()
+    if "requirements" not in state:
+        state["requirements"] = []
+    state["requirements"].append(requirement)
+    _save_state(state)
+    _log("info", "Requirement added", requirement=requirement[:50])
+
+
+def get_requirements() -> list[str]:
+    """Get all requirements gathered during intake.
+
+    Returns:
+        List of requirement strings.
+    """
+    state = _load_state()
+    return state.get("requirements", [])
+
+
+# ============================================================================
+# DESIGN PHASE AUTOMATION
+# ============================================================================
+
+
+def set_spec_file(path: str) -> None:
+    """Set the spec file path for design phase decomposition.
+
+    Args:
+        path: Absolute or relative path to the spec markdown file.
+    """
+    state = _load_state()
+    state["spec_file"] = path
+    _save_state(state)
+    _log("info", "Spec file set", path=path)
+
+
+def decompose_spec_to_queue() -> list[dict]:
+    """Decompose the spec file into task queue items.
+
+    Uses the decomposer to parse the spec and create implementation tasks.
+
+    Returns:
+        List of task dictionaries created.
+
+    Raises:
+        ValueError: If not in design phase or no spec file set.
+    """
+    phase = get_phase()
+    if phase != Phase.DESIGN:
+        raise ValueError("decompose_spec_to_queue only allowed in design phase")
+
+    state = _load_state()
+    spec_file = state.get("spec_file")
+    if not spec_file:
+        raise ValueError("No spec file set. Call set_spec_file() first.")
+
+    # Import decomposer (in scripts directory)
+    import sys
+    scripts_dir = Path(__file__).parent.parent / "scripts"
+    sys.path.insert(0, str(scripts_dir))
+    from decomposer import decompose_spec
+
+    # Generate a PR ID for task grouping
+    pr_id = state.get("pr_id", "workflow-" + state.get("task", "default")[:20])
+
+    tasks = decompose_spec(spec_file, pr_id, group_enums=True)
+
+    # Store task count in state
+    state["decomposed_task_count"] = len(tasks)
+    _save_state(state)
+
+    _log("info", "Spec decomposed", task_count=len(tasks), spec_file=spec_file)
+    return tasks
+
+
+# ============================================================================
+# REVIEW PHASE AUTOMATION
+# ============================================================================
+
+
+def _get_workflow_queue():
+    """Get or create WorkflowQueue instance."""
+    from workflow_queue import WorkflowQueue
+    state = _load_state()
+    pr_id = state.get("pr_id", "current")
+    return WorkflowQueue(pr_id=pr_id)
+
+
+def add_review_comment(comment: dict) -> dict:
+    """Add a PR comment as a review task.
+
+    Args:
+        comment: Dict with 'id', 'body', and optionally 'severity', 'path'.
+
+    Returns:
+        The created task dictionary.
+
+    Raises:
+        ValueError: If not in review phase.
+    """
+    phase = get_phase()
+    if phase != Phase.REVIEW:
+        raise ValueError("add_review_comment only allowed in review phase")
+
+    wq = _get_workflow_queue()
+    task = wq.add_pr_comment(comment)
+
+    _log("info", "Review comment added", comment_id=comment.get("id"))
+    return {
+        "id": task.id,
+        "description": task.description,
+        "status": task.status.value,
+    }
+
+
+def get_pending_review_tasks() -> list[dict]:
+    """Get all unaddressed PR comment tasks.
+
+    Returns:
+        List of task dictionaries that are still pending.
+    """
+    wq = _get_workflow_queue()
+    tasks = wq.get_unaddressed_comments()
+    return [
+        {"id": t.id, "description": t.description, "status": t.status.value}
+        for t in tasks
+    ]
+
+
+def mark_review_task_done(task_id: str, result: Optional[dict] = None) -> None:
+    """Mark a review task as completed.
+
+    Args:
+        task_id: ID of the task to complete.
+        result: Optional result metadata.
+    """
+    wq = _get_workflow_queue()
+    wq.mark_done(task_id, result)
+    _log("info", "Review task completed", task_id=task_id)
+
+
+def is_review_blocked() -> bool:
+    """Check if review phase advancement is blocked.
+
+    Returns:
+        True if there are unaddressed PR comments.
+    """
+    wq = _get_workflow_queue()
+    return not wq.can_commit()
 
 
 # CLI interface
