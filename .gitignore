@@ -7,3 +7,8 @@
 # Cache
 __pycache__/
 *.pyc
+
+# Coverage
+.coverage
+.coverage.*
+.coveragerc

@@ -305,11 +305,13 @@ class TestNeedsMonitoring:
 
     def test_no_monitoring_when_anthropic_unavailable(self, sample_state):
         """Should return False when ANTHROPIC_AVAILABLE is False."""
-        # This test verifies behavior when anthropic is unavailable
-        # Since anthropic IS available in our env, we test the positive case
         tool_input = {"command": 'git commit -m "Fix bug"'}
-        # With anthropic available, git commit should trigger monitoring
-        assert needs_monitoring("Bash", tool_input, sample_state) is True
+        if ANTHROPIC_AVAILABLE:
+            # With anthropic available, git commit should trigger monitoring
+            assert needs_monitoring("Bash", tool_input, sample_state) is True
+        else:
+            # Without anthropic, all monitoring is disabled
+            assert needs_monitoring("Bash", tool_input, sample_state) is False
 
     @pytest.mark.skipif(not ANTHROPIC_AVAILABLE, reason="anthropic not installed")
     def test_needs_monitoring_empty_state(self):

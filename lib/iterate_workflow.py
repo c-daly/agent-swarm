@@ -345,7 +345,12 @@ def set_test_results(tests_passed: bool, lint_passed: bool, coverage_ok: bool) -
         tests_passed: Did pytest pass?
         lint_passed: Did lint/type checks pass?
         coverage_ok: Is coverage above threshold?
+
+    Raises:
+        RuntimeError: If no active workflow.
     """
+    if not is_active():
+        raise RuntimeError("No active workflow - cannot record test results")
     state = _load_state()
     state["tests_passed"] = tests_passed
     state["lint_passed"] = lint_passed
@@ -355,7 +360,13 @@ def set_test_results(tests_passed: bool, lint_passed: bool, coverage_ok: bool) -
 
 
 def set_review_status(clean: bool) -> None:
-    """Record review status (no issues = clean)."""
+    """Record review status (no issues = clean).
+
+    Raises:
+        RuntimeError: If no active workflow.
+    """
+    if not is_active():
+        raise RuntimeError("No active workflow - cannot record review status")
     state = _load_state()
     state["review_status"] = "clean" if clean else "issues"
     _save_state(state)
@@ -371,8 +382,12 @@ def stop(reason: str = "user_stopped") -> None:
     _log("info", "Workflow stopped", reason=reason)
 
 
-def is_tool_allowed(tool_name: str) -> tuple[bool, str]:
+def is_tool_allowed(tool_name: str, command: str | None = None) -> tuple[bool, str]:
     """Check if a tool is allowed in current phase.
+
+    Args:
+        tool_name: Name of the tool being invoked.
+        command: For Bash tool, the command string (used for git/gh blocking).
 
     Returns:
         (allowed: bool, reason: str)
@@ -385,6 +400,28 @@ def is_tool_allowed(tool_name: str) -> tuple[bool, str]:
 
     if tool_name in phase_config["blocked"]:
         return False, f"[BLOCKED] {tool_name} not allowed in {phase.value} phase. Run tests first."
+
+    # Check for git/gh commands in Bash (WORKFLOW.5)
+    if tool_name == "Bash" and command:
+        cmd_lower = command.strip().lower()
+        is_git_cmd = cmd_lower.startswith("git ") or cmd_lower == "git"
+        is_gh_cmd = cmd_lower.startswith("gh ")
+
+        if is_git_cmd or is_gh_cmd:
+            # Git/gh only allowed in REVIEW phase
+            if phase != Phase.REVIEW:
+                return False, f"[BLOCKED] git/gh commands only allowed in review phase. Current: {phase.value}"
+
+            # In REVIEW phase, check coverage requirement for commit/push (WORKFLOW.1)
+            state = _load_state()
+            is_commit_or_push = any(x in cmd_lower for x in ["commit", "push"])
+
+            if is_commit_or_push:
+                coverage_ok = state.get("coverage_ok")
+                if coverage_ok is None:
+                    return False, "[BLOCKED] Run tests and record coverage before commit/push"
+                if not coverage_ok:
+                    return False, "[BLOCKED] Coverage threshold not met - cannot commit/push"
 
     # Allow MCP variants of allowed tools
     base_tool = tool_name.split("__")[-1] if "__" in tool_name else tool_name
