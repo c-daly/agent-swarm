@@ -1,0 +1,353 @@
+"""Minimal iterate workflow - TDD loop with phase gates.
+
+This is a simplified replacement for the complex workflow.py.
+Focus: Clear state, simple phases, reliable persistence.
+
+Flow:
+  test_writing -> implement -> test -> review -> [loop or done]
+                     ^           |        |
+                     |           v        v
+                     +--- FAIL --+   issues found
+"""
+
+import json
+from pathlib import Path
+from typing import Optional
+from enum import Enum
+
+STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
+STATE_FILE = STATE_DIR / "iterate.json"
+
+
+class Phase(Enum):
+    """TDD workflow phases."""
+    TEST_WRITING = "test_writing"  # Write tests first (the spec)
+    IMPLEMENT = "implement"        # Make tests pass
+    TEST = "test"                  # Run pytest, lint, coverage
+    REVIEW = "review"              # Address Greptile comments
+    DONE = "done"
+
+
+# Tools allowed in each phase
+PHASE_TOOLS = {
+    Phase.TEST_WRITING: {
+        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "Bash", "Task"},
+        "blocked": set(),
+    },
+    Phase.IMPLEMENT: {
+        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "Bash", "Task"},
+        "blocked": set(),
+    },
+    Phase.TEST: {
+        # Test phase: run verification only, no editing
+        "allowed": {"Read", "Glob", "Grep", "Bash"},
+        "blocked": {"Edit", "Write"},
+    },
+    Phase.REVIEW: {
+        # Review phase: fix issues from Greptile comments
+        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "Bash", "Task"},
+        "blocked": set(),
+    },
+    Phase.DONE: {
+        "allowed": {"Read", "Glob", "Grep", "Bash", "Edit", "Write", "Task"},
+        "blocked": set(),
+    },
+}
+
+
+def _load_state() -> dict:
+    """Load iterate state from disk."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    if STATE_FILE.exists():
+        try:
+            return json.loads(STATE_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def _save_state(state: dict) -> None:
+    """Save iterate state to disk."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps(state, indent=2))
+
+
+def start(task: str, max_iterations: int = 5) -> dict:
+    """Start a new iterate workflow.
+
+    Args:
+        task: Description of what to implement
+        max_iterations: Max loops before requiring user checkpoint
+
+    Returns:
+        Current state
+    """
+    state = {
+        "active": True,
+        "task": task,
+        "phase": Phase.TEST_WRITING.value,
+        "iteration": 0,
+        "max_iterations": max_iterations,
+        # Test phase results (determines kick-back target)
+        "tests_passed": None,     # True/False - did pytest pass?
+        "lint_passed": None,      # True/False - did lint pass?
+        "coverage_ok": None,      # True/False - is coverage sufficient?
+        # Review phase result
+        "review_status": None,    # clean/issues after review phase
+    }
+    _save_state(state)
+    return state
+
+
+def get_state() -> dict:
+    """Get current iterate state."""
+    return _load_state()
+
+
+def get_phase() -> Optional[Phase]:
+    """Get current phase, or None if not active."""
+    state = _load_state()
+    if not state.get("active"):
+        return None
+    phase_str = state.get("phase")
+    if phase_str:
+        try:
+            return Phase(phase_str)
+        except ValueError:
+            return None
+    return None
+
+
+def is_active() -> bool:
+    """Check if iterate workflow is active."""
+    state = _load_state()
+    return state.get("active", False)
+
+
+def set_phase(phase: Phase) -> None:
+    """Manually set phase (for kick-back scenarios)."""
+    state = _load_state()
+    state["phase"] = phase.value
+    _save_state(state)
+
+
+def advance_phase() -> Optional[Phase]:
+    """Advance to next phase based on current state.
+
+    Phase transitions:
+    - test_writing -> implement
+    - implement -> test
+    - test -> review (if all pass) OR kick-back:
+        - coverage_ok=False -> test_writing (need more tests)
+        - tests_passed=False OR lint_passed=False -> implement (fix code)
+    - review -> done (if clean) OR implement (if issues)
+
+    Returns new phase or None if workflow ended.
+    """
+    state = _load_state()
+    if not state.get("active"):
+        return None
+
+    current = Phase(state["phase"])
+
+    if current == Phase.TEST_WRITING:
+        # Tests written, now implement
+        state["phase"] = Phase.IMPLEMENT.value
+
+    elif current == Phase.IMPLEMENT:
+        # Implementation done, now run tests
+        state["phase"] = Phase.TEST.value
+
+    elif current == Phase.TEST:
+        # Check all test phase results
+        tests_ok = state.get("tests_passed", False)
+        lint_ok = state.get("lint_passed", False)
+        coverage_ok = state.get("coverage_ok", False)
+
+        if tests_ok and lint_ok and coverage_ok:
+            # Everything passes, move to review
+            state["phase"] = Phase.REVIEW.value
+        else:
+            # Something failed, determine kick-back target
+            state["iteration"] = state.get("iteration", 0) + 1
+
+            if state["iteration"] >= state.get("max_iterations", 5):
+                state["phase"] = Phase.DONE.value
+                state["active"] = False
+                state["exit_reason"] = "max_iterations"
+            elif not coverage_ok:
+                # Coverage too low -> need more tests
+                state["phase"] = Phase.TEST_WRITING.value
+            else:
+                # Tests or lint failed -> fix code
+                state["phase"] = Phase.IMPLEMENT.value
+
+        # Reset test results for next round
+        state["tests_passed"] = None
+        state["lint_passed"] = None
+        state["coverage_ok"] = None
+
+    elif current == Phase.REVIEW:
+        # Check review status
+        if state.get("review_status") == "clean":
+            # No issues, we're done!
+            state["phase"] = Phase.DONE.value
+            state["active"] = False
+            state["exit_reason"] = "review_approved"
+        else:
+            # Issues to fix, back to implement
+            state["iteration"] = state.get("iteration", 0) + 1
+            if state["iteration"] >= state.get("max_iterations", 5):
+                state["phase"] = Phase.DONE.value
+                state["active"] = False
+                state["exit_reason"] = "max_iterations"
+            else:
+                state["phase"] = Phase.IMPLEMENT.value
+        # Reset review status for next round
+        state["review_status"] = None
+
+    _save_state(state)
+    return Phase(state["phase"]) if state.get("active") else None
+
+
+def set_test_results(tests_passed: bool, lint_passed: bool, coverage_ok: bool) -> None:
+    """Record all test phase results at once.
+
+    Args:
+        tests_passed: Did pytest pass?
+        lint_passed: Did lint/type checks pass?
+        coverage_ok: Is coverage above threshold?
+    """
+    state = _load_state()
+    state["tests_passed"] = tests_passed
+    state["lint_passed"] = lint_passed
+    state["coverage_ok"] = coverage_ok
+    _save_state(state)
+
+
+def set_review_status(clean: bool) -> None:
+    """Record review status (no issues = clean)."""
+    state = _load_state()
+    state["review_status"] = "clean" if clean else "issues"
+    _save_state(state)
+
+
+def stop(reason: str = "user_stopped") -> None:
+    """Stop the iterate workflow."""
+    state = _load_state()
+    state["active"] = False
+    state["exit_reason"] = reason
+    _save_state(state)
+
+
+def is_tool_allowed(tool_name: str) -> tuple[bool, str]:
+    """Check if a tool is allowed in current phase.
+
+    Returns:
+        (allowed: bool, reason: str)
+    """
+    phase = get_phase()
+    if phase is None:
+        return True, "No active workflow"
+
+    phase_config = PHASE_TOOLS.get(phase, PHASE_TOOLS[Phase.DONE])
+
+    if tool_name in phase_config["blocked"]:
+        return False, f"[BLOCKED] {tool_name} not allowed in {phase.value} phase. Run tests first."
+
+    # Allow MCP variants of allowed tools
+    base_tool = tool_name.split("__")[-1] if "__" in tool_name else tool_name
+    if base_tool in phase_config["allowed"]:
+        return True, ""
+
+    # Default allow if not explicitly blocked
+    return True, ""
+
+
+def status() -> str:
+    """Get human-readable status."""
+    state = _load_state()
+    if not state.get("active"):
+        if state.get("exit_reason"):
+            return f"[ITERATE] Completed: {state['exit_reason']}"
+        return "[ITERATE] Not active"
+
+    phase = state.get("phase", "unknown")
+    iteration = state.get("iteration", 0) + 1
+    max_iter = state.get("max_iterations", 5)
+    task = state.get("task", "No task")[:50]
+
+    return (
+        f"[ITERATE] Active\n"
+        f"  Task: {task}\n"
+        f"  Phase: {phase}\n"
+        f"  Iteration: {iteration}/{max_iter}"
+    )
+
+
+# CLI interface
+if __name__ == "__main__":
+    import sys
+
+    def usage():
+        print("Usage: python iterate_workflow.py <command> [args]")
+        print()
+        print("Commands:")
+        print("  start <task> [max_iter]  Start new workflow")
+        print("  status                   Show current status")
+        print("  phase                    Show current phase")
+        print("  advance                  Advance to next phase")
+        print("  test <t> <l> <c>         Record test results (1=pass, 0=fail)")
+        print("                           t=tests, l=lint, c=coverage")
+        print("  review <clean>           Record review status (1=clean, 0=issues)")
+        print("  stop                     Stop workflow")
+
+    if len(sys.argv) < 2:
+        print(status())
+        sys.exit(0)
+
+    cmd = sys.argv[1]
+
+    if cmd == "start":
+        task = sys.argv[2] if len(sys.argv) > 2 else "Unspecified task"
+        max_iter = int(sys.argv[3]) if len(sys.argv) > 3 else 5
+        start(task, max_iter)
+        print(status())
+    elif cmd == "status":
+        print(status())
+    elif cmd == "phase":
+        phase = get_phase()
+        print(phase.value if phase else "none")
+    elif cmd == "advance":
+        new_phase = advance_phase()
+        if new_phase:
+            print(f"Advanced to: {new_phase.value}")
+        else:
+            state = get_state()
+            print(f"Workflow ended: {state.get('exit_reason', 'done')}")
+    elif cmd == "test":
+        if len(sys.argv) < 5:
+            print("Usage: test <tests_passed> <lint_passed> <coverage_ok>")
+            print("       Use 1 for pass, 0 for fail")
+            sys.exit(1)
+        tests = sys.argv[2] == "1"
+        lint = sys.argv[3] == "1"
+        coverage = sys.argv[4] == "1"
+        set_test_results(tests, lint, coverage)
+        print(f"Recorded: tests={tests}, lint={lint}, coverage={coverage}")
+    elif cmd == "review":
+        if len(sys.argv) < 3:
+            print("Usage: review <clean>  (1=clean, 0=issues)")
+            sys.exit(1)
+        clean = sys.argv[2] == "1"
+        set_review_status(clean)
+        print(f"Recorded: review {'clean' if clean else 'has issues'}")
+    elif cmd == "stop":
+        stop()
+        print("Stopped")
+    elif cmd == "help":
+        usage()
+    else:
+        print(f"Unknown command: {cmd}")
+        usage()
+        sys.exit(1)
