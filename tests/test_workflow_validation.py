@@ -417,16 +417,21 @@ class TestExceptionHandling:
 class TestCLI:
     """Tests for CLI main block using coverage subprocess tracking."""
 
-    @staticmethod
-    def run_cli(*args):
+    # Project root computed relative to this test file
+    PROJECT_ROOT = Path(__file__).parent.parent
+
+    @classmethod
+    def run_cli(cls, *args):
         """Run CLI with coverage tracking."""
         import subprocess
         import os
         env = os.environ.copy()
-        env["COVERAGE_PROCESS_START"] = "/home/fearsidhe/.claude/plugins/agent-swarm/.coveragerc"
+        coveragerc = cls.PROJECT_ROOT / ".coveragerc"
+        if coveragerc.exists():
+            env["COVERAGE_PROCESS_START"] = str(coveragerc)
         return subprocess.run(
             ["coverage", "run", "--parallel-mode", "lib/iterate_workflow.py"] + list(args),
-            cwd="/home/fearsidhe/.claude/plugins/agent-swarm",
+            cwd=str(cls.PROJECT_ROOT),
             capture_output=True, text=True, env=env
         )
 
