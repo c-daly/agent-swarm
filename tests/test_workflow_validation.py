@@ -552,3 +552,40 @@ class TestCLI:
         self.run_cli("review", "1")
         result = self.run_cli("advance")  # -> done (ends workflow)
         assert "ended" in result.stdout.lower() or "done" in result.stdout.lower()
+
+
+class TestNoWorkflowEnforcement:
+    """Tests for BUG-PHASE-MISUSE: block editing tools when no workflow is active.
+
+    When no workflow is active, editing tools (Edit, Write, NotebookEdit) should be
+    BLOCKED to enforce starting a workflow first. Read-only tools should still work.
+    """
+
+    @pytest.mark.parametrize("tool", ["Edit", "Write", "NotebookEdit"])
+    def test_editing_tools_blocked_when_no_workflow(self, tool):
+        """Editing tools blocked when no workflow is active."""
+        # No workflow started - should block
+        allowed, reason = is_tool_allowed(tool)
+        assert not allowed, f"{tool} should be blocked with no workflow"
+        assert "workflow" in reason.lower() or "iterate" in reason.lower()
+
+    @pytest.mark.parametrize("tool", ["Read", "Glob", "Grep", "Bash", "Task"])
+    def test_readonly_tools_allowed_when_no_workflow(self, tool):
+        """Read-only and research tools allowed without workflow."""
+        allowed, reason = is_tool_allowed(tool)
+        assert allowed, f"{tool} should be allowed without workflow"
+
+    def test_editing_allowed_during_workflow(self):
+        """Edit allowed when workflow is active in appropriate phase."""
+        start("test task")
+        # test_writing phase allows editing
+        assert get_phase() == Phase.TEST_WRITING
+        allowed, reason = is_tool_allowed("Edit")
+        assert allowed, "Edit should be allowed during test_writing phase"
+
+    def test_editing_blocked_in_test_phase(self):
+        """Edit blocked during test phase even with active workflow."""
+        start("test task")
+        set_phase(Phase.TEST)
+        allowed, reason = is_tool_allowed("Edit")
+        assert not allowed, "Edit should be blocked in test phase"

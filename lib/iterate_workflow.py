@@ -455,6 +455,10 @@ def stop(reason: str = "user_stopped") -> None:
     _notify_workflow_end(reason, task)
 
 
+# Tools that require an active workflow to use
+EDITING_TOOLS = {"Edit", "Write", "NotebookEdit"}
+
+
 def is_tool_allowed(tool_name: str, command: str | None = None) -> tuple[bool, str]:
     """Check if a tool is allowed in current phase.
 
@@ -467,6 +471,9 @@ def is_tool_allowed(tool_name: str, command: str | None = None) -> tuple[bool, s
     """
     phase = get_phase()
     if phase is None:
+        # No active workflow - block editing tools (BUG-PHASE-MISUSE fix)
+        if tool_name in EDITING_TOOLS:
+            return False, f"[BLOCKED] No active workflow. Start /iterate to use {tool_name}."
         return True, "No active workflow"
 
     phase_config = PHASE_TOOLS.get(phase, PHASE_TOOLS[Phase.DONE])
