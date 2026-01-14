@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Tests for iterate_workflow.py - minimal TDD workflow with phase gates."""
 
-import json
 import sys
 from pathlib import Path
 
@@ -26,6 +25,8 @@ from iterate_workflow import (
     is_tool_allowed,
     status,
     STATE_FILE,
+    LOG_FILE,
+    _reset_logger,
 )
 
 
@@ -37,6 +38,16 @@ def clean_state():
     yield
     if STATE_FILE.exists():
         STATE_FILE.unlink()
+
+
+@pytest.fixture(autouse=True)
+def clean_logging():
+    """Clean logging state before and after each test."""
+    _reset_logger()
+    if LOG_FILE.exists():
+        LOG_FILE.unlink()
+    yield
+    _reset_logger()
 
 
 class TestPhaseEnum:
@@ -299,3 +310,54 @@ class TestStatus:
         stop()
         output = status()
         assert "Not active" in output or "Completed" in output
+
+
+class TestLogging:
+    """Tests for logging functionality."""
+
+    def test_log_file_created_on_start(self):
+        """Starting workflow should create log file."""
+        start("Test logging task")
+        stop()
+        assert LOG_FILE.exists(), "Log file should be created after workflow start"
+
+    def test_log_contains_start_entry(self):
+        """Log should contain workflow start entry."""
+        start("Test logging task")
+        stop()
+        log_content = LOG_FILE.read_text()
+        assert "Workflow started" in log_content, "Log should contain start entry"
+        assert "Test logging task" in log_content, "Log should contain task name"
+
+    def test_log_contains_phase_transitions(self):
+        """Log should contain phase transition entries."""
+        start("Test task")
+        advance_phase()  # test_writing -> implement
+        stop()
+        log_content = LOG_FILE.read_text()
+        assert "Phase transition" in log_content, "Log should contain phase transition"
+        assert "test_writing" in log_content, "Log should show from phase"
+        assert "implement" in log_content, "Log should show to phase"
+
+    def test_log_contains_test_results(self):
+        """Log should contain test results recording."""
+        start("Test task")
+        set_test_results(True, True, False)
+        stop()
+        log_content = LOG_FILE.read_text()
+        assert "Test results recorded" in log_content, "Log should contain test results"
+
+    def test_log_contains_stop_entry(self):
+        """Log should contain workflow stop entry."""
+        start("Test task")
+        stop("test_reason")
+        log_content = LOG_FILE.read_text()
+        assert "Workflow stopped" in log_content, "Log should contain stop entry"
+        assert "test_reason" in log_content, "Log should contain stop reason"
+
+    def test_logging_does_not_break_workflow(self):
+        """Logging failures should not break workflow operations."""
+        start("Test task")
+        new_phase = advance_phase()
+        assert new_phase == Phase.IMPLEMENT, "Workflow should work regardless of logging"
+        stop()

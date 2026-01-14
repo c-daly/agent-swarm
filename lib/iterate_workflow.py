@@ -11,12 +11,71 @@ Flow:
 """
 
 import json
+import logging
+import os
 from pathlib import Path
 from typing import Optional
 from enum import Enum
 
 STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
 STATE_FILE = STATE_DIR / "iterate.json"
+LOG_FILE = STATE_DIR / "iterate.log"
+
+# Module-level logger instance
+_logger: Optional[logging.Logger] = None
+
+
+def _get_logger() -> logging.Logger:
+    """Get or create iterate workflow logger."""
+    global _logger
+    if _logger is not None:
+        return _logger
+
+    _logger = logging.getLogger("iterate_workflow")
+    _logger.propagate = False  # Prevent duplicate output to root logger
+    level_name = os.environ.get("ITERATE_LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
+    _logger.setLevel(level)
+
+    # Avoid duplicate handlers
+    if not _logger.handlers:
+        try:
+            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
+            handler.setFormatter(logging.Formatter(
+                "%(asctime)s [%(levelname)s] %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S"
+            ))
+            _logger.addHandler(handler)
+        except (OSError, IOError):
+            pass  # Silently fail - logging shouldn't break workflow
+
+    return _logger
+
+
+def _log(level: str, message: str, **context) -> None:
+    """Internal logging helper. Never raises exceptions."""
+    try:
+        logger = _get_logger()
+        if context:
+            ctx_str = " ".join(f"{k}={v}" for k, v in context.items())
+            message = f"{message} | {ctx_str}"
+        getattr(logger, level)(message)
+        # Flush handlers to ensure logs are written
+        for handler in logger.handlers:
+            handler.flush()
+    except Exception:
+        pass  # Never let logging break the workflow
+
+
+def _reset_logger() -> None:
+    """Reset the logger (for testing). Closes handlers and clears cached logger."""
+    global _logger
+    if _logger is not None:
+        for handler in _logger.handlers[:]:
+            handler.close()
+            _logger.removeHandler(handler)
+        _logger = None
 
 
 class Phase(Enum):
@@ -96,6 +155,7 @@ def start(task: str, max_iterations: int = 5) -> dict:
         "review_status": None,    # clean/issues after review phase
     }
     _save_state(state)
+    _log("info", "Workflow started", task=task, max_iterations=max_iterations)
     return state
 
 
@@ -207,6 +267,8 @@ def advance_phase() -> Optional[Phase]:
         state["review_status"] = None
 
     _save_state(state)
+    _log("info", "Phase transition", from_phase=current.value, to_phase=state["phase"],
+         iteration=state.get("iteration", 0))
     return Phase(state["phase"]) if state.get("active") else None
 
 
@@ -223,6 +285,7 @@ def set_test_results(tests_passed: bool, lint_passed: bool, coverage_ok: bool) -
     state["lint_passed"] = lint_passed
     state["coverage_ok"] = coverage_ok
     _save_state(state)
+    _log("info", "Test results recorded", tests=tests_passed, lint=lint_passed, coverage=coverage_ok)
 
 
 def set_review_status(clean: bool) -> None:
@@ -230,6 +293,7 @@ def set_review_status(clean: bool) -> None:
     state = _load_state()
     state["review_status"] = "clean" if clean else "issues"
     _save_state(state)
+    _log("info", "Review status recorded", clean=clean)
 
 
 def stop(reason: str = "user_stopped") -> None:
@@ -238,6 +302,7 @@ def stop(reason: str = "user_stopped") -> None:
     state["active"] = False
     state["exit_reason"] = reason
     _save_state(state)
+    _log("info", "Workflow stopped", reason=reason)
 
 
 def is_tool_allowed(tool_name: str) -> tuple[bool, str]:
