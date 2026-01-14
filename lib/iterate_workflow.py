@@ -202,6 +202,8 @@ def start(
         "coverage_ok": None,      # True/False - is coverage sufficient?
         # Review phase result
         "review_status": None,    # clean/issues after review phase
+        # PR tracking for auto-refresh
+        "pr_number": None,        # PR number for GitHub review polling
     }
     _save_state(state)
     _log("info", "Workflow started", task=task, max_iterations=max_iterations,
@@ -232,6 +234,42 @@ def is_active() -> bool:
     """Check if iterate workflow is active."""
     state = _load_state()
     return state.get("active", False)
+
+
+def verify_active(expected_phase: Optional[Phase] = None) -> None:
+    """Verify workflow is still active and optionally in expected phase.
+
+    Call this before critical operations to detect premature termination.
+
+    Args:
+        expected_phase: If provided, also verify we're in this phase.
+
+    Raises:
+        RuntimeError: If workflow is not active or not in expected phase.
+    """
+    if not STATE_FILE.exists():
+        raise RuntimeError(
+            "[WORKFLOW TERMINATED] State file was deleted unexpectedly. "
+            "This may be caused by test fixtures using production state. "
+            "Workflow must be restarted."
+        )
+
+    state = _load_state()
+    if not state.get("active"):
+        raise RuntimeError(
+            "[WORKFLOW TERMINATED] Workflow is no longer active. "
+            f"Exit reason: {state.get('exit_reason', 'unknown')}. "
+            "State may have been corrupted or workflow stopped externally."
+        )
+
+    if expected_phase is not None:
+        current = Phase(state["phase"]) if state.get("phase") else None
+        if current != expected_phase:
+            raise RuntimeError(
+                f"[WORKFLOW PHASE MISMATCH] Expected {expected_phase.value}, "
+                f"got {current.value if current else 'None'}. "
+                "Phase may have changed unexpectedly."
+            )
 
 
 def set_phase(phase: Phase) -> None:
@@ -290,6 +328,13 @@ def advance_phase() -> Optional[Phase]:
         if tests_ok and lint_ok and coverage_ok:
             # Everything passes, move to review
             state["phase"] = Phase.REVIEW.value
+            # Save state first, then auto-fetch PR comments
+            _save_state(state)
+            pr = state.get("pr_number")
+            if pr:
+                _log("info", "Auto-fetching PR review comments", pr=pr)
+                # Import here to avoid circular dependency issues
+                refresh_review_status(pr)
         else:
             # Something failed, determine kick-back target
             state["iteration"] = state.get("iteration", 0) + 1
@@ -619,6 +664,136 @@ def is_review_blocked() -> bool:
     """
     wq = _get_workflow_queue()
     return not wq.can_commit()
+
+
+def set_pr_number(pr_number: int) -> None:
+    """Set the PR number for review status polling.
+
+    Args:
+        pr_number: The GitHub PR number to track.
+    """
+    if not is_active():
+        raise RuntimeError("Cannot set PR number: no active workflow")
+
+    state = _load_state()
+    state["pr_number"] = pr_number
+    _save_state(state)
+    _log("info", "PR number set", pr_number=pr_number)
+
+
+def get_pr_number() -> Optional[int]:
+    """Get the stored PR number for review polling.
+
+    Returns:
+        The PR number if set, None otherwise.
+    """
+    state = _load_state()
+    return state.get("pr_number")
+
+
+def fetch_pr_review_status(pr_number: int) -> list[dict]:
+    """Fetch unresolved PR review comments from GitHub.
+
+    Uses `gh` CLI to fetch review comments for the given PR.
+    Filters out resolved comments.
+
+    Args:
+        pr_number: The GitHub PR number to check.
+
+    Returns:
+        List of unresolved comment dictionaries with 'id', 'body', etc.
+    """
+    import subprocess
+
+    try:
+        # Fetch PR review comments using gh CLI
+        result = subprocess.run(
+            ["gh", "pr", "view", str(pr_number), "--json", "reviews,comments",
+             "--jq", '.reviews[].comments[]? // .comments[] | select(.isResolved != true) | {id: .id, body: .body, path: .path, isResolved: .isResolved}'],
+            capture_output=True, text=True, timeout=30
+        )
+
+        if result.returncode != 0:
+            _log("warning", "gh pr view failed", pr=pr_number, stderr=result.stderr)
+            return []
+
+        # Parse JSON output - handle both JSON array and line-by-line format
+        stdout = result.stdout.strip()
+        if not stdout:
+            return []
+
+        comments = []
+        try:
+            # First try parsing as JSON array
+            parsed = json.loads(stdout)
+            if isinstance(parsed, list):
+                for comment in parsed:
+                    if isinstance(comment, dict) and not comment.get("isResolved", False):
+                        comments.append(comment)
+            elif isinstance(parsed, dict):
+                # Single object
+                if not parsed.get("isResolved", False):
+                    comments.append(parsed)
+        except json.JSONDecodeError:
+            # Fall back to line-by-line parsing (jq output format)
+            for line in stdout.split('\n'):
+                if line:
+                    try:
+                        comment = json.loads(line)
+                        if isinstance(comment, dict) and not comment.get("isResolved", False):
+                            comments.append(comment)
+                    except json.JSONDecodeError:
+                        continue
+
+        _log("info", "Fetched PR comments", pr=pr_number, count=len(comments))
+        return comments
+
+    except subprocess.TimeoutExpired:
+        _log("error", "gh pr view timed out", pr=pr_number)
+        return []
+    except FileNotFoundError:
+        _log("error", "gh CLI not found")
+        return []
+
+
+def refresh_review_status(pr_number: Optional[int] = None) -> int:
+    """Refresh review queue by fetching latest PR comments.
+
+    Fetches unresolved comments from GitHub and adds any new ones
+    to the review task queue.
+
+    Args:
+        pr_number: PR number to fetch, or None to use stored number.
+
+    Returns:
+        Number of new comments added to queue.
+    """
+    if pr_number is None:
+        pr_number = get_pr_number()
+
+    if pr_number is None:
+        _log("warning", "No PR number available for refresh")
+        return 0
+
+    phase = get_phase()
+    if phase != Phase.REVIEW:
+        _log("warning", "refresh_review_status called outside review phase")
+        return 0
+
+    comments = fetch_pr_review_status(pr_number)
+
+    # Add new comments to queue
+    added = 0
+    for comment in comments:
+        try:
+            add_review_comment(comment)
+            added += 1
+        except Exception as e:
+            # Comment might already exist in queue
+            _log("debug", "Could not add comment", comment_id=comment.get("id"), error=str(e))
+
+    _log("info", "Review status refreshed", pr=pr_number, added=added)
+    return added
 
 
 # CLI interface

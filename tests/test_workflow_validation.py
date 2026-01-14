@@ -414,6 +414,60 @@ class TestExceptionHandling:
         assert result is None
 
 
+class TestVerifyActive:
+    """Tests for verify_active() premature termination detection."""
+
+    def test_verify_active_raises_when_state_file_missing(self):
+        """verify_active raises RuntimeError when state file deleted."""
+        from iterate_workflow import verify_active
+
+        # Ensure state file doesn't exist
+        if STATE_FILE.exists():
+            STATE_FILE.unlink()
+
+        with pytest.raises(RuntimeError) as exc_info:
+            verify_active()
+        assert "WORKFLOW TERMINATED" in str(exc_info.value)
+        assert "State file was deleted" in str(exc_info.value)
+
+    def test_verify_active_raises_when_workflow_inactive(self):
+        """verify_active raises RuntimeError when workflow not active."""
+        from iterate_workflow import verify_active, _save_state, STATE_DIR
+
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        _save_state({"active": False, "exit_reason": "test_stopped"})
+
+        with pytest.raises(RuntimeError) as exc_info:
+            verify_active()
+        assert "WORKFLOW TERMINATED" in str(exc_info.value)
+        assert "test_stopped" in str(exc_info.value)
+
+    def test_verify_active_raises_on_phase_mismatch(self):
+        """verify_active raises RuntimeError when phase doesn't match."""
+        from iterate_workflow import verify_active
+
+        start("test task")
+
+        with pytest.raises(RuntimeError) as exc_info:
+            verify_active(expected_phase=Phase.REVIEW)
+        assert "PHASE MISMATCH" in str(exc_info.value)
+
+    def test_verify_active_passes_when_active_and_phase_matches(self):
+        """verify_active succeeds when workflow active and phase matches."""
+        from iterate_workflow import verify_active
+
+        start("test task")
+        # After start, we're in test_writing phase
+        verify_active(expected_phase=Phase.TEST_WRITING)  # Should not raise
+
+    def test_verify_active_passes_without_phase_check(self):
+        """verify_active succeeds when workflow active, no phase check."""
+        from iterate_workflow import verify_active
+
+        start("test task")
+        verify_active()  # Should not raise
+
+
 class TestCLI:
     """Tests for CLI main block using coverage subprocess tracking."""
 
