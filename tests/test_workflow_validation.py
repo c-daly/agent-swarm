@@ -382,6 +382,30 @@ class TestExceptionHandling:
             advance_phase()
 
 
+class TestWorkflowEndNotification:
+    """Tests for loud workflow termination notification."""
+
+    def test_stop_outputs_banner(self, capsys):
+        """stop() outputs visible termination banner to stderr."""
+        start("Test task")
+        stop("test_reason")
+        captured = capsys.readouterr()
+        assert "WORKFLOW TERMINATED" in captured.err
+        assert "test_reason" in captured.err
+        assert "Test task" in captured.err
+
+    def test_advance_to_done_outputs_banner(self, capsys):
+        """advance_phase() outputs banner when workflow ends."""
+        start("Test task", max_iterations=1)
+        set_phase(Phase.REVIEW)
+        set_test_results(True, True, True)
+        set_review_status(True)
+        advance_phase()  # Should end with review_approved
+        captured = capsys.readouterr()
+        assert "WORKFLOW TERMINATED" in captured.err
+        assert "review_approved" in captured.err
+
+
 class TestVerifyActive:
     """Tests for verify_active() premature termination detection."""
 

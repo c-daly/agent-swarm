@@ -386,6 +386,11 @@ def advance_phase() -> Optional[Phase]:
     _save_state(state)
     _log("info", "Phase transition", from_phase=current.value, to_phase=state["phase"],
          iteration=state.get("iteration", 0))
+
+    # Notify loudly if workflow just ended
+    if not state.get("active"):
+        _notify_workflow_end(state.get("exit_reason", "unknown"), state.get("task", ""))
+
     return Phase(state["phase"]) if state.get("active") else None
 
 
@@ -424,13 +429,30 @@ def set_review_status(clean: bool) -> None:
     _log("info", "Review status recorded", clean=clean)
 
 
+def _notify_workflow_end(reason: str, task: str = "") -> None:
+    """Output loud notification when workflow ends - impossible to miss."""
+    import sys
+    banner = f"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  ⚠️  WORKFLOW TERMINATED: {reason:<50} ║
+║  Task: {task[:66]:<66} ║
+║                                                                              ║
+║  You are NO LONGER in /iterate mode. To continue:                            ║
+║    python3 lib/iterate_workflow.py start "<task>" [max_iterations]           ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+"""
+    print(banner, file=sys.stderr)
+
+
 def stop(reason: str = "user_stopped") -> None:
     """Stop the iterate workflow."""
     state = _load_state()
+    task = state.get("task", "unknown")
     state["active"] = False
     state["exit_reason"] = reason
     _save_state(state)
     _log("info", "Workflow stopped", reason=reason)
+    _notify_workflow_end(reason, task)
 
 
 def is_tool_allowed(tool_name: str, command: str | None = None) -> tuple[bool, str]:
