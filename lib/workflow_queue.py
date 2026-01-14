@@ -49,6 +49,26 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _truncate_at_word(text: str, max_length: int) -> str:
+    """Truncate text at word boundary, avoiding mid-word cuts.
+
+    Args:
+        text: Text to truncate
+        max_length: Maximum length (will be shorter if truncated at word boundary)
+
+    Returns:
+        Truncated text with "..." suffix if truncated, or original if fits.
+    """
+    if len(text) <= max_length:
+        return text
+    # Find last space before max_length, leave room for "..."
+    truncated = text[: max_length - 3]
+    last_space = truncated.rfind(" ")
+    if last_space > max_length // 2:  # Only use word boundary if reasonable
+        truncated = truncated[:last_space]
+    return truncated + "..."
+
+
 class WorkflowQueue:
     """Manages task queue for full-dev workflow.
 
@@ -159,9 +179,10 @@ class WorkflowQueue:
         else:
             priority = PRIORITY_GREPTILE_WARNING
 
-        # Truncate long descriptions
-        body = comment.get("body", "")[:MAX_DESCRIPTION_LENGTH]
-        description = f"Address: {body}"
+        # Truncate long descriptions at word boundary
+        body = comment.get("body", "")
+        truncated_body = _truncate_at_word(body, MAX_DESCRIPTION_LENGTH)
+        description = f"Address: {truncated_body}"
 
         task = self._create_task(
             description=description,
@@ -180,15 +201,36 @@ class WorkflowQueue:
     def get_next_task(self) -> Optional[Task]:
         """Get the highest priority pending task (peek operation).
 
-        Note: This does NOT mark the task as RUNNING. The task remains in
-        PENDING status. Call mark_done() when the task is complete.
-        For concurrent access, ensure only one consumer processes each task.
+        Note: This does NOT mark the task as RUNNING. Use start_task() to
+        claim the task before processing, or call mark_done() directly for
+        single-consumer workflows.
 
         Returns:
             The next Task to work on, or None if queue is empty.
         """
         eligible = self.queue.get_eligible_tasks(1)
         return eligible[0] if eligible else None
+
+    def start_task(self, task_id: str, agent_id: str = "main") -> bool:
+        """Mark a task as RUNNING to claim it for processing.
+
+        Use this to prevent race conditions when multiple consumers may
+        call get_next_task() concurrently.
+
+        Args:
+            task_id: ID of the task to start
+            agent_id: Identifier for the agent/consumer claiming the task
+
+        Returns:
+            True if task was successfully claimed, False if not found or
+            already running/completed.
+        """
+        task = self.queue.get_task(task_id)
+        if not task or task.status != TaskStatus.PENDING:
+            return False
+        self.queue.mark_running(task_id, agent_id)
+        save_queue(self.queue)
+        return True
 
     def mark_done(self, task_id: str, result: Optional[dict] = None) -> None:
         """Mark a task as completed.
@@ -209,14 +251,19 @@ class WorkflowQueue:
         return not self.queue.has_pending() and not self.queue.has_running()
 
     def get_unaddressed_comments(self) -> list[Task]:
-        """Get all pending tasks that came from PR comments.
+        """Get all unaddressed tasks that came from PR comments.
+
+        A comment task is unaddressed if it is PENDING, RUNNING, or FAILED
+        (i.e., not COMPLETED). Only returns tasks for this WorkflowQueue's pr_id.
 
         Returns:
-            List of pending tasks with GREPTILE source.
+            List of unaddressed tasks with GREPTILE source for current PR.
         """
+        # Get all tasks for this PR, filter to GREPTILE source and non-completed
+        pr_tasks = self.queue.get_tasks_for_pr(self.pr_id)
         return [
-            t for t in self.queue.get_pending()
-            if t.source == TaskSource.GREPTILE
+            t for t in pr_tasks
+            if t.source == TaskSource.GREPTILE and t.status != TaskStatus.COMPLETED
         ]
 
     def can_commit(self) -> bool:

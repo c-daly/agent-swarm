@@ -386,3 +386,127 @@ class TestCanCommit:
         task = wq.add_pr_comment({"id": "c1", "body": "Fix this"})
         wq.mark_done(task.id)
         assert wq.can_commit() is True
+
+
+class TestStartTask:
+    """Tests for start_task method."""
+
+    def test_marks_task_as_running(self):
+        """start_task marks task as RUNNING."""
+        wq = WorkflowQueue()
+        wq.initialize_from_tasks([{"description": "Task"}])
+        task = wq.get_next_task()
+        result = wq.start_task(task.id)
+
+        assert result is True
+        # Reload and check status
+        wq2 = WorkflowQueue()
+        updated_task = wq2.queue.get_task(task.id)
+        assert updated_task.status == TaskStatus.RUNNING
+
+    def test_assigns_agent_id(self):
+        """start_task assigns agent_id to task."""
+        wq = WorkflowQueue()
+        wq.initialize_from_tasks([{"description": "Task"}])
+        task = wq.get_next_task()
+        wq.start_task(task.id, agent_id="worker-1")
+
+        wq2 = WorkflowQueue()
+        updated_task = wq2.queue.get_task(task.id)
+        assert updated_task.assigned_agent == "worker-1"
+
+    def test_returns_false_for_nonexistent_task(self):
+        """start_task returns False for nonexistent task ID."""
+        wq = WorkflowQueue()
+        result = wq.start_task("nonexistent-id")
+        assert result is False
+
+    def test_returns_false_for_already_running_task(self):
+        """start_task returns False if task already running."""
+        wq = WorkflowQueue()
+        wq.initialize_from_tasks([{"description": "Task"}])
+        task = wq.get_next_task()
+        wq.start_task(task.id)  # First call succeeds
+        result = wq.start_task(task.id)  # Second call fails
+        assert result is False
+
+    def test_returns_false_for_completed_task(self):
+        """start_task returns False if task already completed."""
+        wq = WorkflowQueue()
+        wq.initialize_from_tasks([{"description": "Task"}])
+        task = wq.get_next_task()
+        wq.mark_done(task.id)
+        result = wq.start_task(task.id)
+        assert result is False
+
+
+class TestPRFiltering:
+    """Tests for PR-specific filtering."""
+
+    def test_unaddressed_comments_filters_by_pr_id(self):
+        """get_unaddressed_comments only returns comments for current PR."""
+        wq1 = WorkflowQueue(pr_id="pr-1")
+        wq2 = WorkflowQueue(pr_id="pr-2")
+
+        wq1.add_pr_comment({"id": "c1", "body": "Issue in PR 1"})
+        wq2.add_pr_comment({"id": "c2", "body": "Issue in PR 2"})
+
+        # wq1 should only see its own comment
+        unaddressed1 = wq1.get_unaddressed_comments()
+        assert len(unaddressed1) == 1
+        assert "PR 1" in unaddressed1[0].description
+
+        # wq2 should only see its own comment
+        wq2.refresh()  # Refresh to see wq1's changes
+        unaddressed2 = wq2.get_unaddressed_comments()
+        assert len(unaddressed2) == 1
+        assert "PR 2" in unaddressed2[0].description
+
+    def test_can_commit_respects_pr_filter(self):
+        """can_commit only considers comments for current PR."""
+        wq1 = WorkflowQueue(pr_id="pr-1")
+        wq2 = WorkflowQueue(pr_id="pr-2")
+
+        # Add comment only to pr-1
+        wq1.add_pr_comment({"id": "c1", "body": "Issue"})
+
+        # pr-2 should be able to commit (no comments for it)
+        wq2.refresh()
+        assert wq2.can_commit() is True
+
+        # pr-1 cannot commit
+        assert wq1.can_commit() is False
+
+    def test_running_task_blocks_commit(self):
+        """RUNNING PR comment task blocks commit."""
+        wq = WorkflowQueue()
+        task = wq.add_pr_comment({"id": "c1", "body": "Fix this"})
+        wq.start_task(task.id)  # Mark as RUNNING
+
+        wq2 = WorkflowQueue()
+        assert wq2.can_commit() is False
+
+
+class TestTruncation:
+    """Tests for smart truncation."""
+
+    def test_truncates_at_word_boundary(self):
+        """Long comments truncate at word boundary."""
+        wq = WorkflowQueue()
+        # Create body that would cut mid-word at 100 chars
+        body = "This is a long comment that needs to be truncated properly without cutting words in the middle of things"
+        task = wq.add_pr_comment({"id": "c1", "body": body})
+
+        # Should not end mid-word
+        desc = task.description
+        assert not desc.endswith("thin...")  # Would be mid-word cut
+        assert "..." in desc  # Should have ellipsis
+
+    def test_short_comments_not_truncated(self):
+        """Short comments are not truncated."""
+        wq = WorkflowQueue()
+        body = "Short comment"
+        task = wq.add_pr_comment({"id": "c1", "body": body})
+
+        assert task.description == f"Address: {body}"
+        assert "..." not in task.description
