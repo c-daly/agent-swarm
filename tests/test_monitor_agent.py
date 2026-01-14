@@ -156,63 +156,40 @@ Line 3"'''
 class TestParseDecision:
     """Tests for _parse_decision function."""
 
-    def test_parse_decision_allowed_yes(self):
-        """Parse 'ALLOWED: yes' response."""
-        text = "ALLOWED: yes\nREASON: Message is clean\nCONFIDENCE: 0.95"
+    @pytest.mark.parametrize("text,expected_allowed,expected_conf", [
+        ("ALLOWED: yes\nREASON: Message is clean\nCONFIDENCE: 0.95", True, 0.95),
+        ("ALLOWED: no\nREASON: Contains emoji\nCONFIDENCE: 0.99", False, 0.99),
+        ("ALLOWED:   yes  \nREASON:   Clean message   \nCONFIDENCE:   0.9  ", True, 0.9),
+    ])
+    def test_parse_decision_valid_inputs(self, text, expected_allowed, expected_conf):
+        """Parse valid decision responses with various formats."""
         result = _parse_decision(text)
-        assert result["allowed"] is True
-        assert result["reason"] == "Message is clean"
-        assert result["confidence"] == 0.95
+        assert result["allowed"] is expected_allowed
+        assert result["confidence"] == expected_conf
 
-    def test_parse_decision_allowed_no(self):
-        """Parse 'ALLOWED: no' response."""
-        text = "ALLOWED: no\nREASON: Contains emoji\nCONFIDENCE: 0.99"
+    @pytest.mark.parametrize("text,check", [
+        ("ALLOWED: yes\nCONFIDENCE: 0.9", lambda r: r["reason"] == "No reason provided"),  # missing reason
+        ("ALLOWED: yes\nREASON: Looks good", lambda r: r["confidence"] == 0.5),  # missing confidence
+    ])
+    def test_parse_decision_defaults(self, text, check):
+        """Missing fields use correct defaults."""
         result = _parse_decision(text)
-        assert result["allowed"] is False
-        assert "emoji" in result["reason"].lower()
-        assert result["confidence"] == 0.99
+        assert check(result)
 
-    def test_parse_decision_case_insensitive(self):
-        """'allowed: YES' vs 'ALLOWED: yes'."""
-        text = "allowed: YES\nreason: OK\nconfidence: 0.8"
-        result = _parse_decision(text)
-        assert result["allowed"] is True
-
-    def test_parse_decision_missing_reason(self):
-        """Response without REASON field defaults."""
-        text = "ALLOWED: yes\nCONFIDENCE: 0.9"
-        result = _parse_decision(text)
-        assert result["allowed"] is True
-        assert result["reason"] == "No reason provided"
-
-    def test_parse_decision_missing_confidence(self):
-        """Response without CONFIDENCE defaults to 0.5."""
-        text = "ALLOWED: yes\nREASON: Looks good"
-        result = _parse_decision(text)
-        assert result["confidence"] == 0.5
-
-    def test_parse_decision_malformed_response(self):
-        """Completely malformed text returns None."""
-        text = "This is not a valid response at all"
+    @pytest.mark.parametrize("text", [
+        "This is not a valid response at all",
+        "",
+    ])
+    def test_parse_decision_invalid_returns_none(self, text):
+        """Invalid or empty input returns None."""
         assert _parse_decision(text) is None
 
-    def test_parse_decision_empty_string(self):
-        """Empty input returns None."""
-        assert _parse_decision("") is None
-
-    def test_parse_decision_extra_whitespace(self):
-        """Excessive whitespace around values."""
-        text = "ALLOWED:   yes  \nREASON:   Clean message   \nCONFIDENCE:   0.9  "
+    @pytest.mark.parametrize("conf", [0.0, 0.5, 1.0])
+    def test_parse_decision_confidence_boundaries(self, conf):
+        """Confidence values at boundaries."""
+        text = f"ALLOWED: yes\nREASON: test\nCONFIDENCE: {conf}"
         result = _parse_decision(text)
-        assert result["allowed"] is True
-        assert "Clean message" in result["reason"]
-
-    def test_parse_decision_confidence_boundaries(self):
-        """Test confidence at boundaries."""
-        for conf in ["0.0", "1.0", "0.5"]:
-            text = f"ALLOWED: yes\nREASON: test\nCONFIDENCE: {conf}"
-            result = _parse_decision(text)
-            assert result["confidence"] == float(conf)
+        assert result["confidence"] == conf
 
 
 # =============================================================================

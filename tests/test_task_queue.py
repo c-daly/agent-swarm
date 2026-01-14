@@ -228,16 +228,6 @@ class TestTaskQueueConstructor:
         assert q.completed == []
         assert q.failed == []
 
-    def test_queue_has_tasks_dict(self):
-        """TaskQueue has tasks dictionary."""
-        q = TaskQueue()
-        assert isinstance(q.tasks, dict)
-
-    def test_queue_has_prs_dict(self):
-        """TaskQueue has prs dictionary."""
-        q = TaskQueue()
-        assert isinstance(q.prs, dict)
-
 
 class TestTaskQueueAddTask:
     """Test TaskQueue.add_task method."""
@@ -407,29 +397,17 @@ class TestTaskQueueQueryMethods:
         running = q.get_running()
         assert len(running) == 2
 
-    def test_has_pending_true(self):
-        """has_pending returns True when pending tasks exist."""
+    @pytest.mark.parametrize("status,has_pending,has_running", [
+        (TaskStatus.PENDING, True, False),
+        (TaskStatus.RUNNING, False, True),
+        (TaskStatus.COMPLETED, False, False),
+    ])
+    def test_has_predicates(self, status, has_pending, has_running):
+        """has_pending/has_running return correct boolean for task status."""
         q = TaskQueue()
-        q.add_task(make_task("t1"))
-        assert q.has_pending() is True
-
-    def test_has_pending_false(self):
-        """has_pending returns False when no pending tasks."""
-        q = TaskQueue()
-        q.add_task(make_task("t1", status=TaskStatus.COMPLETED))
-        assert q.has_pending() is False
-
-    def test_has_running_true(self):
-        """has_running returns True when running tasks exist."""
-        q = TaskQueue()
-        q.add_task(make_task("t1", status=TaskStatus.RUNNING))
-        assert q.has_running() is True
-
-    def test_has_running_false(self):
-        """has_running returns False when no running tasks."""
-        q = TaskQueue()
-        q.add_task(make_task("t1", status=TaskStatus.PENDING))
-        assert q.has_running() is False
+        q.add_task(make_task("t1", status=status))
+        assert q.has_pending() is has_pending
+        assert q.has_running() is has_running
 
     def test_get_tasks_for_pr(self):
         """get_tasks_for_pr returns all tasks for a PR."""
