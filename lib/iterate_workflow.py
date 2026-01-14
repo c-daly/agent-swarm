@@ -311,14 +311,17 @@ def advance_phase() -> Optional[Phase]:
         state["coverage_ok"] = None
 
     elif current == Phase.REVIEW:
-        # Check review status
-        if state.get("review_status") == "clean":
-            # No issues, we're done!
+        # Check review status AND that all PR comments are addressed
+        review_clean = state.get("review_status") == "clean"
+        comments_addressed = not is_review_blocked()
+
+        if review_clean and comments_addressed:
+            # No issues and all comments addressed, we're done!
             state["phase"] = Phase.DONE.value
             state["active"] = False
             state["exit_reason"] = "review_approved"
         else:
-            # Issues to fix, back to implement
+            # Issues to fix or comments unaddressed, back to implement
             state["iteration"] = state.get("iteration", 0) + 1
             if state["iteration"] >= state.get("max_iterations", 5):
                 state["phase"] = Phase.DONE.value

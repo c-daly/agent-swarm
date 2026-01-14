@@ -234,7 +234,7 @@ class TestReviewPhaseAutomation:
         assert is_review_blocked() is False
 
     def test_advance_from_review_blocked_when_comments_pending(self):
-        """advance_phase from review should fail when comments unaddressed."""
+        """advance_phase from review should kick back when comments unaddressed."""
         start("Task")
         advance_phase()
         advance_phase()
@@ -246,10 +246,30 @@ class TestReviewPhaseAutomation:
         add_review_comment({"id": "c1", "body": "Issue 1"})
         set_review_status(True)  # Try to mark as clean
 
-        # Advance should be blocked
+        # Advance should kick back to implement (not done)
         new_phase = advance_phase()
-        # Should stay in review or kick back, not go to done
-        assert new_phase != Phase.DONE or get_phase() == Phase.REVIEW
+        assert new_phase == Phase.IMPLEMENT
+
+    def test_advance_from_review_succeeds_when_all_comments_addressed(self):
+        """advance_phase from review should succeed when all addressed."""
+        start("Task")
+        advance_phase()
+        advance_phase()
+        from iterate_workflow import set_test_results, set_review_status
+        set_test_results(True, True, True)
+        advance_phase()
+
+        # Add comment and address it
+        task = add_review_comment({"id": "c1", "body": "Issue 1"})
+        mark_review_task_done(task["id"])
+        set_review_status(True)  # Mark as clean
+
+        # Advance should succeed to done
+        new_phase = advance_phase()
+        assert new_phase is None  # Workflow ended
+        from iterate_workflow import get_state
+        state = get_state()
+        assert state.get("exit_reason") == "review_approved"
 
 
 class TestIntakePhaseAutomation:
