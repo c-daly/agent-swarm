@@ -17,7 +17,9 @@ from pathlib import Path
 from typing import Optional
 from enum import Enum
 
-STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
+# Allow override via environment variable for test isolation
+_state_dir_override = os.environ.get("ITERATE_STATE_DIR")
+STATE_DIR = Path(_state_dir_override) if _state_dir_override else Path.home() / ".claude/plugins/agent-swarm/.state"
 STATE_FILE = STATE_DIR / "iterate.json"
 LOG_FILE = STATE_DIR / "iterate.log"
 
