@@ -25,7 +25,7 @@ import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 # State file location - can be overridden via environment variable
 _state_dir_override = os.environ.get("WORKER_POOL_STATE_DIR")
