@@ -298,7 +298,11 @@ def advance_phase() -> Optional[Phase]:
     """
     state = _load_state()
     if not state.get("active"):
-        return None
+        exit_reason = state.get("exit_reason", "unknown")
+        raise RuntimeError(
+            f"[NO ACTIVE WORKFLOW] Cannot advance phase. "
+            f"Exit reason: {exit_reason}. Start a new workflow with 'start' command."
+        )
 
     current = Phase(state["phase"])
 
@@ -461,7 +465,9 @@ def is_tool_allowed(tool_name: str, command: str | None = None) -> tuple[bool, s
 
             # In REVIEW phase, check coverage requirement for commit/push (WORKFLOW.1)
             state = _load_state()
-            is_commit_or_push = any(x in cmd_lower for x in ["commit", "push"])
+            # Use word-boundary matching to avoid false positives like "commitfile.txt"
+            cmd_parts = cmd_lower.split()
+            is_commit_or_push = any(part in ["commit", "push"] for part in cmd_parts)
 
             if is_commit_or_push:
                 coverage_ok = state.get("coverage_ok")

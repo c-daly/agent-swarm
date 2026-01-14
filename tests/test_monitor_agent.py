@@ -76,44 +76,39 @@ def edit_tool_input():
 class TestExtractCommitMessage:
     """Tests for _extract_commit_message function."""
 
-    def test_extract_dash_m_flag(self):
-        """Extract message from -m 'message' format."""
-        command = 'git commit -m "Fix authentication bug"'
-        assert _extract_commit_message(command) == "Fix authentication bug"
-
-    def test_extract_dash_m_single_quotes(self):
-        """Extract message from -m 'message' with single quotes."""
-        command = "git commit -m 'Fix authentication bug'"
-        assert _extract_commit_message(command) == "Fix authentication bug"
-
-    def test_extract_heredoc_simple(self):
-        """Extract message from <<EOF ... EOF format."""
-        command = """git commit -F- <<EOF
-Fix authentication bug
-
-This fixes the login issue.
-EOF"""
+    @pytest.mark.parametrize("command,expected", [
+        # Basic -m flag variations
+        ('git commit -m "Fix authentication bug"', "Fix authentication bug"),
+        ("git commit -m 'Fix authentication bug'", "Fix authentication bug"),
+        # Special characters
+        ('git commit -m "Fix: handle \\"quotes\\" properly"', "Fix:"),
+        # Emoji
+        ('git commit -m "Fix bug 🐛"', "Fix bug"),
+    ])
+    def test_extract_dash_m_formats(self, command, expected):
+        """Extract message from various -m flag formats."""
         result = _extract_commit_message(command)
-        assert "Fix authentication bug" in result
+        assert expected in result
 
-    def test_extract_heredoc_with_quotes(self):
-        """Heredoc with quotes: <<'EOF'."""
-        command = """git commit -F- <<'EOF'
+    @pytest.mark.parametrize("command,expected", [
+        # Simple heredoc
+        ("""git commit -F- <<EOF
+Fix authentication bug
+EOF""", "Fix authentication bug"),
+        # Quoted heredoc
+        ("""git commit -F- <<'EOF'
 Fix bug
-EOF"""
-        result = _extract_commit_message(command)
-        assert "Fix bug" in result
-
-    def test_extract_cat_heredoc(self):
-        """Extract from -m "$(cat <<EOF ... EOF)" format."""
-        command = '''git commit -m "$(cat <<'EOF'
+EOF""", "Fix bug"),
+        # cat heredoc
+        ('''git commit -m "$(cat <<'EOF'
 Fix authentication bug
-
-Co-Authored-By: Someone
 EOF
-)"'''
+)"''', "Fix authentication bug"),
+    ])
+    def test_extract_heredoc_formats(self, command, expected):
+        """Extract message from heredoc formats."""
         result = _extract_commit_message(command)
-        assert "Fix authentication bug" in result
+        assert expected in result
 
     def test_extract_multiline_message(self):
         """Message spanning multiple lines."""
@@ -124,12 +119,6 @@ Line 3"'''
         assert "Line 1" in result
         assert "Line 3" in result
 
-    def test_extract_message_with_special_chars(self):
-        """Messages with special characters."""
-        command = 'git commit -m "Fix: handle \\"quotes\\" properly"'
-        result = _extract_commit_message(command)
-        assert "Fix:" in result
-
     def test_extract_no_message_found(self):
         """Command without extractable message."""
         command = "git commit --amend"
@@ -138,15 +127,8 @@ Line 3"'''
     def test_extract_empty_message(self):
         """Empty commit message."""
         command = 'git commit -m ""'
-        # Should return empty string, not the fallback
         result = _extract_commit_message(command)
         assert result == "" or result == "(unable to extract message)"
-
-    def test_extract_message_with_emoji(self):
-        """Message containing Unicode emoji."""
-        command = 'git commit -m "Fix bug 🐛"'
-        result = _extract_commit_message(command)
-        assert "Fix bug" in result
 
 
 # =============================================================================

@@ -17,7 +17,7 @@ import pytest
 lib_dir = Path(__file__).parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
-from iterate_workflow import (
+from iterate_workflow import (  # noqa: E402
     Phase,
     start,
     stop,
@@ -57,165 +57,133 @@ def clean_logging():
 class TestStateValidation:
     """Tests for WORKFLOW.9 - state modification validation."""
 
-    def test_set_test_results_requires_active_workflow(self):
-        """set_test_results should raise if no active workflow."""
-        # No workflow started - state file doesn't exist
+    @pytest.mark.parametrize("fn,args", [
+        (set_test_results, (True, True, True)),
+        (set_review_status, (True,)),
+    ])
+    def test_requires_active_workflow(self, fn, args):
+        """State modification functions require active workflow."""
         with pytest.raises(RuntimeError, match="No active workflow"):
-            set_test_results(True, True, True)
+            fn(*args)
 
-    def test_set_test_results_requires_active_flag(self):
-        """set_test_results should raise if workflow stopped."""
+    @pytest.mark.parametrize("fn,args", [
+        (set_test_results, (True, True, True)),
+        (set_review_status, (True,)),
+    ])
+    def test_requires_active_flag(self, fn, args):
+        """State modification functions require workflow not stopped."""
         start("test task")
         stop("user_stopped")
         assert not is_active()
 
         with pytest.raises(RuntimeError, match="No active workflow"):
-            set_test_results(True, True, True)
-
-    def test_set_review_status_requires_active_workflow(self):
-        """set_review_status should raise if no active workflow."""
-        with pytest.raises(RuntimeError, match="No active workflow"):
-            set_review_status(True)
-
-    def test_set_review_status_requires_active_flag(self):
-        """set_review_status should raise if workflow stopped."""
-        start("test task")
-        stop("user_stopped")
-
-        with pytest.raises(RuntimeError, match="No active workflow"):
-            set_review_status(True)
+            fn(*args)
 
     def test_set_test_results_works_when_active(self):
         """set_test_results should work when workflow is active."""
         start("test task")
-        # Advance to TEST phase where test results are recorded
         set_phase(Phase.TEST)
-
-        # Should not raise
-        set_test_results(True, True, True)
+        set_test_results(True, True, True)  # Should not raise
 
     def test_set_review_status_works_when_active(self):
         """set_review_status should work when workflow is active."""
         start("test task")
         set_phase(Phase.REVIEW)
-
-        # Should not raise
-        set_review_status(True)
+        set_review_status(True)  # Should not raise
 
 
 class TestGitBlocking:
     """Tests for WORKFLOW.5 - block git/gh outside review phase."""
 
-    def test_git_blocked_in_test_writing_phase(self):
-        """git commands should be blocked in TEST_WRITING phase."""
+    @pytest.mark.parametrize("phase,command", [
+        (Phase.TEST_WRITING, "git status"),
+        (Phase.IMPLEMENT, "git commit -m 'test'"),
+        (Phase.TEST, "git push"),
+        (Phase.TEST_WRITING, "gh pr create"),
+    ])
+    def test_git_gh_blocked_outside_review(self, phase, command):
+        """git/gh commands blocked in non-review phases."""
         start("test task")
-        assert get_phase() == Phase.TEST_WRITING
-
-        allowed, reason = is_tool_allowed("Bash", command="git status")
+        set_phase(phase)
+        allowed, reason = is_tool_allowed("Bash", command=command)
         assert not allowed
-        assert "git" in reason.lower()
+        assert "review" in reason.lower() or "git" in reason.lower()
 
-    def test_git_blocked_in_implement_phase(self):
-        """git commands should be blocked in IMPLEMENT phase."""
-        start("test task")
-        set_phase(Phase.IMPLEMENT)
-
-        allowed, reason = is_tool_allowed("Bash", command="git commit -m 'test'")
-        assert not allowed
-        assert "git" in reason.lower()
-
-    def test_git_blocked_in_test_phase(self):
-        """git commands should be blocked in TEST phase."""
-        start("test task")
-        set_phase(Phase.TEST)
-
-        allowed, reason = is_tool_allowed("Bash", command="git push")
-        assert not allowed
-        assert "git" in reason.lower()
-
-    def test_gh_blocked_in_test_writing_phase(self):
-        """gh commands should be blocked in TEST_WRITING phase."""
-        start("test task")
-
-        allowed, reason = is_tool_allowed("Bash", command="gh pr create")
-        assert not allowed
-        assert "review" in reason.lower()
-
-    def test_git_allowed_in_review_phase(self):
-        """git commands should be allowed in REVIEW phase."""
+    @pytest.mark.parametrize("command", ["git status", "gh pr list"])
+    def test_git_gh_allowed_in_review(self, command):
+        """git/gh commands allowed in REVIEW phase."""
         start("test task")
         set_phase(Phase.REVIEW)
-
-        allowed, reason = is_tool_allowed("Bash", command="git status")
-        assert allowed
-
-    def test_gh_allowed_in_review_phase(self):
-        """gh commands should be allowed in REVIEW phase."""
-        start("test task")
-        set_phase(Phase.REVIEW)
-
-        allowed, reason = is_tool_allowed("Bash", command="gh pr list")
+        allowed, _ = is_tool_allowed("Bash", command=command)
         assert allowed
 
     def test_git_allowed_when_no_workflow(self):
-        """git commands should be allowed when no workflow active."""
+        """git commands allowed when no workflow active."""
         assert not is_active()
-
-        allowed, reason = is_tool_allowed("Bash", command="git status")
+        allowed, _ = is_tool_allowed("Bash", command="git status")
         assert allowed
 
-    def test_non_git_bash_allowed_everywhere(self):
-        """Non-git bash commands should be allowed in all phases."""
+    @pytest.mark.parametrize("phase", [Phase.TEST_WRITING, Phase.IMPLEMENT, Phase.TEST])
+    def test_non_git_bash_allowed(self, phase):
+        """Non-git bash commands allowed in all phases."""
         start("test task")
+        set_phase(phase)
+        for cmd in ["pytest tests/", "ls -la"]:
+            allowed, _ = is_tool_allowed("Bash", command=cmd)
+            assert allowed, f"{cmd} should be allowed in {phase}"
 
-        for phase in [Phase.TEST_WRITING, Phase.IMPLEMENT, Phase.TEST]:
-            set_phase(phase)
-            allowed, reason = is_tool_allowed("Bash", command="pytest tests/")
-            assert allowed, f"pytest should be allowed in {phase}"
+    @pytest.mark.parametrize("command", [
+        'echo "commitments are important"',  # contains "commit" substring
+        "pushd /tmp",  # contains "push" substring
+        "echo push notification",  # "push" as word but not git
+    ])
+    def test_substring_false_positives_allowed(self, command):
+        """Commands containing 'commit'/'push' substrings (but not git) should be allowed."""
+        start("test task")
+        set_phase(Phase.TEST_WRITING)  # Phase where git IS blocked
+        allowed, reason = is_tool_allowed("Bash", command=command)
+        assert allowed, f"{command} should be allowed (not a git command): {reason}"
 
-            allowed, reason = is_tool_allowed("Bash", command="ls -la")
-            assert allowed, f"ls should be allowed in {phase}"
+    @pytest.mark.parametrize("command", [
+        'git log --format="commit: %s"',  # "commit" in format string, not a commit op
+        "git show HEAD:commitfile.txt",  # "commit" in filename, not a commit op
+        "git diff --stat",  # no commit/push at all
+    ])
+    def test_git_non_commit_commands_allowed_in_review(self, command):
+        """Git commands that aren't commit/push should be allowed in REVIEW without coverage."""
+        start("test task")
+        set_phase(Phase.REVIEW)
+        # No coverage recorded - but these aren't commit/push so should be allowed
+        allowed, reason = is_tool_allowed("Bash", command=command)
+        assert allowed, f"{command} should be allowed (not commit/push): {reason}"
 
 
 class TestCoverageBlocking:
     """Tests for WORKFLOW.1 - block commit/push until coverage met."""
 
-    def test_git_commit_blocked_without_coverage(self):
-        """git commit should be blocked if coverage not recorded."""
+    @pytest.mark.parametrize("command,coverage_ok", [
+        ("git commit -m 'test'", None),  # No test results recorded
+        ("git push", False),  # Coverage failed
+    ])
+    def test_git_blocked_without_coverage(self, command, coverage_ok):
+        """git commit/push blocked without coverage."""
         start("test task")
         set_phase(Phase.REVIEW)
+        if coverage_ok is not None:
+            set_test_results(True, True, coverage_ok)
 
-        # No test results recorded yet
-        allowed, reason = is_tool_allowed("Bash", command="git commit -m 'test'")
+        allowed, reason = is_tool_allowed("Bash", command=command)
         assert not allowed
         assert "coverage" in reason.lower()
 
-    def test_git_push_blocked_without_coverage(self):
-        """git push should be blocked if coverage not met."""
-        start("test task")
-        set_phase(Phase.REVIEW)
-        set_test_results(True, True, False)  # coverage_ok=False
-
-        allowed, reason = is_tool_allowed("Bash", command="git push")
-        assert not allowed
-        assert "coverage" in reason.lower()
-
-    def test_git_commit_allowed_with_coverage(self):
-        """git commit should be allowed if coverage met."""
-        start("test task")
-        set_phase(Phase.REVIEW)
-        set_test_results(True, True, True)  # All pass
-
-        allowed, reason = is_tool_allowed("Bash", command="git commit -m 'test'")
-        assert allowed
-
-    def test_git_push_allowed_with_coverage(self):
-        """git push should be allowed if coverage met."""
+    @pytest.mark.parametrize("command", ["git commit -m 'test'", "git push"])
+    def test_git_allowed_with_coverage(self, command):
+        """git commit/push allowed with coverage met."""
         start("test task")
         set_phase(Phase.REVIEW)
         set_test_results(True, True, True)
 
-        allowed, reason = is_tool_allowed("Bash", command="git push")
+        allowed, _ = is_tool_allowed("Bash", command=command)
         assert allowed
 
 
@@ -407,11 +375,11 @@ class TestExceptionHandling:
 
         assert get_phase() is None
 
-    def test_advance_phase_returns_none_when_inactive(self):
-        """advance_phase returns None when workflow not active."""
-        # No workflow started
-        result = advance_phase()
-        assert result is None
+    def test_advance_phase_raises_when_inactive(self):
+        """advance_phase raises RuntimeError when workflow not active."""
+        # No workflow started - should fail loudly, not silently return None
+        with pytest.raises(RuntimeError, match="NO ACTIVE WORKFLOW"):
+            advance_phase()
 
 
 class TestVerifyActive:
@@ -489,10 +457,11 @@ class TestCLI:
             capture_output=True, text=True, env=env
         )
 
-    def test_cli_no_args_shows_status(self):
-        """Running with no args shows status."""
-        result = self.run_cli()
-        assert "ITERATE" in result.stdout or "Not active" in result.stdout or "not active" in result.stdout.lower()
+    @pytest.mark.parametrize("args", [(), ("status",)])
+    def test_cli_status_display(self, args):
+        """Status shown with no args or status command."""
+        result = self.run_cli(*args)
+        assert "ITERATE" in result.stdout or "active" in result.stdout.lower()
 
     def test_cli_help_command(self):
         """Running help shows usage."""
@@ -505,15 +474,10 @@ class TestCLI:
         assert result.returncode == 1
         assert "Unknown command" in result.stdout
 
-    def test_cli_test_missing_args(self):
-        """test command with missing args shows usage."""
-        result = self.run_cli("test")
-        assert result.returncode == 1
-        assert "Usage" in result.stdout
-
-    def test_cli_review_missing_args(self):
-        """review command with missing args shows usage."""
-        result = self.run_cli("review")
+    @pytest.mark.parametrize("command", ["test", "review"])
+    def test_cli_missing_args(self, command):
+        """Commands with missing args show usage and exit 1."""
+        result = self.run_cli(command)
         assert result.returncode == 1
         assert "Usage" in result.stdout
 
@@ -534,11 +498,6 @@ class TestCLI:
         self.run_cli("start", "test")
         result = self.run_cli("stop")
         assert "Stopped" in result.stdout
-
-    def test_cli_status_command(self):
-        """status command shows status."""
-        result = self.run_cli("status")
-        assert "ITERATE" in result.stdout or "Not active" in result.stdout or "active" in result.stdout.lower()
 
     def test_cli_test_with_valid_args(self):
         """test command with valid args records results."""
