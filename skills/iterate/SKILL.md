@@ -6,6 +6,14 @@ TDD development loop with phase gates. Works autonomously until exit conditions 
 
 ## Flow
 
+**With ORCHESTRATE (main agent coordinates workers):**
+```
+ORCHESTRATE ──┬──→ [spawn subagents] ──→ queue empty? ──→ done
+              │                              ↓
+              └──────────── no ←─────────────┘
+```
+
+**Subagents (TDD loop):**
 ```
 test_writing → implement → test → review → done
       ↑            ↑         |       |
@@ -17,27 +25,33 @@ test_writing → implement → test → review → done
 
 | Phase | Purpose | Allowed Tools |
 |-------|---------|---------------|
-| **test_writing** | Write tests first (spec) | Read, Glob, Grep, Edit, Write, Bash, Task |
-| **implement** | Make tests pass | Read, Glob, Grep, Edit, Write, Bash, Task |
+| **orchestrate** | Main agent coordinates workers | Read, Task, TaskOutput, TodoWrite (NO Edit/Write/Bash!) |
+| **test_writing** | Write tests first (spec) | Read, Glob, Grep, Edit, Write, Bash |
+| **implement** | Make tests pass | Read, Glob, Grep, Edit, Write, Bash |
 | **test** | Run pytest, lint, coverage | Read, Glob, Grep, Bash (no editing!) |
-| **review** | Fix Greptile issues | Read, Glob, Grep, Edit, Write, Bash, Task |
+| **review** | Fix Greptile issues | Read, Glob, Grep, Edit, Write, Bash |
 
 ## Orchestrator Role
 
-**The orchestrator (you) NEVER does implementation tasks. Always spawn agents.**
+**When in ORCHESTRATE phase, you NEVER do implementation tasks. Edit/Write/Bash are BLOCKED.**
 
+The ORCHESTRATE phase enforces the orchestrator role through tool restrictions:
+- ✅ Read, Task, TaskOutput, TodoWrite - coordination tools
+- ❌ Edit, Write, NotebookEdit, Bash - blocked, spawn agents instead
+
+### Rules
 - 1 task → spawn 1 agent
 - 5 tasks → spawn 5 agents in parallel
-- No exceptions
+- No exceptions - you cannot edit code yourself
 
-### Orchestrator responsibilities
-- Plan and decompose work
-- Spawn subagents for ALL coding work
-- Monitor progress
-- Handle phase transitions
-- Aggregate results
+### Orchestrator responsibilities (ORCHESTRATE phase)
+- Read specs/queue files
+- Spawn subagents via Task tool
+- Monitor completions via TaskOutput
+- Track progress via TodoWrite
+- Check completion: `is_orchestration_complete()` → queue empty AND no workers
 
-### Subagent responsibilities
+### Subagent responsibilities (TDD loop phases)
 - Write tests (test_writing phase)
 - Write/modify code (implement phase)
 - Fix review issues (review phase)
@@ -201,7 +215,8 @@ After each agent completes:
 
 | Condition | Trigger |
 |-----------|---------|
-| `review_approved` | Review clean, workflow complete |
+| `orchestration_complete` | Queue empty AND no active workers (ORCHESTRATE mode) |
+| `review_approved` | Review clean, workflow complete (TDD loop) |
 | `max_iterations` | Hit iteration limit (default: 5) |
 | `user_stopped` | Manual `/iterate stop` |
 
@@ -209,6 +224,7 @@ After each agent completes:
 
 - Skip phases (workflow enforces order)
 - Use Edit/Write in test phase (blocked by hook)
+- Use Edit/Write/Bash in ORCHESTRATE phase (blocked - spawn agents instead)
 - Ignore kick-back (follow the loop)
 - Bypass test verification
 - Do implementation work yourself (ALWAYS spawn agents)
