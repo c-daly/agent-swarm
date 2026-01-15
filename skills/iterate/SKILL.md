@@ -83,14 +83,15 @@ Then complete intake properly before returning to orchestrate.
 - Unclear on existing patterns
 - Missing acceptance criteria
 
-### Subagents DO explore
-Subagents are close to the code - they SHOULD explore their specific area:
+### Subagents explore current code
+Subagents are close to the code - they explore their specific area of the **current codebase**:
 - Read related files to understand patterns
+- Grep for similar implementations
 - Check for side effects before changes
-- Find existing implementations to follow
-- Verify test coverage areas
+- Find existing code to follow
 
-This is different from orchestrator exploration - subagents explore as part of implementation.
+**NOT web searches.** Subagents understand the code they're changing, not researching external topics.
+Web/external research happens in RESEARCH phase (orchestrator responsibility).
 
 ### Subagent responsibilities (TDD loop phases)
 - Write tests (test_writing phase)
