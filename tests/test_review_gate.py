@@ -1,9 +1,18 @@
-"""Tests for review gate module."""
+"""Tests for review gate module.
 
-import json
+After state_manager migration, review_gate uses in-memory state via state_manager
+instead of session.json file. Tests use autouse fixture to isolate state.
+"""
+
 import pytest
+import sys
 from pathlib import Path
 
+# Ensure lib is in path
+lib_dir = Path(__file__).parent.parent / "lib"
+sys.path.insert(0, str(lib_dir))
+
+import state_manager
 from lib.review_gate import (
     ReviewState,
     load_review_state,
@@ -14,19 +23,16 @@ from lib.review_gate import (
 )
 
 
-@pytest.fixture
-def temp_session_file(tmp_path, monkeypatch):
-    """Create a temporary session file for testing."""
-    state_dir = tmp_path / ".state"
-    state_dir.mkdir()
-    session_file = state_dir / "session.json"
+@pytest.fixture(autouse=True)
+def clean_state_manager():
+    """Clean state_manager state before and after each test."""
+    # Clear review_gate state before test
+    state_manager.delete_state("review_gate")
+    yield
+    # Clear after test
+    state_manager.delete_state("review_gate")
 
-    # Patch the module-level variables
-    import lib.review_gate
-    monkeypatch.setattr(lib.review_gate, "STATE_DIR", state_dir)
-    monkeypatch.setattr(lib.review_gate, "SESSION_FILE", session_file)
 
-    return session_file
 
 
 def test_review_state_default():
@@ -37,15 +43,15 @@ def test_review_state_default():
     assert state.review_pending is False
 
 
-def test_load_review_state_no_file(temp_session_file):
-    """Test loading state when file doesn't exist."""
+def test_load_review_state_no_state():
+    """Test loading state when no state exists."""
     state = load_review_state()
     assert isinstance(state, ReviewState)
     assert state.last_pushed_sha is None
     assert state.review_pending is False
 
 
-def test_save_and_load_review_state(temp_session_file):
+def test_save_and_load_review_state():
     """Test saving and loading review state."""
     state = ReviewState(
         last_pushed_sha="abc123",
@@ -60,24 +66,23 @@ def test_save_and_load_review_state(temp_session_file):
     assert loaded.review_pending is True
 
 
-def test_save_review_state_preserves_other_keys(temp_session_file):
-    """Test that saving review state preserves other session data."""
-    # Write some other data first
-    temp_session_file.write_text(json.dumps({
-        "other_key": "other_value",
-        "nested": {"data": 123}
-    }))
+def test_save_review_state_overwrites_cleanly():
+    """Test that saving review state overwrites previous state cleanly."""
+    # Save initial state
+    state1 = ReviewState(last_pushed_sha="abc123", review_pending=True)
+    save_review_state(state1)
 
-    state = ReviewState(last_pushed_sha="abc123")
-    save_review_state(state)
+    # Save different state
+    state2 = ReviewState(last_pushed_sha="def456", review_pending=False)
+    save_review_state(state2)
 
-    data = json.loads(temp_session_file.read_text())
-    assert "review_gate" in data
-    assert data["other_key"] == "other_value"
-    assert data["nested"]["data"] == 123
+    # Load should return the second state
+    loaded = load_review_state()
+    assert loaded.last_pushed_sha == "def456"
+    assert loaded.review_pending is False
 
 
-def test_on_push(temp_session_file):
+def test_on_push():
     """Test on_push sets pending flag."""
     on_push("abc123def456")
 
@@ -86,7 +91,7 @@ def test_on_push(temp_session_file):
     assert state.review_pending is True
 
 
-def test_on_push_updates_existing_state(temp_session_file):
+def test_on_push_updates_existing_state():
     """Test on_push updates existing state."""
     # First push
     on_push("sha1")
@@ -99,7 +104,7 @@ def test_on_push_updates_existing_state(temp_session_file):
     assert state.review_pending is True
 
 
-def test_check_review_allowed_pending(temp_session_file):
+def test_check_review_allowed_pending():
     """Test check blocks when review is pending."""
     on_push("abc123def")
 
@@ -109,7 +114,7 @@ def test_check_review_allowed_pending(temp_session_file):
     assert "pending" in message.lower()
 
 
-def test_check_review_allowed_stale(temp_session_file):
+def test_check_review_allowed_stale():
     """Test check blocks when review is stale."""
     state = ReviewState(
         last_pushed_sha="new_sha",
@@ -123,7 +128,7 @@ def test_check_review_allowed_stale(temp_session_file):
     assert "stale" in message.lower()
 
 
-def test_check_review_allowed_ok(temp_session_file):
+def test_check_review_allowed_ok():
     """Test check allows when review is current."""
     sha = "abc123"
     state = ReviewState(
@@ -138,7 +143,7 @@ def test_check_review_allowed_ok(temp_session_file):
     assert message == "OK"
 
 
-def test_on_review_complete(temp_session_file):
+def test_on_review_complete():
     """Test on_review_complete clears pending flag."""
     on_push("abc123")
     on_review_complete("abc123")
@@ -148,7 +153,7 @@ def test_on_review_complete(temp_session_file):
     assert state.review_pending is False
 
 
-def test_full_workflow(temp_session_file):
+def test_full_workflow():
     """Test complete push-review-check workflow."""
     # Initial state - no push yet (both None)
     allowed, _ = check_review_allowed()
@@ -177,30 +182,34 @@ def test_full_workflow(temp_session_file):
     assert "pending" in msg.lower()
 
 
-def test_load_corrupted_file(temp_session_file):
-    """Test loading from corrupted JSON file."""
-    temp_session_file.write_text("invalid json {{{")
-
+def test_load_empty_state():
+    """Test loading when no state has been saved."""
+    # state_manager is cleared by autouse fixture, so state should be empty
     state = load_review_state()
     assert isinstance(state, ReviewState)
     assert state.last_pushed_sha is None
+    assert state.review_pending is False
 
 
-def test_save_with_corrupted_existing_file(temp_session_file):
-    """Test saving when existing session file is corrupted JSON."""
-    # Write corrupted JSON first
-    temp_session_file.write_text("invalid json {{{")
-
-    # Saving should succeed by replacing corrupted data
+def test_state_isolation():
+    """Test that review_gate state is isolated from other state_manager keys."""
+    # Set review_gate state
     state = ReviewState(last_pushed_sha="abc123")
     save_review_state(state)
 
-    # Verify it was saved correctly
+    # Set unrelated state_manager key
+    state_manager.set_state("other_key", {"foo": "bar"})
+
+    # Review gate state should be unaffected
     loaded = load_review_state()
     assert loaded.last_pushed_sha == "abc123"
 
+    # Other key should be unaffected
+    other = state_manager.get_state("other_key")
+    assert other == {"foo": "bar"}
 
-def test_state_persistence_across_multiple_saves(temp_session_file):
+
+def test_state_persistence_across_multiple_saves():
     """Test state persists correctly across multiple saves."""
     on_push("sha1")
     state1 = load_review_state()

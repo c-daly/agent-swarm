@@ -2,15 +2,22 @@
 
 This module tracks push SHAs and review SHAs to ensure reviews are only acted
 upon when they correspond to the current pushed state.
+
+After state_manager migration, uses in-memory state via state_manager
+instead of session.json file.
 """
 
-import json
+import sys
 from dataclasses import dataclass, asdict, replace
 from pathlib import Path
 from typing import Optional
 
-STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
-SESSION_FILE = STATE_DIR / "session.json"
+# Ensure lib is in path for state_manager import
+lib_dir = Path(__file__).parent
+if str(lib_dir) not in sys.path:
+    sys.path.insert(0, str(lib_dir))
+
+import state_manager
 
 
 @dataclass(frozen=True)
@@ -22,40 +29,21 @@ class ReviewState:
 
 
 def load_review_state() -> ReviewState:
-    """Load review state from session.json under 'review_gate' key."""
-    if not SESSION_FILE.exists():
+    """Load review state from in-memory state manager."""
+    data = state_manager.get_state("review_gate")
+    if not data:
         return ReviewState()
 
-    try:
-        data = json.loads(SESSION_FILE.read_text())
-        gate_data = data.get("review_gate", {})
-        return ReviewState(
-            last_pushed_sha=gate_data.get("last_pushed_sha"),
-            last_reviewed_sha=gate_data.get("last_reviewed_sha"),
-            review_pending=gate_data.get("review_pending", False)
-        )
-    except (json.JSONDecodeError, KeyError):
-        return ReviewState()
+    return ReviewState(
+        last_pushed_sha=data.get("last_pushed_sha"),
+        last_reviewed_sha=data.get("last_reviewed_sha"),
+        review_pending=data.get("review_pending", False)
+    )
 
 
 def save_review_state(state: ReviewState) -> None:
-    """Save review state to session.json under 'review_gate' key."""
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Load existing state
-    if SESSION_FILE.exists():
-        try:
-            data = json.loads(SESSION_FILE.read_text())
-        except json.JSONDecodeError:
-            data = {}
-    else:
-        data = {}
-
-    # Update review_gate key
-    data["review_gate"] = asdict(state)
-
-    # Save back
-    SESSION_FILE.write_text(json.dumps(data, indent=2) + "\n")
+    """Save review state to in-memory state manager."""
+    state_manager.set_state("review_gate", asdict(state))
 
 
 def on_push(sha: str) -> None:

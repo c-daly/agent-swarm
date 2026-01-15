@@ -461,7 +461,7 @@ class TestTokenOptimizationIntegration:
                 state_manager.set_state("iterate", {"active": True})
                 state_manager.get_state("iterate")
 
-        # With unified state, should have minimal I/O
+        # With state_manager, transient state is in-memory, no file writes
         # (vs. old approach of reading 4 separate files)
         assert io_count["reads"] <= 2  # At most workflow.json + migration check
-        assert io_count["writes"] == 1  # Single unified file
+        assert io_count["writes"] == 0  # No file writes for in-memory state_manager
