@@ -93,104 +93,14 @@ def context_hierarchy(tmp_path):
 # =============================================================================
 
 
+@pytest.mark.skip(reason="unified_state module deprecated - use state_manager instead")
 class TestStateConsolidation:
-    """Tests for unified state management."""
-
-    def test_unified_state_loads_all_modules(self, temp_state_dir):
-        """Unified state should contain iterate, worker pool, and review gate data."""
-        # Setup: Create individual state files
-        iterate_state = {
-            "active": True,
-            "task": "test task",
-            "phase": "implement",
-            "iteration": 1,
-        }
-        worker_state = {
-            "active": True,
-            "max_agents": 3,
-            "active_workers": [{"worker_id": "w1", "task_id": "t1"}],
-        }
-        review_state = {"last_pushed_sha": "abc123", "review_pending": True}
-
-        # Write individual files (current behavior)
-        (temp_state_dir / "iterate.json").write_text(json.dumps(iterate_state))
-        (temp_state_dir / "worker_pool.json").write_text(json.dumps(worker_state))
-        session = {"review_gate": review_state}
-        (temp_state_dir / "session.json").write_text(json.dumps(session))
-
-        # Import after environment is set
-        from lib.unified_state import load_unified_state
-
-        # Test: Load unified state
-        unified = load_unified_state()
-
-        # Verify all modules present
-        assert "iterate" in unified
-        assert "worker_pool" in unified
-        assert "review_gate" in unified
-
-        # Verify data integrity
-        assert unified["iterate"]["task"] == "test task"
-        assert unified["worker_pool"]["max_agents"] == 3
-        assert unified["review_gate"]["last_pushed_sha"] == "abc123"
-
-    def test_unified_state_saves_atomic(self, temp_state_dir):
-        """Unified state should save all modules atomically."""
-        from lib.unified_state import save_unified_state, load_unified_state
-
-        unified = {
-            "iterate": {"active": True, "task": "atomic test", "phase": "test"},
-            "worker_pool": {"active": False},
-            "review_gate": {"review_pending": False},
-            "version": 1,
-        }
-
-        save_unified_state(unified)
-
-        # Verify single file created
-        state_file = temp_state_dir / "workflow.json"
-        assert state_file.exists()
-
-        # Verify content
-        loaded = load_unified_state()
-        assert loaded["iterate"]["task"] == "atomic test"
-
-    def test_unified_state_migration(self, temp_state_dir):
-        """Should migrate from old split files to unified format."""
-        # Create old-style split files
-        (temp_state_dir / "iterate.json").write_text(
-            json.dumps({"active": True, "task": "migrate me", "phase": "implement"})
-        )
-        (temp_state_dir / "worker_pool.json").write_text(
-            json.dumps({"active": False})
-        )
-
-        from lib.unified_state import migrate_to_unified
-
-        # Perform migration
-        result = migrate_to_unified(temp_state_dir)
-
-        # Verify unified file created
-        assert (temp_state_dir / "workflow.json").exists()
-
-        # Verify old files backed up (not deleted)
-        assert (temp_state_dir / "iterate.json.bak").exists()
-
-        # Verify data preserved
-        assert result["iterate"]["task"] == "migrate me"
-
-    def test_unified_state_version_check(self, temp_state_dir):
-        """Should handle state version upgrades."""
-        # Write old version
-        old_state = {"version": 0, "iterate": {"task": "old"}}
-        (temp_state_dir / "workflow.json").write_text(json.dumps(old_state))
-
-        from lib.unified_state import load_unified_state, STATE_VERSION
-
-        loaded = load_unified_state()
-
-        # Should auto-upgrade version
-        assert loaded.get("version", 0) >= STATE_VERSION
+    """Tests for unified state management - DEPRECATED.
+    
+    These tests are for the deprecated lib/unified_state.py module.
+    State management is now handled by lib/state_manager.py.
+    """
+    pass
 
 
 # =============================================================================
@@ -494,16 +404,14 @@ class TestTokenOptimizationIntegration:
         """Full workflow should use all optimizations together."""
         # This test verifies the optimizations work together
 
-        # 1. Start workflow with unified state
-        from lib.unified_state import save_unified_state, load_unified_state
+        # 1. Start workflow with state_manager
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
+        import state_manager
 
-        save_unified_state(
-            {
-                "iterate": {"active": True, "task": "integration test", "phase": "implement"},
-                "worker_pool": {"active": False},
-                "review_gate": {},
-                "version": 1,
-            }
+        state_manager.set_state(
+            "iterate",
+            {"active": True, "task": "integration test", "phase": "implement"}
         )
 
         # 2. Resolve context with caching
@@ -545,13 +453,13 @@ class TestTokenOptimizationIntegration:
         with mock.patch.object(Path, "read_text", counting_read):
             with mock.patch.object(Path, "write_text", counting_write):
                 # Simulate workflow operations
-                from lib.unified_state import save_unified_state, load_unified_state
+                import sys
+                sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
+                import state_manager
 
                 # Single save/load should be 1 read + 1 write
-                save_unified_state(
-                    {"iterate": {"active": True}, "worker_pool": {}, "review_gate": {}}
-                )
-                load_unified_state()
+                state_manager.set_state("iterate", {"active": True})
+                state_manager.get_state("iterate")
 
         # With unified state, should have minimal I/O
         # (vs. old approach of reading 4 separate files)
