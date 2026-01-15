@@ -62,9 +62,9 @@ Future: Autokill feature may terminate long-running or failing agents.
 ### Insufficient context → Go back to INTAKE
 If the orchestrator cannot write quality prompts because it lacks context:
 
-**Do NOT explore in ORCHESTRATE.** Go back to INTAKE phase.
+**Orchestrator does NOT explore in ORCHESTRATE.** Go back to INTAKE phase.
 
-INTAKE is where context gathering happens:
+INTAKE is where orchestrator context gathering happens:
 - Explore codebase
 - Read relevant files
 - Understand scope and patterns
@@ -82,6 +82,15 @@ Then complete intake properly before returning to orchestrate.
 - Not knowing which files to reference
 - Unclear on existing patterns
 - Missing acceptance criteria
+
+### Subagents DO explore
+Subagents are close to the code - they SHOULD explore their specific area:
+- Read related files to understand patterns
+- Check for side effects before changes
+- Find existing implementations to follow
+- Verify test coverage areas
+
+This is different from orchestrator exploration - subagents explore as part of implementation.
 
 ### Subagent responsibilities (TDD loop phases)
 - Write tests (test_writing phase)
