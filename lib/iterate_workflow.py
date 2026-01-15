@@ -83,12 +83,17 @@ def _reset_logger() -> None:
 class Phase(Enum):
     """TDD workflow phases.
 
+    Orchestration mode (main agent):
+        ORCHESTRATE - Coordinate subagents, never advance
+
     Optional discovery phases (before TDD loop):
         INTAKE -> DESIGN -> [TDD loop]
 
     TDD loop:
         TEST_WRITING -> IMPLEMENT -> TEST -> REVIEW -> DONE
     """
+    # Orchestration phase (main agent only - never leaves until complete)
+    ORCHESTRATE = "orchestrate"    # Coordinate subagents, manage queue
     # Optional discovery phases
     INTAKE = "intake"              # Gather requirements (no editing)
     DESIGN = "design"              # Write spec, decompose into task_queue
@@ -102,6 +107,12 @@ class Phase(Enum):
 
 # Tools allowed in each phase
 PHASE_TOOLS = {
+    Phase.ORCHESTRATE: {
+        # Orchestrate phase: coordinate workers, read queue state, spawn subagents
+        # NO editing, NO bash (orchestrator doesn't execute - it delegates)
+        "allowed": {"Read", "Task", "TodoWrite", "TaskOutput", "Glob", "Grep"},
+        "blocked": {"Edit", "Write", "NotebookEdit", "Bash"},
+    },
     Phase.INTAKE: {
         # Intake phase: gather requirements, research, no editing
         "allowed": {"Read", "Glob", "Grep", "WebSearch", "WebFetch", "Task"},
@@ -113,11 +124,11 @@ PHASE_TOOLS = {
         "blocked": set(),
     },
     Phase.TEST_WRITING: {
-        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "Bash", "Task"},
+        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "Bash"},
         "blocked": set(),
     },
     Phase.IMPLEMENT: {
-        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "Bash", "Task"},
+        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "Bash"},
         "blocked": set(),
     },
     Phase.TEST: {
@@ -127,7 +138,7 @@ PHASE_TOOLS = {
     },
     Phase.REVIEW: {
         # Review phase: fix issues from Greptile comments
-        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "Bash", "Task"},
+        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "Bash"},
         "blocked": set(),
     },
     Phase.DONE: {
@@ -159,6 +170,7 @@ def start(
     max_iterations: int = 5,
     needs_intake: bool = False,
     needs_design: bool = False,
+    orchestrate_mode: bool = False,
 ) -> dict:
     """Start a new iterate workflow.
 
@@ -167,11 +179,14 @@ def start(
         max_iterations: Max loops before requiring user checkpoint
         needs_intake: Start with intake phase (gather requirements)
         needs_design: Include design phase (write spec, create task_queue)
+        orchestrate_mode: Use orchestration mode (main agent coordinates workers)
 
     Returns:
         Current state
 
     Phase flow based on flags:
+        - orchestrate_mode=True:
+            ORCHESTRATE (permanent - never advances until workflow complete)
         - needs_intake=True, needs_design=True:
             intake -> design -> test_writing -> ...
         - needs_intake=True, needs_design=False:
@@ -182,7 +197,10 @@ def start(
             test_writing -> ...
     """
     # Determine initial phase
-    if needs_intake:
+    # orchestrate_mode takes precedence - main agent stays in ORCHESTRATE
+    if orchestrate_mode:
+        initial_phase = Phase.ORCHESTRATE
+    elif needs_intake:
         initial_phase = Phase.INTAKE
     elif needs_design:
         initial_phase = Phase.DESIGN
@@ -195,6 +213,8 @@ def start(
         "phase": initial_phase.value,
         "iteration": 0,
         "max_iterations": max_iterations,
+        # Mode flags
+        "orchestrate_mode": orchestrate_mode,
         # Discovery phase flags
         "needs_intake": needs_intake,
         "needs_design": needs_design,
@@ -209,7 +229,7 @@ def start(
     }
     _save_state(state)
     _log("info", "Workflow started", task=task, max_iterations=max_iterations,
-         needs_intake=needs_intake, needs_design=needs_design)
+         orchestrate_mode=orchestrate_mode, needs_intake=needs_intake, needs_design=needs_design)
     return state
 
 
@@ -831,6 +851,44 @@ def refresh_review_status(pr_number: Optional[int] = None) -> int:
 
     _log("info", "Review status refreshed", pr=pr_number, added=added)
     return added
+
+
+def is_orchestration_complete() -> bool:
+    """Check if orchestration is complete.
+
+    Returns True when:
+    1. Workflow is active AND in ORCHESTRATE phase, AND
+    2. Task queue has no pending tasks, AND
+    3. No active workers
+
+    This is the exit condition for ORCHESTRATE phase.
+
+    Returns:
+        True if orchestration is complete, False otherwise.
+    """
+    if not is_active():
+        return False
+
+    phase = get_phase()
+    if phase != Phase.ORCHESTRATE:
+        return False
+
+    # Check worker pool status
+    try:
+        from worker_pool import is_complete as worker_pool_is_complete
+
+        # Load queue to check if empty
+        wq = _get_workflow_queue()
+        queue_empty = wq.all_done()
+
+        return worker_pool_is_complete(queue_empty=queue_empty)
+    except ImportError:
+        # worker_pool not available - check queue only
+        wq = _get_workflow_queue()
+        return wq.all_done()
+    except Exception:
+        # Graceful degradation - return False if any error
+        return False
 
 
 # CLI interface

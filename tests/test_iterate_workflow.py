@@ -581,3 +581,118 @@ class TestGhCliIntegration:
 
         added = refresh_review_status()
         assert added >= 0  # May be 0 if comment already exists
+
+
+class TestOrchestratePhase:
+    """Tests for ORCHESTRATE phase - main agent coordination."""
+
+    def test_orchestrate_phase_exists(self):
+        """ORCHESTRATE phase should exist in Phase enum."""
+        assert Phase.ORCHESTRATE.value == "orchestrate"
+
+    def test_orchestrate_phase_tools_blocks_editing(self):
+        """ORCHESTRATE phase should block Edit and Write."""
+        assert "Edit" in PHASE_TOOLS[Phase.ORCHESTRATE]["blocked"]
+        assert "Write" in PHASE_TOOLS[Phase.ORCHESTRATE]["blocked"]
+
+    def test_orchestrate_phase_tools_blocks_bash(self):
+        """ORCHESTRATE phase should block Bash (orchestrator doesn't run commands)."""
+        assert "Bash" in PHASE_TOOLS[Phase.ORCHESTRATE]["blocked"]
+
+    def test_orchestrate_phase_allows_read(self):
+        """ORCHESTRATE phase should allow Read."""
+        assert "Read" in PHASE_TOOLS[Phase.ORCHESTRATE]["allowed"]
+
+    def test_orchestrate_phase_allows_task(self):
+        """ORCHESTRATE phase should allow Task (for spawning subagents)."""
+        assert "Task" in PHASE_TOOLS[Phase.ORCHESTRATE]["allowed"]
+
+    def test_orchestrate_phase_allows_todowrite(self):
+        """ORCHESTRATE phase should allow TodoWrite."""
+        assert "TodoWrite" in PHASE_TOOLS[Phase.ORCHESTRATE]["allowed"]
+
+
+class TestOrchestrateStart:
+    """Tests for starting workflow in orchestrate mode."""
+
+    def test_start_with_orchestrate_mode(self):
+        """start() with orchestrate_mode=True should begin in ORCHESTRATE phase."""
+        start("Test task", orchestrate_mode=True)
+        assert get_phase() == Phase.ORCHESTRATE
+
+    def test_start_orchestrate_sets_flag(self):
+        """start() with orchestrate_mode should set orchestrate_mode flag in state."""
+        start("Test task", orchestrate_mode=True)
+        state = get_state()
+        assert state.get("orchestrate_mode") is True
+
+    def test_orchestrate_overrides_needs_intake(self):
+        """orchestrate_mode should take precedence over needs_intake."""
+        start("Test task", needs_intake=True, orchestrate_mode=True)
+        assert get_phase() == Phase.ORCHESTRATE
+
+    def test_orchestrate_overrides_needs_design(self):
+        """orchestrate_mode should take precedence over needs_design."""
+        start("Test task", needs_design=True, orchestrate_mode=True)
+        assert get_phase() == Phase.ORCHESTRATE
+
+
+class TestOrchestrateCompletion:
+    """Tests for orchestration completion detection."""
+
+    def test_is_orchestration_complete_function_exists(self):
+        """is_orchestration_complete function should be importable."""
+        from iterate_workflow import is_orchestration_complete
+        assert callable(is_orchestration_complete)
+
+    def test_is_orchestration_complete_false_when_inactive(self):
+        """is_orchestration_complete returns False when workflow not active."""
+        from iterate_workflow import is_orchestration_complete
+        # No workflow started
+        assert is_orchestration_complete() is False
+
+    def test_is_orchestration_complete_false_with_active_workers(self, monkeypatch):
+        """is_orchestration_complete returns False when workers are active."""
+        from iterate_workflow import is_orchestration_complete
+        import sys
+        from pathlib import Path
+
+        # Mock worker_pool.is_complete to return False (workers active)
+        worker_pool_path = Path(__file__).parent.parent / "lib"
+        sys.path.insert(0, str(worker_pool_path))
+
+        def mock_is_complete(queue_empty):
+            return False  # Workers still active
+
+        import worker_pool
+        monkeypatch.setattr(worker_pool, "is_complete", mock_is_complete)
+
+        start("Test task", orchestrate_mode=True)
+        assert is_orchestration_complete() is False
+
+    def test_is_orchestration_complete_true_when_done(self, monkeypatch):
+        """is_orchestration_complete returns True when queue empty and no workers."""
+        from iterate_workflow import is_orchestration_complete
+        import sys
+        from pathlib import Path
+
+        # Mock worker_pool.is_complete to return True (all done)
+        worker_pool_path = Path(__file__).parent.parent / "lib"
+        sys.path.insert(0, str(worker_pool_path))
+
+        def mock_is_complete(queue_empty):
+            return queue_empty  # Done if queue is empty
+
+        import worker_pool
+        monkeypatch.setattr(worker_pool, "is_complete", mock_is_complete)
+
+        # Also mock _get_workflow_queue to return a queue that reports all_done
+        class MockQueue:
+            def all_done(self):
+                return True
+
+        monkeypatch.setattr("iterate_workflow._get_workflow_queue", lambda: MockQueue())
+
+        start("Test task", orchestrate_mode=True)
+        # With empty queue and mocked completion, should be complete
+        assert is_orchestration_complete() is True
