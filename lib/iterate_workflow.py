@@ -506,6 +506,12 @@ def set_test_results(tests_passed: bool, lint_passed: bool, coverage_ok: bool) -
     """
     if not is_active():
         raise RuntimeError("No active workflow - cannot record test results")
+
+    # Warn loudly if lint failed
+    if not lint_passed:
+        _log("warning", "LINT FAILED: Agents must run and pass lint (ruff check .) before reporting success",
+             tests=tests_passed, lint=lint_passed, coverage=coverage_ok)
+
     state = state_manager.get_state("orchestrator") or {}
     state["tests_passed"] = tests_passed
     state["lint_passed"] = lint_passed

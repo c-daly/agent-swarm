@@ -16,6 +16,7 @@ Code implementation with quality focus. Used for:
 - Write tests for new functionality
 - Follow existing code patterns
 - Use Serena for precise edits
+- In TEST phase: Run pytest AND lint (ruff check .) before reporting success
 
 ## Output Format (REQUIRED)
 

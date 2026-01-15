@@ -206,6 +206,26 @@ class TestPhaseAdvancement:
         new_phase = advance_phase()
         assert new_phase == Phase.IMPLEMENT
 
+    def test_set_test_results_warns_on_lint_failure(self):
+        """set_test_results should log warning when lint fails."""
+        start("Test task")
+        set_phase(Phase.TEST)
+
+        # Record results with lint failure
+        set_test_results(tests_passed=True, lint_passed=False, coverage_ok=True)
+
+        # Verify results were recorded
+        state = get_state()
+        assert state["tests_passed"] is True
+        assert state["lint_passed"] is False
+        assert state["coverage_ok"] is True
+
+        # Verify warning was logged
+        if LOG_FILE.exists():
+            log_content = LOG_FILE.read_text()
+            assert "WARNING" in log_content or "warning" in log_content
+            assert "lint" in log_content.lower()
+
     def test_advance_from_review_to_done_when_clean(self):
         """Clean review should complete workflow."""
         start("Test task")
