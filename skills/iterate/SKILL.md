@@ -59,27 +59,29 @@ The ORCHESTRATE phase enforces the orchestrator role through tool restrictions:
 
 Future: Autokill feature may terminate long-running or failing agents.
 
-### Explore-before-prompt pattern
-When writing prompts for agents, the orchestrator MUST gather sufficient context first:
+### Insufficient context → Go back to INTAKE
+If the orchestrator cannot write quality prompts because it lacks context:
 
-1. **If task references files/modules** → Read them before writing prompt
-2. **If task is vague** → Read related code to understand scope
-3. **If task involves existing patterns** → Find examples first
+**Do NOT explore in ORCHESTRATE.** Go back to INTAKE phase.
 
-**Good prompt flow:**
-```
-1. Read spec file / referenced files
-2. Grep for related patterns
-3. Understand existing structure
-4. Write detailed prompt with:
-   - Specific file paths
-   - Existing patterns to follow
-   - Code snippets for context
-   - Clear acceptance criteria
+INTAKE is where context gathering happens:
+- Explore codebase
+- Read relevant files
+- Understand scope and patterns
+- Gather requirements
+
+**If you're in ORCHESTRATE and can't write good prompts:**
+```bash
+python3 lib/iterate_workflow.py set-phase intake
 ```
 
-**Bad:** Writing vague prompts like "implement the feature described in spec.md"
-**Good:** Reading spec.md first, then writing prompt with extracted requirements and file locations
+Then complete intake properly before returning to orchestrate.
+
+**Signs you rushed intake:**
+- Writing vague prompts like "implement spec.md"
+- Not knowing which files to reference
+- Unclear on existing patterns
+- Missing acceptance criteria
 
 ### Subagent responsibilities (TDD loop phases)
 - Write tests (test_writing phase)
