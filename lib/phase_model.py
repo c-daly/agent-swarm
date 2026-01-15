@@ -9,6 +9,9 @@ from enum import Enum, auto
 from dataclasses import dataclass
 from typing import FrozenSet, Optional
 
+# Git/gh commands blocked in orchestrate phase
+GIT_COMMAND_PREFIXES = ("git ", "git\t", "git;", "gh ", "gh\t", "gh;")
+
 
 class ToolCategory(Enum):
     """Categories of tools available to agents."""
@@ -36,6 +39,18 @@ class Phase:
 
 # Iterate workflow phases with tool restrictions
 ITERATE_PHASES = {
+    "orchestrate": Phase(
+        name="orchestrate",
+        allowed_categories=frozenset({
+            ToolCategory.FILE_READ,
+            ToolCategory.FILE_SEARCH,
+            ToolCategory.CODE_QUERY,
+            ToolCategory.SUBAGENT,
+            ToolCategory.USER_INTERACTION,
+        }),
+        blocked_tools=frozenset({"Edit", "Write", "NotebookEdit"}),
+        requires_verification=False,
+    ),
     "test_writing": Phase(
         name="test_writing",
         allowed_categories=frozenset({
@@ -198,3 +213,38 @@ def get_phase_info(phase: str) -> Optional[Phase]:
         Phase definition or None if not found
     """
     return ITERATE_PHASES.get(phase)
+
+
+def check_bash_git_blocked(command: str, phase: str) -> tuple[bool, str]:
+    """Check if a Bash command containing git/gh should be blocked.
+
+    In the orchestrate phase, git and gh commands are blocked because
+    the review phase handles git operations.
+
+    Args:
+        command: The bash command to check
+        phase: Current workflow phase
+
+    Returns:
+        Tuple of (blocked: bool, reason: str)
+        - If blocked: (True, "reason for blocking")
+        - If allowed: (False, "")
+    """
+    if phase != "orchestrate":
+        return False, ""
+
+    # Normalize command - strip leading whitespace and check
+    cmd = command.lstrip()
+
+    # Check if command starts with git or gh
+    if cmd.startswith(GIT_COMMAND_PREFIXES):
+        return True, "[ORCHESTRATE] Git operations blocked. Review phase handles git."
+
+    # Check for piped/chained commands containing git/gh
+    # Look for patterns like "... | git", "... && git", "... ; git"
+    for pattern in (" git ", "\tgit ", ";git ", "&git ", "|git ",
+                    " gh ", "\tgh ", ";gh ", "&gh ", "|gh "):
+        if pattern in command:
+            return True, "[ORCHESTRATE] Git operations blocked. Review phase handles git."
+
+    return False, ""

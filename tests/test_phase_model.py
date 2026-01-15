@@ -6,7 +6,9 @@ from lib.phase_model import (
     ToolCategory,
     ITERATE_PHASES,
     TOOL_CATEGORIES,
+    GIT_COMMAND_PREFIXES,
     check_tool_allowed,
+    check_bash_git_blocked,
     get_phase_info,
 )
 
@@ -16,7 +18,9 @@ class TestPhaseDefinitions:
 
     def test_all_phases_exist(self):
         """All expected phases are defined."""
-        expected_phases = {"test_writing", "implement", "test", "coverage", "review"}
+        expected_phases = {
+            "orchestrate", "test_writing", "implement", "test", "coverage", "review"
+        }
         assert set(ITERATE_PHASES.keys()) == expected_phases
 
     def test_phases_are_immutable(self):
@@ -30,6 +34,141 @@ class TestPhaseDefinitions:
         phase = ITERATE_PHASES["implement"]
         assert isinstance(phase.allowed_categories, frozenset)
         assert isinstance(phase.blocked_tools, frozenset)
+
+
+class TestOrchestratePhase:
+    """Test the orchestrate phase restrictions."""
+
+    def test_allows_file_read(self):
+        """File reading is allowed in orchestrate."""
+        allowed, _ = check_tool_allowed("Read", "orchestrate")
+        assert allowed
+
+    def test_allows_file_search(self):
+        """File searching is allowed in orchestrate."""
+        allowed, _ = check_tool_allowed("Glob", "orchestrate")
+        assert allowed
+
+    def test_allows_code_query(self):
+        """Code queries are allowed in orchestrate."""
+        allowed, _ = check_tool_allowed(
+            "mcp__plugin_serena_serena__find_symbol", "orchestrate"
+        )
+        assert allowed
+
+    def test_allows_subagents(self):
+        """Subagents are allowed in orchestrate."""
+        allowed, _ = check_tool_allowed("Task", "orchestrate")
+        assert allowed
+
+    def test_blocks_edit(self):
+        """Edit is blocked in orchestrate."""
+        allowed, reason = check_tool_allowed("Edit", "orchestrate")
+        assert not allowed
+        assert "blocked" in reason.lower()
+
+    def test_blocks_write(self):
+        """Write is blocked in orchestrate."""
+        allowed, reason = check_tool_allowed("Write", "orchestrate")
+        assert not allowed
+        assert "blocked" in reason.lower()
+
+    def test_blocks_notebook_edit(self):
+        """NotebookEdit is blocked in orchestrate."""
+        allowed, reason = check_tool_allowed("NotebookEdit", "orchestrate")
+        assert not allowed
+        assert "blocked" in reason.lower()
+
+    def test_no_verification_required(self):
+        """orchestrate phase doesn't require verification."""
+        phase = ITERATE_PHASES["orchestrate"]
+        assert not phase.requires_verification
+
+
+class TestCheckBashGitBlocked:
+    """Test git/gh command blocking in orchestrate phase."""
+
+    def test_blocks_git_command(self):
+        """Direct git commands are blocked in orchestrate."""
+        blocked, reason = check_bash_git_blocked("git status", "orchestrate")
+        assert blocked
+        assert "ORCHESTRATE" in reason
+        assert "blocked" in reason.lower()
+
+    def test_blocks_gh_command(self):
+        """Direct gh commands are blocked in orchestrate."""
+        blocked, reason = check_bash_git_blocked("gh pr list", "orchestrate")
+        assert blocked
+        assert "ORCHESTRATE" in reason
+
+    def test_blocks_git_with_tab(self):
+        """Git commands with tab separator are blocked."""
+        blocked, _ = check_bash_git_blocked("git\tstatus", "orchestrate")
+        assert blocked
+
+    def test_blocks_gh_with_tab(self):
+        """gh commands with tab separator are blocked."""
+        blocked, _ = check_bash_git_blocked("gh\tpr list", "orchestrate")
+        assert blocked
+
+    def test_blocks_git_with_semicolon(self):
+        """Git commands starting with semicolon chain are blocked."""
+        blocked, _ = check_bash_git_blocked("git;echo done", "orchestrate")
+        assert blocked
+
+    def test_blocks_piped_git(self):
+        """Piped git commands are blocked."""
+        blocked, _ = check_bash_git_blocked("echo test | git apply", "orchestrate")
+        assert blocked
+
+    def test_blocks_chained_git(self):
+        """Chained git commands are blocked."""
+        blocked, _ = check_bash_git_blocked("cd repo && git status", "orchestrate")
+        assert blocked
+
+    def test_blocks_semicolon_chained_git(self):
+        """Semicolon-chained git commands are blocked."""
+        blocked, _ = check_bash_git_blocked("cd repo;git status", "orchestrate")
+        assert blocked
+
+    def test_blocks_piped_gh(self):
+        """Piped gh commands are blocked."""
+        blocked, _ = check_bash_git_blocked("echo test | gh issue create", "orchestrate")
+        assert blocked
+
+    def test_allows_in_other_phases(self):
+        """Git commands are allowed in other phases."""
+        blocked, reason = check_bash_git_blocked("git status", "implement")
+        assert not blocked
+        assert reason == ""
+
+    def test_allows_in_review_phase(self):
+        """Git commands are allowed in review phase."""
+        blocked, _ = check_bash_git_blocked("git status", "review")
+        assert not blocked
+
+    def test_allows_non_git_commands(self):
+        """Non-git commands are allowed in orchestrate."""
+        blocked, reason = check_bash_git_blocked("pytest tests/", "orchestrate")
+        assert not blocked
+        assert reason == ""
+
+    def test_allows_grep_git(self):
+        """Grep for git-related content is allowed."""
+        blocked, _ = check_bash_git_blocked("grep 'git' README.md", "orchestrate")
+        assert not blocked
+
+    def test_handles_leading_whitespace(self):
+        """Commands with leading whitespace are handled."""
+        blocked, _ = check_bash_git_blocked("  git status", "orchestrate")
+        assert blocked
+
+    def test_git_command_prefixes_constant(self):
+        """GIT_COMMAND_PREFIXES constant has expected values."""
+        assert "git " in GIT_COMMAND_PREFIXES
+        assert "gh " in GIT_COMMAND_PREFIXES
+        assert "git\t" in GIT_COMMAND_PREFIXES
+        assert "gh\t" in GIT_COMMAND_PREFIXES
 
 
 class TestTestWritingPhase:
@@ -312,4 +451,4 @@ class TestPhaseProgression:
             for name, phase in ITERATE_PHASES.items()
             if not phase.requires_verification
         ]
-        assert set(non_verification_phases) == {"test_writing", "implement"}
+        assert set(non_verification_phases) == {"orchestrate", "test_writing", "implement"}
