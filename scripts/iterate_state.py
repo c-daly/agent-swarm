@@ -330,10 +330,13 @@ def save_state(state: dict) -> None:
 
 
 def save_queue(queue: "TaskQueue") -> None:
-    """Save queue state to session.json under 'queue' key.
+    """Save queue state to in-memory state_manager under 'queue' key.
 
-    Merges with existing state (doesn't overwrite other keys).
+    Note: Queue is ephemeral - resets on process restart.
     """
+    from lib.state_manager import set_state, get_state
+
+    # Get existing session state (for compatibility with other keys)
     state = load_state()
 
     # Serialize tasks
@@ -365,26 +368,40 @@ def save_queue(queue: "TaskQueue") -> None:
             "iteration": pr.iteration,
         }
 
-    state["queue"] = {
+    queue_data = {
         "tasks": tasks_data,
         "prs": prs_data,
         "completed": queue.completed,
         "failed": queue.failed,
     }
 
+    # Save to state_manager (in-memory, ephemeral)
+    set_state("queue", queue_data)
+
+    # Also save to session.json for backwards compatibility
+    state["queue"] = queue_data
     save_state(state)
 
 
 def load_queue() -> "TaskQueue":
-    """Load queue from session.json.
+    """Load queue from in-memory state_manager.
 
     Returns empty TaskQueue if no queue state exists.
     Handles missing/malformed data gracefully.
+    Note: Queue is ephemeral - resets on process restart.
     """
-    state = load_state()
+    from lib.state_manager import get_state
+
     queue = TaskQueue()
 
-    queue_data = state.get("queue")
+    # Try state_manager first (primary source)
+    queue_data = get_state("queue")
+    
+    # Fall back to session.json for backwards compatibility
+    if not queue_data:
+        state = load_state()
+        queue_data = state.get("queue")
+    
     if not queue_data:
         return queue
 
