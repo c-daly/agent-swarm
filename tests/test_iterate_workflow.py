@@ -722,3 +722,134 @@ class TestOrchestrateCompletion:
         start("## Task Overview\n- [ ] First item to implement\n- [ ] Second item with details")  # Spec-like -> ORCHESTRATE
         # With empty queue and mocked completion, should be complete
         assert is_orchestration_complete() is True
+
+
+class TestBashWhitelist:
+    """Tests for per-phase Bash command whitelisting."""
+
+    # Test commands
+    ITERATE_CMD = "python3 lib/iterate_workflow.py status"
+    PYTEST_CMD = "pytest tests/"
+    RUFF_CMD = "ruff check ."
+    MYPY_CMD = "mypy src/"
+    COVERAGE_CMD = "coverage run -m pytest"
+    GIT_CMD = "git status"
+    GH_CMD = "gh pr list"
+
+    def test_intake_allows_iterate_workflow(self):
+        """INTAKE allows iterate_workflow.py commands."""
+        start("Test task")  # Vague -> INTAKE
+        allowed, _ = is_tool_allowed("Bash", command=self.ITERATE_CMD)
+        assert allowed is True
+
+    def test_intake_blocks_pytest(self):
+        """INTAKE blocks pytest."""
+        start("Test task")
+        allowed, reason = is_tool_allowed("Bash", command=self.PYTEST_CMD)
+        assert allowed is False
+        assert "BLOCKED" in reason
+
+    def test_intake_blocks_git(self):
+        """INTAKE blocks git."""
+        start("Test task")
+        allowed, _ = is_tool_allowed("Bash", command=self.GIT_CMD)
+        assert allowed is False
+
+    def test_design_allows_iterate_workflow(self):
+        """DESIGN allows iterate_workflow.py commands."""
+        start("Test task")
+        set_phase(Phase.DESIGN)
+        allowed, _ = is_tool_allowed("Bash", command=self.ITERATE_CMD)
+        assert allowed is True
+
+    def test_design_blocks_pytest(self):
+        """DESIGN blocks pytest."""
+        start("Test task")
+        set_phase(Phase.DESIGN)
+        allowed, _ = is_tool_allowed("Bash", command=self.PYTEST_CMD)
+        assert allowed is False
+
+    def test_test_writing_allows_pytest(self):
+        """TEST_WRITING allows pytest."""
+        start("Test task")
+        set_phase(Phase.TEST_WRITING)
+        allowed, _ = is_tool_allowed("Bash", command=self.PYTEST_CMD)
+        assert allowed is True
+
+    def test_test_writing_blocks_ruff(self):
+        """TEST_WRITING blocks ruff."""
+        start("Test task")
+        set_phase(Phase.TEST_WRITING)
+        allowed, _ = is_tool_allowed("Bash", command=self.RUFF_CMD)
+        assert allowed is False
+
+    def test_implement_allows_pytest_ruff_mypy(self):
+        """IMPLEMENT allows pytest, ruff, mypy."""
+        start("Test task")
+        set_phase(Phase.IMPLEMENT)
+        for cmd in [self.PYTEST_CMD, self.RUFF_CMD, self.MYPY_CMD]:
+            allowed, _ = is_tool_allowed("Bash", command=cmd)
+            assert allowed is True, f"IMPLEMENT should allow: {cmd}"
+
+    def test_implement_blocks_coverage(self):
+        """IMPLEMENT blocks coverage."""
+        start("Test task")
+        set_phase(Phase.IMPLEMENT)
+        allowed, _ = is_tool_allowed("Bash", command=self.COVERAGE_CMD)
+        assert allowed is False
+
+    def test_implement_blocks_git(self):
+        """IMPLEMENT blocks git."""
+        start("Test task")
+        set_phase(Phase.IMPLEMENT)
+        allowed, _ = is_tool_allowed("Bash", command=self.GIT_CMD)
+        assert allowed is False
+
+    def test_test_phase_allows_coverage(self):
+        """TEST phase allows coverage."""
+        start("Test task")
+        set_phase(Phase.TEST)
+        allowed, _ = is_tool_allowed("Bash", command=self.COVERAGE_CMD)
+        assert allowed is True
+
+    def test_test_phase_blocks_git(self):
+        """TEST phase blocks git."""
+        start("Test task")
+        set_phase(Phase.TEST)
+        allowed, _ = is_tool_allowed("Bash", command=self.GIT_CMD)
+        assert allowed is False
+
+    def test_review_allows_git_gh(self):
+        """REVIEW allows git and gh."""
+        start("Test task")
+        set_phase(Phase.REVIEW)
+        set_test_results(tests_passed=True, lint_passed=True, coverage_ok=True)
+        for cmd in [self.GIT_CMD, self.GH_CMD]:
+            allowed, _ = is_tool_allowed("Bash", command=cmd)
+            assert allowed is True, f"REVIEW should allow: {cmd}"
+
+    def test_orchestrate_allows_gh(self):
+        """ORCHESTRATE allows gh for PR polling."""
+        start("## Task\n- [ ] Item 1\n- [ ] Item 2")  # Spec -> ORCHESTRATE
+        allowed, _ = is_tool_allowed("Bash", command=self.GH_CMD)
+        assert allowed is True
+
+    def test_orchestrate_blocks_pytest(self):
+        """ORCHESTRATE blocks pytest (spawn test agent instead)."""
+        start("## Task\n- [ ] Item 1\n- [ ] Item 2")
+        allowed, _ = is_tool_allowed("Bash", command=self.PYTEST_CMD)
+        assert allowed is False
+
+    def test_orchestrate_blocks_git(self):
+        """ORCHESTRATE blocks git."""
+        start("## Task\n- [ ] Item 1\n- [ ] Item 2")
+        allowed, _ = is_tool_allowed("Bash", command=self.GIT_CMD)
+        assert allowed is False
+
+    def test_done_allows_all(self):
+        """DONE allows all commands."""
+        start("Test task")
+        set_phase(Phase.DONE)
+        for cmd in [self.PYTEST_CMD, self.RUFF_CMD, self.GIT_CMD, self.GH_CMD]:
+            allowed, _ = is_tool_allowed("Bash", command=cmd)
+            assert allowed is True, f"DONE should allow: {cmd}"
