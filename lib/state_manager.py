@@ -69,7 +69,7 @@ def update_state(agent_id: str, updates: dict) -> dict:
         return _atomic_update_orchestrator(updates)
     else:
         with _memory_lock:
-            state = _states.get(agent_id, {})
+            state = dict(_states.get(agent_id, {}))  # Defensive copy
             state.update(updates)
             _states[agent_id] = state
             return dict(state)

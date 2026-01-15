@@ -27,6 +27,8 @@ from iterate_workflow import (  # noqa: E402
     get_phase,
     advance_phase,
     set_phase,
+    set_test_results,
+    set_review_status,
     is_tool_allowed,
     status,
     LOG_FILE,
@@ -288,3 +290,105 @@ class TestFullWorkflowWithIntakeDesign:
         # Orchestrate complete -> test_writing
         advance_phase()
         assert get_phase() == Phase.TEST_WRITING
+
+
+
+class TestPhaseAdvanceVerification:
+    """Tests for verification enforcement before phase advancement."""
+
+    def test_advance_from_test_without_results_fails(self):
+        """Advancing from TEST without recording results should fail."""
+        start("Vague task")
+        set_phase(Phase.TEST)
+        
+        with pytest.raises(RuntimeError, match="Cannot advance from TEST.*must record test results"):
+            advance_phase()
+
+    def test_advance_from_test_with_partial_results_fails(self):
+        """Advancing from TEST with only some results recorded should fail."""
+        start("Vague task")
+        set_phase(Phase.TEST)
+        
+        # Record only test results, not lint or coverage
+        state = get_state()
+        state["tests_passed"] = True
+        state_manager.set_state("orchestrator", state)
+        
+        with pytest.raises(RuntimeError, match="Cannot advance from TEST.*must record test results"):
+            advance_phase()
+
+    def test_advance_from_test_with_all_results_succeeds(self):
+        """Advancing from TEST with all results recorded should succeed."""
+        start("Vague task")
+        set_phase(Phase.TEST)
+        set_test_results(True, True, True)
+        
+        new_phase = advance_phase()
+        assert new_phase == Phase.REVIEW
+
+    def test_advance_from_review_without_status_fails(self):
+        """Advancing from REVIEW without recording status should fail."""
+        start("Vague task")
+        set_phase(Phase.REVIEW)
+        
+        with pytest.raises(RuntimeError, match="Cannot advance from REVIEW.*must record review status"):
+            advance_phase()
+
+    def test_advance_from_review_with_status_succeeds(self):
+        """Advancing from REVIEW with status recorded should succeed."""
+        start("Vague task")
+        set_phase(Phase.REVIEW)
+        set_review_status(True)
+        
+        new_phase = advance_phase()
+        # Should go to DONE since review is clean
+        assert new_phase is None or get_phase() == Phase.DONE
+
+    def test_advance_from_other_phases_no_verification_needed(self):
+        """Advancing from non-TEST/REVIEW phases should not require verification."""
+        # INTAKE -> DESIGN doesn't need verification
+        start("Vague task")
+        assert get_phase() == Phase.INTAKE
+        new_phase = advance_phase()
+        assert new_phase == Phase.DESIGN
+        
+        # DESIGN -> ORCHESTRATE doesn't need verification
+        new_phase = advance_phase()
+        assert new_phase == Phase.ORCHESTRATE
+        
+        # ORCHESTRATE -> TEST_WRITING doesn't need verification
+        new_phase = advance_phase()
+        assert new_phase == Phase.TEST_WRITING
+        
+        # TEST_WRITING -> IMPLEMENT doesn't need verification
+        new_phase = advance_phase()
+        assert new_phase == Phase.IMPLEMENT
+        
+        # IMPLEMENT -> TEST doesn't need verification
+        new_phase = advance_phase()
+        assert new_phase == Phase.TEST
+
+    def test_cli_advance_enforces_verification(self):
+        """CLI advance command should also enforce verification."""
+        import subprocess
+        
+        # Start workflow and move to TEST phase
+        subprocess.run(
+            ["python3", str(lib_dir / "iterate_workflow.py"), "start", "Test task"],
+            capture_output=True
+        )
+        
+        # Manually set phase to TEST
+        state = get_state()
+        state["phase"] = Phase.TEST.value
+        state_manager.set_state("orchestrator", state)
+        
+        # Try to advance without results - should fail
+        result = subprocess.run(
+            ["python3", str(lib_dir / "iterate_workflow.py"), "advance"],
+            capture_output=True,
+            text=True
+        )
+        
+        assert result.returncode != 0
+        assert "must record test results" in result.stderr or "must record test results" in result.stdout

@@ -23,6 +23,7 @@ CLI:
     python3 lib/orchestrate.py stop
 """
 
+import json
 import sys
 import time
 from dataclasses import dataclass, field
@@ -327,6 +328,8 @@ def _check_push_ready() -> None:
 def check_review_poll() -> bool:
     """Check if it's time to poll for review comments.
 
+    Automatically fetches and processes comments when poll is triggered.
+
     Returns:
         True if poll was triggered, False if not time yet.
     """
@@ -342,12 +345,34 @@ def check_review_poll() -> bool:
         if elapsed < state.config.review_poll_interval_minutes:
             return False
 
-    # Time to poll
+    # Time to poll - update state first
     state.last_poll = _now_iso()
     state.review_pending = True
     _save_state(state)
 
-    print(f"[ORCHESTRATE] Polling for review comments...")
+    print("[ORCHESTRATE] Polling for review comments...")
+
+    # Fetch and process comments automatically
+    # Import here to avoid circular dependency
+    from iterate_workflow import fetch_pr_review_status, get_pr_number
+
+    pr_number = get_pr_number()
+    if pr_number is None:
+        print("[ORCHESTRATE] No PR number set - skipping poll")
+        return True
+
+    # Fetch comments from GitHub
+    comments = fetch_pr_review_status(pr_number)
+    print(f"[ORCHESTRATE] Fetched {len(comments)} unresolved comments")
+
+    # Process comments into tasks
+    if comments:
+        tasks_added = process_review_comments(comments)
+        print(f"[ORCHESTRATE] Added {tasks_added} review tasks")
+    else:
+        # No comments found - mark review as potentially clean
+        print("[ORCHESTRATE] No review comments found")
+
     return True
 
 

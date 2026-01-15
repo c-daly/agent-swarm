@@ -387,6 +387,23 @@ def advance_phase() -> Optional[Phase]:
 
     current = Phase(state["phase"])
 
+    # Enforce verification before advancing from certain phases
+    if current == Phase.TEST:
+        test_results = state.get("tests_passed")
+        lint_results = state.get("lint_passed")
+        coverage_results = state.get("coverage_ok")
+        if test_results is None or lint_results is None or coverage_results is None:
+            raise RuntimeError(
+                "Cannot advance from TEST: must record test results first. "
+                "Call set_test_results() before advancing."
+            )
+    elif current == Phase.REVIEW:
+        if not state.get("review_status"):
+            raise RuntimeError(
+                "Cannot advance from REVIEW: must record review status first. "
+                "Call set_review_status() before advancing."
+            )
+
     if current == Phase.INTAKE:
         # Intake complete, always go to design
         state["phase"] = Phase.DESIGN.value
