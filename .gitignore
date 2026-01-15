@@ -12,3 +12,8 @@ __pycache__/
 .coverage
 .coverage.*
 .coveragerc
+
+# Session artifacts
+HANDOFF.md
+.claude/
+.logs/
