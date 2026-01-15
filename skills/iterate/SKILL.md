@@ -98,6 +98,126 @@ Web/external research happens in RESEARCH phase (orchestrator responsibility).
 - Write/modify code (implement phase)
 - Fix review issues (review phase)
 
+## Explore-Before-Prompt Pattern
+
+**When orchestrator has insufficient context for good prompts, use this pattern WITHIN a task.**
+
+Unlike going back to INTAKE (full phase change), this pattern lets the orchestrator spawn an explorer for ONE task, get context, then spawn implementer with enriched prompt.
+
+### When to use exploration
+
+The orchestrator should spawn an explorer agent BEFORE spawning an implementer when:
+- Task references files/modules not yet read by orchestrator
+- Task description is vague (< 10 words, no file paths)
+- Task uses vague verbs ("improve", "fix") without specifics
+- Task mentions "similar to X" without providing examples
+- No code snippets or file paths in available context
+
+**Detection helper:**
+```python
+from exploration_helpers import needs_exploration
+
+if needs_exploration(task, context):
+    # Spawn explorer first, then implementer
+```
+
+### Exploration workflow
+
+```
+1. Detect: needs_exploration(task, context) → True
+2. Explore: Spawn explorer with targeted prompt
+3. Enrich: Add explorer output to context
+4. Implement: Spawn implementer with enriched prompt
+```
+
+**Example:**
+
+```python
+# Bad: vague prompt
+Task(
+    description="Fix auth system",
+    subagent_type="agent-swarm:implementer",
+    prompt="Fix the authentication system bugs"
+)
+
+# Good: explore-first
+from exploration_helpers import needs_exploration, detect_exploration_type, format_explorer_prompt
+
+task = {"description": "Fix auth system"}
+context = {"files_read": [], "code_snippets": []}
+
+if needs_exploration(task, context):
+    # Spawn explorer
+    exploration_type = detect_exploration_type(task)
+    explorer_prompt = format_explorer_prompt(exploration_type, task)
+
+    explorer_result = Task(
+        description="Explore auth system",
+        subagent_type="agent-swarm:explorer",
+        model="haiku",
+        token_budget=50000,
+        prompt=explorer_prompt
+    )
+
+    # Wait for explorer result, then spawn implementer
+    enriched_context = {**context, "exploration": explorer_result}
+
+    Task(
+        description="Fix auth token expiration",
+        subagent_type="agent-swarm:implementer",
+        model="sonnet",
+        token_budget=100000,
+        prompt=f"""Fix auth token expiration bug.
+
+**Context from Exploration:**
+{explorer_result}
+
+**Requirements:**
+- Token should expire after 24h
+- Refresh tokens should work
+- Tests must pass
+
+Follow patterns shown in exploration output."""
+    )
+```
+
+### Exploration types
+
+| Type | When to Use | What Explorer Returns |
+|------|-------------|----------------------|
+| `file_discovery` | Task mentions files/modules | File paths, key functions, entry points |
+| `pattern_matching` | Task says "similar to X" | Existing implementations, patterns, helpers |
+| `dependency_mapping` | Task modifies existing code | Callers, imports, side effects, tests |
+| `context_enrichment` | Task is vague | Directory structure, key files, patterns |
+
+**Prompt templates available in `lib/prompt_templates.py`:**
+```python
+from prompt_templates import EXPLORATION_PROMPTS, IMPLEMENTER_PROMPTS
+
+# Get exploration prompt template
+explorer_prompt = EXPLORATION_PROMPTS["file_discovery"].format(topic="authentication")
+
+# Get implementer prompt template
+implementer_prompt = IMPLEMENTER_PROMPTS["with_exploration"].format(
+    task_description="Fix auth bug",
+    explorer_output="...",
+    requirements="...",
+    suggested_files="..."
+)
+```
+
+### When NOT to use this pattern
+
+- **Orchestrator phase change needed**: If ALL tasks need context, go back to INTAKE phase
+- **Subagent exploration sufficient**: Let implementers explore their specific area during work
+- **Context already available**: If you have files, patterns, examples already
+
+**Rule of thumb:**
+- Missing context for 1-2 tasks? → Explore-before-prompt pattern
+- Missing context for ALL tasks? → Go back to INTAKE phase
+
+
+
 ## Task Queue (Fundamental)
 
 **ALL work flows through the task queue.** This is not optional infrastructure - it's the enforcement mechanism that ensures subagents are spawned.
