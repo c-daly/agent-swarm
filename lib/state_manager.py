@@ -7,6 +7,7 @@ Manages agent workflow states:
 Thread-safe for both in-memory and file operations.
 """
 
+import copy
 import fcntl
 import json
 from pathlib import Path
@@ -35,9 +36,9 @@ def get_state(agent_id: str) -> Optional[dict]:
         return _load_orchestrator_state()
 
     with _memory_lock:
-        # Return a copy to prevent external mutation
+        # Return a deep copy to prevent external mutation of nested structures
         state = _states.get(agent_id)
-        return dict(state) if state else None
+        return copy.deepcopy(state) if state else None
 
 
 def set_state(agent_id: str, state: dict) -> None:
@@ -51,7 +52,7 @@ def set_state(agent_id: str, state: dict) -> None:
         _save_orchestrator_state(state)
     else:
         with _memory_lock:
-            _states[agent_id] = dict(state)  # Store a copy
+            _states[agent_id] = copy.deepcopy(state)  # Store a deep copy
 
 
 def update_state(agent_id: str, updates: dict) -> dict:
@@ -69,10 +70,10 @@ def update_state(agent_id: str, updates: dict) -> dict:
         return _atomic_update_orchestrator(updates)
     else:
         with _memory_lock:
-            state = dict(_states.get(agent_id, {}))  # Defensive copy
+            state = copy.deepcopy(_states.get(agent_id, {}))  # Defensive deep copy
             state.update(updates)
             _states[agent_id] = state
-            return dict(state)
+            return copy.deepcopy(state)
 
 
 def delete_state(agent_id: str) -> None:
