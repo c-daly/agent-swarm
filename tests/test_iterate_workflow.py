@@ -599,9 +599,9 @@ class TestOrchestratePhase:
         assert "Edit" in PHASE_TOOLS[Phase.ORCHESTRATE]["blocked"]
         assert "Write" in PHASE_TOOLS[Phase.ORCHESTRATE]["blocked"]
 
-    def test_orchestrate_phase_tools_blocks_bash(self):
-        """ORCHESTRATE phase should block Bash (orchestrator doesn't run commands)."""
-        assert "Bash" in PHASE_TOOLS[Phase.ORCHESTRATE]["blocked"]
+    def test_orchestrate_phase_allows_bash(self):
+        """ORCHESTRATE phase should allow Bash (but evaluation commands are filtered)."""
+        assert "Bash" in PHASE_TOOLS[Phase.ORCHESTRATE]["allowed"]
 
     def test_orchestrate_phase_allows_read(self):
         """ORCHESTRATE phase should allow Read."""

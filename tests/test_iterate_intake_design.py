@@ -392,3 +392,118 @@ class TestPhaseAdvanceVerification:
         
         assert result.returncode != 0
         assert "must record test results" in result.stderr or "must record test results" in result.stdout
+
+
+class TestOrchestratePhaseEvaluationBlocking:
+    """Tests for blocking evaluation commands in ORCHESTRATE phase."""
+
+    def test_orchestrate_phase_exists(self):
+        """ORCHESTRATE phase should exist in Phase enum."""
+        assert Phase.ORCHESTRATE.value == "orchestrate"
+
+    def test_orchestrate_bash_not_in_blocked_list(self):
+        """Bash should not be in ORCHESTRATE blocked list (we filter commands instead)."""
+        assert "Bash" not in PHASE_TOOLS[Phase.ORCHESTRATE]["blocked"]
+
+    def test_pytest_blocked_in_orchestrate(self):
+        """pytest command should be blocked in ORCHESTRATE phase."""
+        start("Test task")
+        set_phase(Phase.ORCHESTRATE)
+        allowed, reason = is_tool_allowed("Bash", command="pytest tests/")
+        assert allowed is False
+        assert "spawn a test agent" in reason.lower()
+
+    def test_pytest_python_module_blocked_in_orchestrate(self):
+        """python -m pytest should be blocked in ORCHESTRATE phase."""
+        start("Test task")
+        set_phase(Phase.ORCHESTRATE)
+        allowed, reason = is_tool_allowed("Bash", command="python -m pytest")
+        assert allowed is False
+        assert "spawn a test agent" in reason.lower()
+
+    def test_ruff_check_blocked_in_orchestrate(self):
+        """ruff check command should be blocked in ORCHESTRATE phase."""
+        start("Test task")
+        set_phase(Phase.ORCHESTRATE)
+        allowed, reason = is_tool_allowed("Bash", command="ruff check .")
+        assert allowed is False
+        assert "spawn a test agent" in reason.lower()
+
+    def test_ruff_dot_blocked_in_orchestrate(self):
+        """ruff . command should be blocked in ORCHESTRATE phase."""
+        start("Test task")
+        set_phase(Phase.ORCHESTRATE)
+        allowed, reason = is_tool_allowed("Bash", command="ruff .")
+        assert allowed is False
+        assert "spawn a test agent" in reason.lower()
+
+    def test_mypy_blocked_in_orchestrate(self):
+        """mypy command should be blocked in ORCHESTRATE phase."""
+        start("Test task")
+        set_phase(Phase.ORCHESTRATE)
+        allowed, reason = is_tool_allowed("Bash", command="mypy lib/")
+        assert allowed is False
+        assert "spawn a test agent" in reason.lower()
+
+    def test_coverage_blocked_in_orchestrate(self):
+        """coverage command should be blocked in ORCHESTRATE phase."""
+        start("Test task")
+        set_phase(Phase.ORCHESTRATE)
+        allowed, reason = is_tool_allowed("Bash", command="coverage run -m pytest")
+        assert allowed is False
+        assert "spawn a test agent" in reason.lower()
+
+    def test_black_check_blocked_in_orchestrate(self):
+        """black --check command should be blocked in ORCHESTRATE phase."""
+        start("Test task")
+        set_phase(Phase.ORCHESTRATE)
+        allowed, reason = is_tool_allowed("Bash", command="black --check .")
+        assert allowed is False
+        assert "spawn a test agent" in reason.lower()
+
+    def test_git_allowed_in_orchestrate(self):
+        """git commands should be allowed in ORCHESTRATE (not evaluation)."""
+        start("Test task")
+        set_phase(Phase.ORCHESTRATE)
+        # Git commands are only allowed in REVIEW phase based on existing rules
+        # But in ORCHESTRATE we don't want git blocked for evaluation reasons
+        allowed, reason = is_tool_allowed("Bash", command="git status")
+        # Git may be blocked for other reasons (review phase requirement)
+        # but NOT because it's an evaluation command
+        if not allowed:
+            assert "spawn a test agent" not in reason.lower()
+
+    def test_cat_allowed_in_orchestrate(self):
+        """cat commands should be allowed in ORCHESTRATE (not evaluation)."""
+        start("Test task")
+        set_phase(Phase.ORCHESTRATE)
+        allowed, _ = is_tool_allowed("Bash", command="cat file.txt")
+        assert allowed is True
+
+    def test_ls_allowed_in_orchestrate(self):
+        """ls commands should be allowed in ORCHESTRATE (not evaluation)."""
+        start("Test task")
+        set_phase(Phase.ORCHESTRATE)
+        allowed, _ = is_tool_allowed("Bash", command="ls -la")
+        assert allowed is True
+
+    def test_pytest_allowed_in_test_phase(self):
+        """pytest should be allowed in TEST phase."""
+        start("Test task")
+        set_phase(Phase.TEST)
+        allowed, _ = is_tool_allowed("Bash", command="pytest tests/")
+        assert allowed is True
+
+    def test_ruff_allowed_in_test_phase(self):
+        """ruff should be allowed in TEST phase."""
+        start("Test task")
+        set_phase(Phase.TEST)
+        allowed, _ = is_tool_allowed("Bash", command="ruff check .")
+        assert allowed is True
+
+    def test_pytest_allowed_in_implement_phase(self):
+        """pytest should be allowed in IMPLEMENT phase."""
+        start("Test task")
+        set_phase(Phase.IMPLEMENT)
+        allowed, _ = is_tool_allowed("Bash", command="pytest tests/")
+        assert allowed is True

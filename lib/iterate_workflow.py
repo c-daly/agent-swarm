@@ -111,9 +111,9 @@ class Phase(Enum):
 PHASE_TOOLS = {
     Phase.ORCHESTRATE: {
         # Orchestrate phase: coordinate workers, read queue state, spawn subagents
-        # NO editing, NO bash (orchestrator doesn't execute - it delegates)
-        "allowed": {"Read", "Task", "TodoWrite", "TaskOutput", "Glob", "Grep"},
-        "blocked": {"Edit", "Write", "NotebookEdit", "Bash"},
+        # NO editing, Bash allowed but evaluation commands filtered (see is_tool_allowed)
+        "allowed": {"Read", "Task", "TodoWrite", "TaskOutput", "Glob", "Grep", "Bash"},
+        "blocked": {"Edit", "Write", "NotebookEdit"},
     },
     Phase.INTAKE: {
         # Intake phase: gather requirements, research, no editing
@@ -603,6 +603,28 @@ def is_tool_allowed(tool_name: str, command: str | None = None) -> tuple[bool, s
                     return False, "[BLOCKED] Run tests and record coverage before commit/push"
                 if not coverage_ok:
                     return False, "[BLOCKED] Coverage threshold not met - cannot commit/push"
+
+        # Check for evaluation commands in ORCHESTRATE phase
+        if phase == Phase.ORCHESTRATE:
+            # Define evaluation command patterns
+            evaluation_patterns = [
+                "pytest",
+                "python -m pytest",
+                "python3 -m pytest",
+                "ruff check",
+                "ruff .",
+                "mypy",
+                "coverage",
+                "black --check",
+            ]
+
+            # Check if command matches any evaluation pattern
+            for pattern in evaluation_patterns:
+                if pattern in cmd_lower:
+                    return False, (
+                        f"[BLOCKED] In ORCHESTRATE phase, spawn a test agent instead of running "
+                        f"tests directly. Use Task tool to delegate evaluation work."
+                    )
 
     # Allow MCP variants of allowed tools
     base_tool = tool_name.split("__")[-1] if "__" in tool_name else tool_name
