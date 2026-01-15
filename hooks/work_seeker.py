@@ -98,5 +98,14 @@ def check_for_work() -> Dict[str, Any]:
     }
 
 if __name__ == "__main__":
-    result = check_for_work()
-    print(json.dumps(result))
+    try:
+        result = check_for_work()
+        print(json.dumps(result))
+    except Exception as e:
+        # Always output valid JSON even on error
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "PostToolUse",
+                "additionalContext": f"[work_seeker error: {str(e)}]"
+            }
+        }))

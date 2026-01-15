@@ -6,6 +6,14 @@ TDD development loop with phase gates. Works autonomously until exit conditions 
 
 ## Flow
 
+**With ORCHESTRATE (main agent coordinates workers):**
+```
+ORCHESTRATE ──┬──→ [spawn subagents] ──→ queue empty? ──→ done
+              │                              ↓
+              └──────────── no ←─────────────┘
+```
+
+**Subagents (TDD loop):**
 ```
 test_writing → implement → test → review → done
       ↑            ↑         |       |
@@ -17,30 +25,198 @@ test_writing → implement → test → review → done
 
 | Phase | Purpose | Allowed Tools |
 |-------|---------|---------------|
-| **test_writing** | Write tests first (spec) | Read, Glob, Grep, Edit, Write, Bash, Task |
-| **implement** | Make tests pass | Read, Glob, Grep, Edit, Write, Bash, Task |
+| **orchestrate** | Main agent coordinates workers | Read, Task, TaskOutput, TodoWrite (NO Edit/Write/Bash!) |
+| **test_writing** | Write tests first (spec) | Read, Glob, Grep, Edit, Write, Bash |
+| **implement** | Make tests pass | Read, Glob, Grep, Edit, Write, Bash |
 | **test** | Run pytest, lint, coverage | Read, Glob, Grep, Bash (no editing!) |
-| **review** | Fix Greptile issues | Read, Glob, Grep, Edit, Write, Bash, Task |
+| **review** | Fix Greptile issues | Read, Glob, Grep, Edit, Write, Bash |
 
 ## Orchestrator Role
 
-**The orchestrator (you) NEVER does implementation tasks. Always spawn agents.**
+**When in ORCHESTRATE phase, you NEVER do implementation tasks. Edit/Write/Bash are BLOCKED.**
 
+The ORCHESTRATE phase enforces the orchestrator role through tool restrictions:
+- ✅ Read, Task, TaskOutput, TodoWrite - coordination tools
+- ❌ Edit, Write, NotebookEdit, Bash - blocked, spawn agents instead
+
+### Rules
 - 1 task → spawn 1 agent
 - 5 tasks → spawn 5 agents in parallel
-- No exceptions
+- No exceptions - you cannot edit code yourself
 
-### Orchestrator responsibilities
-- Plan and decompose work
-- Spawn subagents for ALL coding work
-- Monitor progress
-- Handle phase transitions
-- Aggregate results
+### Orchestrator responsibilities (ORCHESTRATE phase)
+- Read specs/queue files
+- Spawn subagents via Task tool
+- Monitor completions via TaskOutput
+- Track progress via TodoWrite
+- Check completion: `is_orchestration_complete()` → queue empty AND no workers
 
-### Subagent responsibilities
+### What the orchestrator does NOT do
+- **Does NOT evaluate agent work quality** - agents are responsible for their own verification
+- **Does NOT run tests** - test/review agents handle that
+- **Does NOT review code** - reviewer agents handle that
+- Just spawns agents, takes output, updates queue
+
+Future: Autokill feature may terminate long-running or failing agents.
+
+### Insufficient context → Go back to INTAKE
+If the orchestrator cannot write quality prompts because it lacks context:
+
+**Orchestrator does NOT explore in ORCHESTRATE.** Go back to INTAKE phase.
+
+INTAKE is where orchestrator context gathering happens:
+- Explore codebase
+- Read relevant files
+- Understand scope and patterns
+- Gather requirements
+
+**If you're in ORCHESTRATE and can't write good prompts:**
+```bash
+python3 lib/iterate_workflow.py set-phase intake
+```
+
+Then complete intake properly before returning to orchestrate.
+
+**Signs you rushed intake:**
+- Writing vague prompts like "implement spec.md"
+- Not knowing which files to reference
+- Unclear on existing patterns
+- Missing acceptance criteria
+
+### Subagents explore current code
+Subagents are close to the code - they explore their specific area of the **current codebase**:
+- Read related files to understand patterns
+- Grep for similar implementations
+- Check for side effects before changes
+- Find existing code to follow
+
+**NOT web searches.** Subagents understand the code they're changing, not researching external topics.
+Web/external research happens in RESEARCH phase (orchestrator responsibility).
+
+### Subagent responsibilities (TDD loop phases)
 - Write tests (test_writing phase)
 - Write/modify code (implement phase)
 - Fix review issues (review phase)
+
+## Explore-Before-Prompt Pattern
+
+**When orchestrator has insufficient context for good prompts, use this pattern WITHIN a task.**
+
+Unlike going back to INTAKE (full phase change), this pattern lets the orchestrator spawn an explorer for ONE task, get context, then spawn implementer with enriched prompt.
+
+### When to use exploration
+
+The orchestrator should spawn an explorer agent BEFORE spawning an implementer when:
+- Task references files/modules not yet read by orchestrator
+- Task description is vague (< 10 words, no file paths)
+- Task uses vague verbs ("improve", "fix") without specifics
+- Task mentions "similar to X" without providing examples
+- No code snippets or file paths in available context
+
+**Detection helper:**
+```python
+from exploration_helpers import needs_exploration
+
+if needs_exploration(task, context):
+    # Spawn explorer first, then implementer
+```
+
+### Exploration workflow
+
+```
+1. Detect: needs_exploration(task, context) → True
+2. Explore: Spawn explorer with targeted prompt
+3. Enrich: Add explorer output to context
+4. Implement: Spawn implementer with enriched prompt
+```
+
+**Example:**
+
+```python
+# Bad: vague prompt
+Task(
+    description="Fix auth system",
+    subagent_type="agent-swarm:implementer",
+    prompt="Fix the authentication system bugs"
+)
+
+# Good: explore-first
+from exploration_helpers import needs_exploration, detect_exploration_type, format_explorer_prompt
+
+task = {"description": "Fix auth system"}
+context = {"files_read": [], "code_snippets": []}
+
+if needs_exploration(task, context):
+    # Spawn explorer
+    exploration_type = detect_exploration_type(task)
+    explorer_prompt = format_explorer_prompt(exploration_type, task)
+
+    explorer_result = Task(
+        description="Explore auth system",
+        subagent_type="agent-swarm:explorer",
+        model="haiku",
+        token_budget=50000,
+        prompt=explorer_prompt
+    )
+
+    # Wait for explorer result, then spawn implementer
+    enriched_context = {**context, "exploration": explorer_result}
+
+    Task(
+        description="Fix auth token expiration",
+        subagent_type="agent-swarm:implementer",
+        model="opus",
+        token_budget=100000,
+        prompt=f"""Fix auth token expiration bug.
+
+**Context from Exploration:**
+{explorer_result}
+
+**Requirements:**
+- Token should expire after 24h
+- Refresh tokens should work
+- Tests must pass
+
+Follow patterns shown in exploration output."""
+    )
+```
+
+### Exploration types
+
+| Type | When to Use | What Explorer Returns |
+|------|-------------|----------------------|
+| `file_discovery` | Task mentions files/modules | File paths, key functions, entry points |
+| `pattern_matching` | Task says "similar to X" | Existing implementations, patterns, helpers |
+| `dependency_mapping` | Task modifies existing code | Callers, imports, side effects, tests |
+| `context_enrichment` | Task is vague | Directory structure, key files, patterns |
+
+**Prompt templates available in `lib/prompt_templates.py`:**
+```python
+from prompt_templates import EXPLORATION_PROMPTS, IMPLEMENTER_PROMPTS
+
+# Get exploration prompt template
+explorer_prompt = EXPLORATION_PROMPTS["file_discovery"].format(topic="authentication")
+
+# Get implementer prompt template
+implementer_prompt = IMPLEMENTER_PROMPTS["with_exploration"].format(
+    task_description="Fix auth bug",
+    explorer_output="...",
+    requirements="...",
+    suggested_files="..."
+)
+```
+
+### When NOT to use this pattern
+
+- **Orchestrator phase change needed**: If ALL tasks need context, go back to INTAKE phase
+- **Subagent exploration sufficient**: Let implementers explore their specific area during work
+- **Context already available**: If you have files, patterns, examples already
+
+**Rule of thumb:**
+- Missing context for 1-2 tasks? → Explore-before-prompt pattern
+- Missing context for ALL tasks? → Go back to INTAKE phase
+
+
 
 ## Task Queue (Fundamental)
 
@@ -201,7 +377,8 @@ After each agent completes:
 
 | Condition | Trigger |
 |-----------|---------|
-| `review_approved` | Review clean, workflow complete |
+| `orchestration_complete` | Queue empty AND no active workers (ORCHESTRATE mode) |
+| `review_approved` | Review clean, workflow complete (TDD loop) |
 | `max_iterations` | Hit iteration limit (default: 5) |
 | `user_stopped` | Manual `/iterate stop` |
 
@@ -209,6 +386,7 @@ After each agent completes:
 
 - Skip phases (workflow enforces order)
 - Use Edit/Write in test phase (blocked by hook)
+- Use Edit/Write/Bash in ORCHESTRATE phase (blocked - spawn agents instead)
 - Ignore kick-back (follow the loop)
 - Bypass test verification
 - Do implementation work yourself (ALWAYS spawn agents)

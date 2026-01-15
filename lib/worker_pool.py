@@ -20,17 +20,18 @@ Usage:
         # ... handle completions ...
 """
 
-import json
-import os
+import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-# State file location - can be overridden via environment variable
-_state_dir_override = os.environ.get("WORKER_POOL_STATE_DIR")
-STATE_DIR = Path(_state_dir_override) if _state_dir_override else Path.home() / ".claude/plugins/agent-swarm/.state"
-STATE_FILE = STATE_DIR / "worker_pool.json"
+# Ensure lib directory is in path for state_manager import
+lib_dir = Path(__file__).parent
+if str(lib_dir) not in sys.path:
+    sys.path.insert(0, str(lib_dir))
+
+import state_manager
 
 
 def _generate_worker_id() -> str:
@@ -44,27 +45,23 @@ def _now_iso() -> str:
 
 
 def _load_state() -> dict:
-    """Load worker pool state from file."""
-    if not STATE_FILE.exists():
-        return {"active": False}
-    try:
-        return json.loads(STATE_FILE.read_text())
-    except (json.JSONDecodeError, IOError):
-        return {"active": False}
+    """Load worker pool state from in-memory state manager."""
+    return state_manager.get_state("worker_pool") or {"active": False}
 
 
 def _save_state(state: dict) -> None:
-    """Save worker pool state to file."""
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, indent=2) + "\n")
+    """Save worker pool state to in-memory state manager."""
+    state_manager.set_state("worker_pool", state)
 
 
-def start(max_agents: int, task: str = "") -> None:
+def start(max_agents: int, task: str = "", pr_id: str = "default", branch: str = "") -> None:
     """Start orchestration with worker pool.
 
     Args:
         max_agents: Maximum number of parallel workers.
         task: Optional task description.
+        pr_id: PR identifier for tracking push readiness.
+        branch: Git branch name.
 
     Raises:
         RuntimeError: If orchestration already active.
@@ -80,6 +77,21 @@ def start(max_agents: int, task: str = "") -> None:
         "active_workers": [],
         "completed_workers": [],
         "started_at": _now_iso(),
+        # PR tracking for push readiness
+        "prs": {
+            pr_id: {
+                "pr_id": pr_id,
+                "branch": branch,
+                "phase": "implement",
+                "tasks_total": 0,
+                "tasks_done": 0,
+                "tests_passed": False,
+                "coverage_ok": False,
+                "review_clean": False,
+                "push_ready": False,
+            }
+        },
+        "current_pr_id": pr_id,
     }
     _save_state(state)
 
@@ -229,3 +241,85 @@ def is_complete(queue_empty: bool) -> bool:
 
     active_workers = state.get("active_workers", [])
     return len(active_workers) == 0
+
+
+# =============================================================================
+# PR TRACKING - Monitor when PRs are ready to be pushed
+# =============================================================================
+
+
+def get_pr_state(pr_id: Optional[str] = None) -> Optional[dict]:
+    """Get state for a specific PR.
+
+    Args:
+        pr_id: PR identifier, or None for current PR.
+
+    Returns:
+        PR state dict or None if not found.
+    """
+    state = _load_state()
+    pr_id = pr_id or state.get("current_pr_id")
+    if not pr_id:
+        return None
+    return state.get("prs", {}).get(pr_id)
+
+
+def update_pr_state(pr_id: Optional[str] = None, **updates) -> None:
+    """Update PR state fields.
+
+    Args:
+        pr_id: PR identifier, or None for current PR.
+        **updates: Fields to update (tests_passed, coverage_ok, review_clean, etc.)
+    """
+    state = _load_state()
+    pr_id = pr_id or state.get("current_pr_id")
+    if not pr_id:
+        return
+
+    if pr_id not in state.get("prs", {}):
+        state.setdefault("prs", {})[pr_id] = {
+            "pr_id": pr_id,
+            "branch": "",
+            "phase": "implement",
+            "tasks_total": 0,
+            "tasks_done": 0,
+            "tests_passed": False,
+            "coverage_ok": False,
+            "review_clean": False,
+            "push_ready": False,
+        }
+
+    pr_state = state["prs"][pr_id]
+    pr_state.update(updates)
+
+    # Auto-compute push_ready
+    pr_state["push_ready"] = (
+        pr_state.get("tests_passed", False) and
+        pr_state.get("coverage_ok", False) and
+        pr_state.get("review_clean", False)
+    )
+
+    _save_state(state)
+
+
+def is_pr_push_ready(pr_id: Optional[str] = None) -> bool:
+    """Check if a PR is ready to be pushed.
+
+    Args:
+        pr_id: PR identifier, or None for current PR.
+
+    Returns:
+        True if tests pass, coverage OK, and review clean.
+    """
+    pr_state = get_pr_state(pr_id)
+    return pr_state.get("push_ready", False) if pr_state else False
+
+
+def get_all_prs() -> dict:
+    """Get all tracked PRs and their states.
+
+    Returns:
+        Dict of pr_id -> pr_state.
+    """
+    state = _load_state()
+    return state.get("prs", {})

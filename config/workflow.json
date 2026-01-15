@@ -51,6 +51,7 @@
       "agents": [
         "implementer"
       ],
+      "model": "opus",
       "enforce_subagents": true
     },
     "review": {
@@ -105,6 +106,13 @@
     "max_concurrent_subagents": 3,
     "batch_tool_calls": true,
     "background_tasks_enabled": true
+  },
+  "orchestrate": {
+    "max_agents": 3,
+    "review_poll_interval_minutes": 5,
+    "vague_input_keywords": ["create", "build", "design", "implement", "add", "make"],
+    "vague_input_patterns": ["^[^/]+$", ".*without specifics.*"],
+    "auto_intake_threshold": 0.5
   },
   "enforcement": {
     "description": "Three-layer token efficiency enforcement",

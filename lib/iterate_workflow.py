@@ -20,8 +20,10 @@ from enum import Enum
 # Allow override via environment variable for test isolation
 _state_dir_override = os.environ.get("ITERATE_STATE_DIR")
 STATE_DIR = Path(_state_dir_override) if _state_dir_override else Path.home() / ".claude/plugins/agent-swarm/.state"
-STATE_FILE = STATE_DIR / "iterate.json"
 LOG_FILE = STATE_DIR / "iterate.log"
+
+# Import state manager for centralized state handling
+import state_manager
 
 # Module-level logger instance
 _logger: Optional[logging.Logger] = None
@@ -83,12 +85,17 @@ def _reset_logger() -> None:
 class Phase(Enum):
     """TDD workflow phases.
 
+    Orchestration mode (main agent):
+        ORCHESTRATE - Coordinate subagents, never advance
+
     Optional discovery phases (before TDD loop):
         INTAKE -> DESIGN -> [TDD loop]
 
     TDD loop:
         TEST_WRITING -> IMPLEMENT -> TEST -> REVIEW -> DONE
     """
+    # Orchestration phase (main agent only - never leaves until complete)
+    ORCHESTRATE = "orchestrate"    # Coordinate subagents, manage queue
     # Optional discovery phases
     INTAKE = "intake"              # Gather requirements (no editing)
     DESIGN = "design"              # Write spec, decompose into task_queue
@@ -102,6 +109,12 @@ class Phase(Enum):
 
 # Tools allowed in each phase
 PHASE_TOOLS = {
+    Phase.ORCHESTRATE: {
+        # Orchestrate phase: coordinate workers, read queue state, spawn subagents
+        # NO editing, Bash allowed but evaluation commands filtered (see is_tool_allowed)
+        "allowed": {"Read", "Task", "TodoWrite", "TaskOutput", "Glob", "Grep", "Bash"},
+        "blocked": {"Edit", "Write", "NotebookEdit"},
+    },
     Phase.INTAKE: {
         # Intake phase: gather requirements, research, no editing
         "allowed": {"Read", "Glob", "Grep", "WebSearch", "WebFetch", "Task"},
@@ -113,11 +126,11 @@ PHASE_TOOLS = {
         "blocked": set(),
     },
     Phase.TEST_WRITING: {
-        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "Bash", "Task"},
+        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "Bash"},
         "blocked": set(),
     },
     Phase.IMPLEMENT: {
-        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "Bash", "Task"},
+        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "Bash"},
         "blocked": set(),
     },
     Phase.TEST: {
@@ -127,7 +140,7 @@ PHASE_TOOLS = {
     },
     Phase.REVIEW: {
         # Review phase: fix issues from Greptile comments
-        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "Bash", "Task"},
+        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "Bash"},
         "blocked": set(),
     },
     Phase.DONE: {
@@ -137,57 +150,115 @@ PHASE_TOOLS = {
 }
 
 
-def _load_state() -> dict:
-    """Load iterate state from disk."""
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    if STATE_FILE.exists():
+
+
+def _load_config() -> dict:
+    """Load workflow config."""
+    config_path = Path(__file__).parent.parent / "config" / "workflow.json"
+    if config_path.exists():
         try:
-            return json.loads(STATE_FILE.read_text())
-        except (json.JSONDecodeError, OSError):
-            return {}
+            return json.loads(config_path.read_text())
+        except json.JSONDecodeError:
+            pass
     return {}
 
 
-def _save_state(state: dict) -> None:
-    """Save iterate state to disk."""
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, indent=2))
+def _is_spec(text: str) -> bool:
+    """Check if text looks like a structured spec.
+
+    A spec has structure: headings, task lists, sections, file references.
+    A vague request is short and lacks structure.
+
+    Returns:
+        True if text appears to be a spec, False if vague request.
+    """
+    import re
+
+    # Short text is likely vague
+    if len(text.split()) < 10:
+        return False
+
+    # Check for spec-like structure
+    structure_patterns = [
+        r'^#+\s',              # Markdown headings
+        r'^\s*[-*]\s*\[[ x]\]', # Task lists
+        r'^##\s+\w+',          # Section headers
+        r'\b[\w/]+\.(py|js|ts|go|rs|java|cpp|h|json|yaml|md)\b',  # File paths
+        r'```',                # Code blocks
+    ]
+
+    for pattern in structure_patterns:
+        if re.search(pattern, text, re.MULTILINE | re.IGNORECASE):
+            return True
+
+    return False
+
+
+def _resolve_input(value: str, file_ext: str) -> tuple[str, bool]:
+    """Resolve input to content and whether it was a file.
+
+    Args:
+        value: File path or inline content
+        file_ext: Expected extension (.queue or .spec)
+
+    Returns:
+        (content, is_file) tuple
+    """
+    if value.endswith(file_ext):
+        path = Path(value)
+        if path.exists():
+            return path.read_text(), True
+        raise FileNotFoundError(f"File not found: {value}")
+    return value, False
 
 
 def start(
     task: str,
+    spec: Optional[str] = None,
+    queue: Optional[str] = None,
     max_iterations: int = 5,
-    needs_intake: bool = False,
-    needs_design: bool = False,
+    agent_id: Optional[str] = None,
 ) -> dict:
     """Start a new iterate workflow.
 
     Args:
         task: Description of what to implement
+        spec: Spec file path (.spec) or inline spec content
+        queue: Queue file path (.queue) or inline JSON content
         max_iterations: Max loops before requiring user checkpoint
-        needs_intake: Start with intake phase (gather requirements)
-        needs_design: Include design phase (write spec, create task_queue)
+        agent_id: Agent identifier. None or "orchestrator" for persisted state,
+                  any other value for in-memory subagent state.
 
     Returns:
         Current state
 
-    Phase flow based on flags:
-        - needs_intake=True, needs_design=True:
-            intake -> design -> test_writing -> ...
-        - needs_intake=True, needs_design=False:
-            intake -> test_writing -> ...
-        - needs_intake=False, needs_design=True:
-            design -> test_writing -> ...
-        - needs_intake=False, needs_design=False (default):
-            test_writing -> ...
+    Phase selection:
+        - queue provided → load queue → ORCHESTRATE
+        - spec provided → decompose to queue → ORCHESTRATE
+        - task looks like spec → treat as inline spec → ORCHESTRATE
+        - vague request → INTAKE (gather requirements)
     """
-    # Determine initial phase
-    if needs_intake:
-        initial_phase = Phase.INTAKE
-    elif needs_design:
-        initial_phase = Phase.DESIGN
+    # Use orchestrator for state management if no agent_id specified
+    effective_agent_id = agent_id or "orchestrator"
+
+    needs_intake = True
+
+    if queue:
+        content, _ = _resolve_input(queue, ".queue")
+        _load_queue_content(content)
+        needs_intake = False
+        initial_phase = Phase.ORCHESTRATE
+    elif spec:
+        content, _ = _resolve_input(spec, ".spec")
+        _decompose_spec_content(content)
+        needs_intake = False
+        initial_phase = Phase.ORCHESTRATE
+    elif _is_spec(task):
+        _decompose_spec_content(task)
+        needs_intake = False
+        initial_phase = Phase.ORCHESTRATE
     else:
-        initial_phase = Phase.TEST_WRITING
+        initial_phase = Phase.INTAKE
 
     state = {
         "active": True,
@@ -195,32 +266,42 @@ def start(
         "phase": initial_phase.value,
         "iteration": 0,
         "max_iterations": max_iterations,
-        # Discovery phase flags
+        "mode": "iterate-tdd",
+        "workflow_invoked": True,
         "needs_intake": needs_intake,
-        "needs_design": needs_design,
-        # Test phase results (determines kick-back target)
-        "tests_passed": None,     # True/False - did pytest pass?
-        "lint_passed": None,      # True/False - did lint pass?
-        "coverage_ok": None,      # True/False - is coverage sufficient?
-        # Review phase result
-        "review_status": None,    # clean/issues after review phase
-        # PR tracking for auto-refresh
-        "pr_number": None,        # PR number for GitHub review polling
+        "tests_passed": None,
+        "lint_passed": None,
+        "coverage_ok": None,
+        "review_status": None,
+        "pr_number": None,
     }
-    _save_state(state)
-    _log("info", "Workflow started", task=task, max_iterations=max_iterations,
-         needs_intake=needs_intake, needs_design=needs_design)
+    state_manager.set_state("orchestrator", state)
+    _log("info", "Workflow started", task=task[:50], phase=initial_phase.value,
+         agent_id=effective_agent_id, needs_intake=needs_intake)
     return state
 
 
-def get_state() -> dict:
-    """Get current iterate state."""
-    return _load_state()
+def _load_queue_content(content: str) -> list:
+    """Load task queue from JSON content into memory.
+
+    Returns:
+        List of task dicts from the queue.
+    """
+    queue_data = json.loads(content)
+    tasks = queue_data.get("tasks", [])
+    _log("info", "Queue loaded", task_count=len(tasks))
+    return tasks
+
+
+def _decompose_spec_content(content: str) -> None:
+    """Decompose spec content into task queue."""
+    # TODO: integrate with decomposer to create queue
+    _log("info", "Spec decomposed", length=len(content))
 
 
 def get_phase() -> Optional[Phase]:
     """Get current phase, or None if not active."""
-    state = _load_state()
+    state = state_manager.get_state("orchestrator") or {}
     if not state.get("active"):
         return None
     phase_str = state.get("phase")
@@ -234,7 +315,7 @@ def get_phase() -> Optional[Phase]:
 
 def is_active() -> bool:
     """Check if iterate workflow is active."""
-    state = _load_state()
+    state = state_manager.get_state("orchestrator") or {}
     return state.get("active", False)
 
 
@@ -249,14 +330,13 @@ def verify_active(expected_phase: Optional[Phase] = None) -> None:
     Raises:
         RuntimeError: If workflow is not active or not in expected phase.
     """
-    if not STATE_FILE.exists():
+    state = state_manager.get_state("orchestrator") or {}
+    if not state:
         raise RuntimeError(
-            "[WORKFLOW TERMINATED] State file was deleted unexpectedly. "
-            "This may be caused by test fixtures using production state. "
+            "[WORKFLOW TERMINATED] No state found. "
             "Workflow must be restarted."
         )
 
-    state = _load_state()
     if not state.get("active"):
         raise RuntimeError(
             "[WORKFLOW TERMINATED] Workflow is no longer active. "
@@ -276,17 +356,18 @@ def verify_active(expected_phase: Optional[Phase] = None) -> None:
 
 def set_phase(phase: Phase) -> None:
     """Manually set phase (for kick-back scenarios)."""
-    state = _load_state()
+    state = state_manager.get_state("orchestrator") or {}
     state["phase"] = phase.value
-    _save_state(state)
+    state_manager.set_state("orchestrator", state)
 
 
 def advance_phase() -> Optional[Phase]:
     """Advance to next phase based on current state.
 
     Phase transitions:
-    - intake -> design (if needs_design) OR test_writing
-    - design -> test_writing
+    - intake -> design
+    - design -> orchestrate
+    - orchestrate -> test_writing
     - test_writing -> implement
     - implement -> test
     - test -> review (if all pass) OR kick-back:
@@ -296,7 +377,7 @@ def advance_phase() -> Optional[Phase]:
 
     Returns new phase or None if workflow ended.
     """
-    state = _load_state()
+    state = state_manager.get_state("orchestrator") or {}
     if not state.get("active"):
         exit_reason = state.get("exit_reason", "unknown")
         raise RuntimeError(
@@ -306,15 +387,33 @@ def advance_phase() -> Optional[Phase]:
 
     current = Phase(state["phase"])
 
+    # Enforce verification before advancing from certain phases
+    if current == Phase.TEST:
+        test_results = state.get("tests_passed")
+        lint_results = state.get("lint_passed")
+        coverage_results = state.get("coverage_ok")
+        if test_results is None or lint_results is None or coverage_results is None:
+            raise RuntimeError(
+                "Cannot advance from TEST: must record test results first. "
+                "Call set_test_results() before advancing."
+            )
+    elif current == Phase.REVIEW:
+        if not state.get("review_status"):
+            raise RuntimeError(
+                "Cannot advance from REVIEW: must record review status first. "
+                "Call set_review_status() before advancing."
+            )
+
     if current == Phase.INTAKE:
-        # Intake complete, check if design phase is needed
-        if state.get("needs_design"):
-            state["phase"] = Phase.DESIGN.value
-        else:
-            state["phase"] = Phase.TEST_WRITING.value
+        # Intake complete, always go to design
+        state["phase"] = Phase.DESIGN.value
 
     elif current == Phase.DESIGN:
-        # Design complete, move to TDD loop
+        # Design complete, move to orchestrate for subagent spawning
+        state["phase"] = Phase.ORCHESTRATE.value
+
+    elif current == Phase.ORCHESTRATE:
+        # Orchestrate complete, move to TDD loop
         state["phase"] = Phase.TEST_WRITING.value
 
     elif current == Phase.TEST_WRITING:
@@ -335,7 +434,7 @@ def advance_phase() -> Optional[Phase]:
             # Everything passes, move to review
             state["phase"] = Phase.REVIEW.value
             # Save state first, then auto-fetch PR comments
-            _save_state(state)
+            state_manager.set_state("orchestrator", state)
             pr = state.get("pr_number")
             if pr:
                 _log("info", "Auto-fetching PR review comments", pr=pr)
@@ -383,7 +482,7 @@ def advance_phase() -> Optional[Phase]:
         # Reset review status for next round
         state["review_status"] = None
 
-    _save_state(state)
+    state_manager.set_state("orchestrator", state)
     _log("info", "Phase transition", from_phase=current.value, to_phase=state["phase"],
          iteration=state.get("iteration", 0))
 
@@ -407,11 +506,17 @@ def set_test_results(tests_passed: bool, lint_passed: bool, coverage_ok: bool) -
     """
     if not is_active():
         raise RuntimeError("No active workflow - cannot record test results")
-    state = _load_state()
+
+    # Warn loudly if lint failed
+    if not lint_passed:
+        _log("warning", "LINT FAILED: Agents must run and pass lint (ruff check .) before reporting success",
+             tests=tests_passed, lint=lint_passed, coverage=coverage_ok)
+
+    state = state_manager.get_state("orchestrator") or {}
     state["tests_passed"] = tests_passed
     state["lint_passed"] = lint_passed
     state["coverage_ok"] = coverage_ok
-    _save_state(state)
+    state_manager.set_state("orchestrator", state)
     _log("info", "Test results recorded", tests=tests_passed, lint=lint_passed, coverage=coverage_ok)
 
 
@@ -423,9 +528,9 @@ def set_review_status(clean: bool) -> None:
     """
     if not is_active():
         raise RuntimeError("No active workflow - cannot record review status")
-    state = _load_state()
+    state = state_manager.get_state("orchestrator") or {}
     state["review_status"] = "clean" if clean else "issues"
-    _save_state(state)
+    state_manager.set_state("orchestrator", state)
     _log("info", "Review status recorded", clean=clean)
 
 
@@ -446,11 +551,11 @@ def _notify_workflow_end(reason: str, task: str = "") -> None:
 
 def stop(reason: str = "user_stopped") -> None:
     """Stop the iterate workflow."""
-    state = _load_state()
+    state = state_manager.get_state("orchestrator") or {}
     task = state.get("task", "unknown")
     state["active"] = False
     state["exit_reason"] = reason
-    _save_state(state)
+    state_manager.set_state("orchestrator", state)
     _log("info", "Workflow stopped", reason=reason)
     _notify_workflow_end(reason, task)
 
@@ -493,7 +598,7 @@ def is_tool_allowed(tool_name: str, command: str | None = None) -> tuple[bool, s
                 return False, f"[BLOCKED] git/gh commands only allowed in review phase. Current: {phase.value}"
 
             # In REVIEW phase, check coverage requirement for commit/push (WORKFLOW.1)
-            state = _load_state()
+            state = state_manager.get_state("orchestrator") or {}
             # Use word-boundary matching to avoid false positives like "commitfile.txt"
             cmd_parts = cmd_lower.split()
             is_commit_or_push = any(part in ["commit", "push"] for part in cmd_parts)
@@ -505,6 +610,28 @@ def is_tool_allowed(tool_name: str, command: str | None = None) -> tuple[bool, s
                 if not coverage_ok:
                     return False, "[BLOCKED] Coverage threshold not met - cannot commit/push"
 
+        # Check for evaluation commands in ORCHESTRATE phase
+        if phase == Phase.ORCHESTRATE:
+            # Define evaluation command patterns
+            evaluation_patterns = [
+                "pytest",
+                "python -m pytest",
+                "python3 -m pytest",
+                "ruff check",
+                "ruff .",
+                "mypy",
+                "coverage",
+                "black --check",
+            ]
+
+            # Check if command matches any evaluation pattern
+            for pattern in evaluation_patterns:
+                if pattern in cmd_lower:
+                    return False, (
+                        f"[BLOCKED] In ORCHESTRATE phase, spawn a test agent instead of running "
+                        f"tests directly. Use Task tool to delegate evaluation work."
+                    )
+
     # Allow MCP variants of allowed tools
     base_tool = tool_name.split("__")[-1] if "__" in tool_name else tool_name
     if base_tool in phase_config["allowed"]:
@@ -514,9 +641,84 @@ def is_tool_allowed(tool_name: str, command: str | None = None) -> tuple[bool, s
     return True, ""
 
 
+def _format_queue_status() -> Optional[str]:
+    """Format task queue status for display.
+
+    Returns queue status string if queue has items, None otherwise.
+    """
+    try:
+        from iterate_state import load_queue
+        queue = load_queue()
+        if not queue or not queue.tasks:
+            return None
+
+        pending = sum(1 for t in queue.tasks if t.status.value == "pending")
+        active = sum(1 for t in queue.tasks if t.status.value == "active")
+        done = sum(1 for t in queue.tasks if t.status.value == "done")
+
+        lines = [f"Queue: {pending} pending | {active} active | {done} done"]
+
+        # Show up to 5 tasks with status indicators
+        for task in list(queue.tasks)[:5]:
+            if task.status.value == "active":
+                icon = "▶"
+                suffix = f" ({task.worker_id})" if hasattr(task, 'worker_id') and task.worker_id else ""
+            elif task.status.value == "done":
+                icon = "✓"
+                suffix = ""
+            else:
+                icon = " "
+                deps = getattr(task, 'depends_on', None)
+                suffix = f" (blocked by: {', '.join(deps)})" if deps else ""
+
+            lines.append(f"  [{icon}] {task.id}: {task.description[:40]}{suffix}")
+
+        if len(queue.tasks) > 5:
+            lines.append(f"  ... and {len(queue.tasks) - 5} more")
+
+        return "\n".join(lines)
+    except Exception:
+        return None
+
+
+def print_status_banner(force: bool = False) -> None:
+    """Print decorated status banner.
+
+    Only shows when in iterate-tdd mode (or force=True).
+    """
+    state = state_manager.get_state("orchestrator") or {}
+
+    if not state.get("active"):
+        return
+
+    mode = state.get("mode", "")
+    if not force and mode != "iterate-tdd":
+        return
+
+    phase = state.get("phase", "unknown")
+    iteration = state.get("iteration", 0)
+    max_iter = state.get("max_iterations", 5)
+    task_desc = state.get("task", "No task")[:60]
+
+    lines = [
+        "[ITERATE] ═══════════════════════════════════════════════════════════════",
+        f"  Phase: {phase.upper()} | Iteration: {iteration}/{max_iter}",
+        f"  Task: {task_desc}",
+    ]
+
+    queue_status = _format_queue_status()
+    if queue_status:
+        lines.append("")
+        for line in queue_status.split("\n"):
+            lines.append(f"  {line}")
+
+    lines.append("═══════════════════════════════════════════════════════════════════════")
+    print("\n".join(lines))
+
+
 def status() -> str:
     """Get human-readable status."""
-    state = _load_state()
+    state = state_manager.get_state("orchestrator") or {}
     if not state.get("active"):
         if state.get("exit_reason"):
             return f"[ITERATE] Completed: {state['exit_reason']}"
@@ -525,14 +727,28 @@ def status() -> str:
     phase = state.get("phase", "unknown")
     iteration = state.get("iteration", 0) + 1
     max_iter = state.get("max_iterations", 5)
-    task = state.get("task", "No task")[:50]
+    task_desc = state.get("task", "No task")[:50]
+    mode = state.get("mode", "")
 
-    return (
-        f"[ITERATE] Active\n"
-        f"  Task: {task}\n"
-        f"  Phase: {phase}\n"
-        f"  Iteration: {iteration}/{max_iter}"
-    )
+    lines = [
+        "[ITERATE] Active",
+        f"  Task: {task_desc}",
+        f"  Phase: {phase}",
+        f"  Iteration: {iteration}/{max_iter}",
+    ]
+
+    if mode:
+        lines.append(f"  Mode: {mode}")
+
+    # Include queue status only in iterate-tdd mode
+    if mode == "iterate-tdd":
+        queue_status = _format_queue_status()
+        if queue_status:
+            lines.append("")
+            for line in queue_status.split("\n"):
+                lines.append(f"  {line}")
+
+    return "\n".join(lines)
 
 
 # ============================================================================
@@ -553,11 +769,11 @@ def add_requirement(requirement: str) -> None:
     if phase != Phase.INTAKE:
         raise ValueError("add_requirement only allowed in intake phase")
 
-    state = _load_state()
+    state = state_manager.get_state("orchestrator") or {}
     if "requirements" not in state:
         state["requirements"] = []
     state["requirements"].append(requirement)
-    _save_state(state)
+    state_manager.set_state("orchestrator", state)
     _log("info", "Requirement added", requirement=requirement[:50])
 
 
@@ -567,7 +783,7 @@ def get_requirements() -> list[str]:
     Returns:
         List of requirement strings.
     """
-    state = _load_state()
+    state = state_manager.get_state("orchestrator") or {}
     return state.get("requirements", [])
 
 
@@ -582,9 +798,9 @@ def set_spec_file(path: str) -> None:
     Args:
         path: Absolute or relative path to the spec markdown file.
     """
-    state = _load_state()
+    state = state_manager.get_state("orchestrator") or {}
     state["spec_file"] = path
-    _save_state(state)
+    state_manager.set_state("orchestrator", state)
     _log("info", "Spec file set", path=path)
 
 
@@ -603,7 +819,7 @@ def decompose_spec_to_queue() -> list[dict]:
     if phase != Phase.DESIGN:
         raise ValueError("decompose_spec_to_queue only allowed in design phase")
 
-    state = _load_state()
+    state = state_manager.get_state("orchestrator") or {}
     spec_file = state.get("spec_file")
     if not spec_file:
         raise ValueError("No spec file set. Call set_spec_file() first.")
@@ -621,7 +837,7 @@ def decompose_spec_to_queue() -> list[dict]:
 
     # Store task count in state
     state["decomposed_task_count"] = len(tasks)
-    _save_state(state)
+    state_manager.set_state("orchestrator", state)
 
     _log("info", "Spec decomposed", task_count=len(tasks), spec_file=spec_file)
     return tasks
@@ -635,7 +851,7 @@ def decompose_spec_to_queue() -> list[dict]:
 def _get_workflow_queue():
     """Get or create WorkflowQueue instance."""
     from workflow_queue import WorkflowQueue
-    state = _load_state()
+    state = state_manager.get_state("orchestrator") or {}
     pr_id = state.get("pr_id", "current")
     return WorkflowQueue(pr_id=pr_id)
 
@@ -712,9 +928,9 @@ def set_pr_number(pr_number: int) -> None:
     if not is_active():
         raise RuntimeError("Cannot set PR number: no active workflow")
 
-    state = _load_state()
+    state = state_manager.get_state("orchestrator") or {}
     state["pr_number"] = pr_number
-    _save_state(state)
+    state_manager.set_state("orchestrator", state)
     _log("info", "PR number set", pr_number=pr_number)
 
 
@@ -724,7 +940,7 @@ def get_pr_number() -> Optional[int]:
     Returns:
         The PR number if set, None otherwise.
     """
-    state = _load_state()
+    state = state_manager.get_state("orchestrator") or {}
     return state.get("pr_number")
 
 
@@ -833,6 +1049,44 @@ def refresh_review_status(pr_number: Optional[int] = None) -> int:
     return added
 
 
+def is_orchestration_complete() -> bool:
+    """Check if orchestration is complete.
+
+    Returns True when:
+    1. Workflow is active AND in ORCHESTRATE phase, AND
+    2. Task queue has no pending tasks, AND
+    3. No active workers
+
+    This is the exit condition for ORCHESTRATE phase.
+
+    Returns:
+        True if orchestration is complete, False otherwise.
+    """
+    if not is_active():
+        return False
+
+    phase = get_phase()
+    if phase != Phase.ORCHESTRATE:
+        return False
+
+    # Check worker pool status
+    try:
+        from worker_pool import is_complete as worker_pool_is_complete
+
+        # Load queue to check if empty
+        wq = _get_workflow_queue()
+        queue_empty = wq.all_done()
+
+        return worker_pool_is_complete(queue_empty=queue_empty)
+    except ImportError:
+        # worker_pool not available - check queue only
+        wq = _get_workflow_queue()
+        return wq.all_done()
+    except Exception:
+        # Graceful degradation - return False if any error
+        return False
+
+
 # CLI interface
 if __name__ == "__main__":
     import sys
@@ -841,13 +1095,19 @@ if __name__ == "__main__":
         print("Usage: python iterate_workflow.py <command> [args]")
         print()
         print("Commands:")
-        print("  start <task> [max_iter]  Start new workflow")
+        print("  start <task> [options]   Start new workflow")
+        print("    Options:")
+        print("      --spec=<path>        Spec file (.spec) or inline content")
+        print("      --queue=<path>       Queue file (.queue) or inline JSON")
+        print("      --max-iter=N         Max iterations (default: 5)")
+        print("      --agent-id=<id>      Agent ID (default: orchestrator)")
         print("  status                   Show current status")
         print("  phase                    Show current phase")
         print("  advance                  Advance to next phase")
         print("  test <t> <l> <c>         Record test results (1=pass, 0=fail)")
         print("                           t=tests, l=lint, c=coverage")
         print("  review <clean>           Record review status (1=clean, 0=issues)")
+        print("  is-spec <text>           Check if text looks like a spec")
         print("  stop                     Stop workflow")
 
     if len(sys.argv) < 2:
@@ -857,9 +1117,27 @@ if __name__ == "__main__":
     cmd = sys.argv[1]
 
     if cmd == "start":
-        task = sys.argv[2] if len(sys.argv) > 2 else "Unspecified task"
-        max_iter = int(sys.argv[3]) if len(sys.argv) > 3 else 5
-        start(task, max_iter)
+        # Parse options
+        task_parts = []
+        spec = None
+        queue = None
+        max_iter = 5
+        agent_id = None
+
+        for arg in sys.argv[2:]:
+            if arg.startswith("--spec="):
+                spec = arg.split("=", 1)[1]
+            elif arg.startswith("--queue="):
+                queue = arg.split("=", 1)[1]
+            elif arg.startswith("--max-iter="):
+                max_iter = int(arg.split("=")[1])
+            elif arg.startswith("--agent-id="):
+                agent_id = arg.split("=", 1)[1]
+            else:
+                task_parts.append(arg)
+
+        task = " ".join(task_parts) if task_parts else "Unspecified task"
+        start(task, spec=spec, queue=queue, max_iterations=max_iter, agent_id=agent_id)
         print(status())
     elif cmd == "status":
         print(status())
@@ -871,7 +1149,7 @@ if __name__ == "__main__":
         if new_phase:
             print(f"Advanced to: {new_phase.value}")
         else:
-            state = get_state()
+            state = state_manager.get_state("orchestrator") or {}
             print(f"Workflow ended: {state.get('exit_reason', 'done')}")
     elif cmd == "test":
         if len(sys.argv) < 5:
@@ -893,6 +1171,12 @@ if __name__ == "__main__":
     elif cmd == "stop":
         stop()
         print("Stopped")
+    elif cmd == "is-spec":
+        if len(sys.argv) < 3:
+            print("Usage: is-spec <text>")
+            sys.exit(1)
+        text = " ".join(sys.argv[2:])
+        print(f"Is spec: {_is_spec(text)}")
     elif cmd == "help":
         usage()
     else:

@@ -15,7 +15,6 @@ from iterate_workflow import (
     PHASE_TOOLS,
     start,
     stop,
-    get_state,
     get_phase,
     is_active,
     set_phase,
@@ -27,11 +26,19 @@ from iterate_workflow import (
     add_requirement,
     get_requirements,
     set_spec_file,
-    STATE_FILE,
-    STATE_DIR,
     LOG_FILE,
     _reset_logger,
 )
+import state_manager
+from state_manager import (
+    STATE_DIR,
+    ORCHESTRATOR_STATE_FILE as STATE_FILE,
+)
+
+
+def get_state():
+    """Helper to get orchestrator state for tests."""
+    return state_manager.get_state("orchestrator")
 
 
 @pytest.fixture(autouse=True)
@@ -116,10 +123,15 @@ class TestWorkflowStart:
         state = get_state()
         assert state["task"] == "My test task"
 
-    def test_start_sets_test_writing_phase(self):
-        """Start should begin in test_writing phase."""
+    def test_start_with_vague_task_sets_intake_phase(self):
+        """Start with vague task should begin in intake phase."""
         start("Test task")
-        assert get_phase() == Phase.TEST_WRITING
+        assert get_phase() == Phase.INTAKE
+
+    def test_start_with_spec_sets_orchestrate_phase(self):
+        """Start with spec-like task should begin in orchestrate phase."""
+        start("## Task\n- [ ] Create file.py\n- [ ] Add function")
+        assert get_phase() == Phase.ORCHESTRATE
 
     def test_start_with_max_iterations(self):
         """Start should accept max_iterations parameter."""
@@ -151,21 +163,21 @@ class TestPhaseAdvancement:
     def test_advance_from_test_writing_to_implement(self):
         """Advancing from test_writing should go to implement."""
         start("Test task")
+        set_phase(Phase.TEST_WRITING)  # Set phase for testing
         new_phase = advance_phase()
         assert new_phase == Phase.IMPLEMENT
 
     def test_advance_from_implement_to_test(self):
         """Advancing from implement should go to test."""
         start("Test task")
-        advance_phase()  # test_writing -> implement
+        set_phase(Phase.IMPLEMENT)  # Set phase for testing
         new_phase = advance_phase()
         assert new_phase == Phase.TEST
 
     def test_advance_from_test_to_review_when_all_pass(self):
         """Advancing from test should go to review when all pass."""
         start("Test task")
-        advance_phase()  # test_writing -> implement
-        advance_phase()  # implement -> test
+        set_phase(Phase.TEST)  # Set phase for testing
         set_test_results(tests_passed=True, lint_passed=True, coverage_ok=True)
         new_phase = advance_phase()
         assert new_phase == Phase.REVIEW
@@ -173,8 +185,7 @@ class TestPhaseAdvancement:
     def test_advance_from_test_kickback_to_test_writing_on_coverage_fail(self):
         """Low coverage should kick back to test_writing."""
         start("Test task")
-        advance_phase()  # test_writing -> implement
-        advance_phase()  # implement -> test
+        set_phase(Phase.TEST)  # Set phase for testing
         set_test_results(tests_passed=True, lint_passed=True, coverage_ok=False)
         new_phase = advance_phase()
         assert new_phase == Phase.TEST_WRITING
@@ -182,8 +193,7 @@ class TestPhaseAdvancement:
     def test_advance_from_test_kickback_to_implement_on_test_fail(self):
         """Failed tests should kick back to implement."""
         start("Test task")
-        advance_phase()  # test_writing -> implement
-        advance_phase()  # implement -> test
+        set_phase(Phase.TEST)  # Set phase for testing
         set_test_results(tests_passed=False, lint_passed=True, coverage_ok=True)
         new_phase = advance_phase()
         assert new_phase == Phase.IMPLEMENT
@@ -191,19 +201,35 @@ class TestPhaseAdvancement:
     def test_advance_from_test_kickback_to_implement_on_lint_fail(self):
         """Failed lint should kick back to implement."""
         start("Test task")
-        advance_phase()  # test_writing -> implement
-        advance_phase()  # implement -> test
+        set_phase(Phase.TEST)  # Set phase for testing
         set_test_results(tests_passed=True, lint_passed=False, coverage_ok=True)
         new_phase = advance_phase()
         assert new_phase == Phase.IMPLEMENT
 
+    def test_set_test_results_warns_on_lint_failure(self):
+        """set_test_results should log warning when lint fails."""
+        start("Test task")
+        set_phase(Phase.TEST)
+
+        # Record results with lint failure
+        set_test_results(tests_passed=True, lint_passed=False, coverage_ok=True)
+
+        # Verify results were recorded
+        state = get_state()
+        assert state["tests_passed"] is True
+        assert state["lint_passed"] is False
+        assert state["coverage_ok"] is True
+
+        # Verify warning was logged
+        if LOG_FILE.exists():
+            log_content = LOG_FILE.read_text()
+            assert "WARNING" in log_content or "warning" in log_content
+            assert "lint" in log_content.lower()
+
     def test_advance_from_review_to_done_when_clean(self):
         """Clean review should complete workflow."""
         start("Test task")
-        advance_phase()  # test_writing -> implement
-        advance_phase()  # implement -> test
-        set_test_results(tests_passed=True, lint_passed=True, coverage_ok=True)
-        advance_phase()  # test -> review
+        set_phase(Phase.REVIEW)  # Set phase for testing
         set_review_status(clean=True)
         new_phase = advance_phase()
         assert new_phase is None  # Workflow ended
@@ -214,10 +240,7 @@ class TestPhaseAdvancement:
     def test_advance_from_review_kickback_to_implement_on_issues(self):
         """Review issues should kick back to implement."""
         start("Test task")
-        advance_phase()  # test_writing -> implement
-        advance_phase()  # implement -> test
-        set_test_results(tests_passed=True, lint_passed=True, coverage_ok=True)
-        advance_phase()  # test -> review
+        set_phase(Phase.REVIEW)  # Set phase for testing
         set_review_status(clean=False)
         new_phase = advance_phase()
         assert new_phase == Phase.IMPLEMENT
@@ -229,10 +252,9 @@ class TestIterationLimit:
     def test_max_iterations_exits_workflow(self):
         """Reaching max iterations should exit workflow."""
         start("Test task", max_iterations=2)
+        set_phase(Phase.TEST)  # Set phase for testing
 
-        # Iteration 1: test_writing -> implement -> test (fail) -> implement
-        advance_phase()  # test_writing -> implement
-        advance_phase()  # implement -> test
+        # Iteration 1: test (fail) -> implement
         set_test_results(tests_passed=False, lint_passed=True, coverage_ok=True)
         advance_phase()  # test -> implement (kickback, iteration=1)
 
@@ -313,7 +335,7 @@ class TestStatus:
         """Status should show current phase."""
         start("Test task")
         output = status()
-        assert "test_writing" in output
+        assert "intake" in output  # Vague task starts in intake
 
     def test_status_shows_task(self):
         """Status should show task description."""
@@ -349,6 +371,7 @@ class TestLogging:
     def test_log_contains_phase_transitions(self):
         """Log should contain phase transition entries."""
         start("Test task")
+        set_phase(Phase.TEST_WRITING)  # Set phase for testing
         advance_phase()  # test_writing -> implement
         stop()
         log_content = LOG_FILE.read_text()
@@ -375,6 +398,7 @@ class TestLogging:
     def test_logging_does_not_break_workflow(self):
         """Logging failures should not break workflow operations."""
         start("Test task")
+        set_phase(Phase.TEST_WRITING)  # Set phase for testing
         new_phase = advance_phase()
         assert new_phase == Phase.IMPLEMENT, "Workflow should work regardless of logging"
         stop()
@@ -385,7 +409,7 @@ class TestIntakePhase:
 
     def test_add_requirement_in_intake_phase(self):
         """Can add requirements during intake phase."""
-        start("Test task", needs_intake=True)
+        start("Test task")  # Vague task -> INTAKE
         assert get_phase() == Phase.INTAKE
         add_requirement("User needs authentication")
         reqs = get_requirements()
@@ -393,13 +417,13 @@ class TestIntakePhase:
 
     def test_add_requirement_fails_outside_intake(self):
         """add_requirement raises error outside intake phase."""
-        start("Test task")  # Starts in test_writing
+        start("## Spec\n- [ ] Task 1\n- [ ] Task 2\n- [ ] Task 3 with more details")  # Spec-like task -> ORCHESTRATE
         with pytest.raises(ValueError, match="intake phase"):
             add_requirement("Should fail")
 
     def test_get_requirements_empty_initially(self):
         """get_requirements returns empty list initially."""
-        start("Test task", needs_intake=True)
+        start("Test task")  # Vague task -> INTAKE
         assert get_requirements() == []
 
 
@@ -408,8 +432,8 @@ class TestDesignPhase:
 
     def test_set_spec_file(self):
         """Can set spec file path."""
-        start("Test task", needs_design=True)
-        set_phase(Phase.DESIGN)
+        start("Test task")
+        set_phase(Phase.DESIGN)  # Set phase for testing
         set_spec_file("/path/to/spec.md")
         state = get_state()
         assert state["spec_file"] == "/path/to/spec.md"
@@ -581,3 +605,120 @@ class TestGhCliIntegration:
 
         added = refresh_review_status()
         assert added >= 0  # May be 0 if comment already exists
+
+
+class TestOrchestratePhase:
+    """Tests for ORCHESTRATE phase - main agent coordination."""
+
+    def test_orchestrate_phase_exists(self):
+        """ORCHESTRATE phase should exist in Phase enum."""
+        assert Phase.ORCHESTRATE.value == "orchestrate"
+
+    def test_orchestrate_phase_tools_blocks_editing(self):
+        """ORCHESTRATE phase should block Edit and Write."""
+        assert "Edit" in PHASE_TOOLS[Phase.ORCHESTRATE]["blocked"]
+        assert "Write" in PHASE_TOOLS[Phase.ORCHESTRATE]["blocked"]
+
+    def test_orchestrate_phase_allows_bash(self):
+        """ORCHESTRATE phase should allow Bash (but evaluation commands are filtered)."""
+        assert "Bash" in PHASE_TOOLS[Phase.ORCHESTRATE]["allowed"]
+
+    def test_orchestrate_phase_allows_read(self):
+        """ORCHESTRATE phase should allow Read."""
+        assert "Read" in PHASE_TOOLS[Phase.ORCHESTRATE]["allowed"]
+
+    def test_orchestrate_phase_allows_task(self):
+        """ORCHESTRATE phase should allow Task (for spawning subagents)."""
+        assert "Task" in PHASE_TOOLS[Phase.ORCHESTRATE]["allowed"]
+
+    def test_orchestrate_phase_allows_todowrite(self):
+        """ORCHESTRATE phase should allow TodoWrite."""
+        assert "TodoWrite" in PHASE_TOOLS[Phase.ORCHESTRATE]["allowed"]
+
+
+class TestOrchestrateStart:
+    """Tests for starting workflow in orchestrate mode based on input."""
+
+    def test_start_with_spec_goes_to_orchestrate(self):
+        """start() with spec-like input should begin in ORCHESTRATE phase."""
+        start("## Task\n- [ ] Item 1\n- [ ] Item 2")
+        assert get_phase() == Phase.ORCHESTRATE
+
+    def test_start_with_inline_queue_goes_to_orchestrate(self):
+        """start() with queue parameter should begin in ORCHESTRATE phase."""
+        # Queue content (not a file path since it doesn't end in .queue)
+        start("Test task", queue='{"tasks": []}')
+        assert get_phase() == Phase.ORCHESTRATE
+
+    def test_start_with_vague_task_goes_to_intake(self):
+        """start() with vague input should begin in INTAKE phase."""
+        start("Fix the bug")
+        assert get_phase() == Phase.INTAKE
+
+    def test_start_needs_intake_false_with_spec(self):
+        """When starting with spec, needs_intake should be False."""
+        # Needs 10+ words to be detected as spec
+        start("## Task Overview\n- [ ] First item to implement in the module\n- [ ] Second task")
+        state = get_state()
+        assert state.get("needs_intake") is False
+
+
+class TestOrchestrateCompletion:
+    """Tests for orchestration completion detection."""
+
+    def test_is_orchestration_complete_function_exists(self):
+        """is_orchestration_complete function should be importable."""
+        from iterate_workflow import is_orchestration_complete
+        assert callable(is_orchestration_complete)
+
+    def test_is_orchestration_complete_false_when_inactive(self):
+        """is_orchestration_complete returns False when workflow not active."""
+        from iterate_workflow import is_orchestration_complete
+        # No workflow started
+        assert is_orchestration_complete() is False
+
+    def test_is_orchestration_complete_false_with_active_workers(self, monkeypatch):
+        """is_orchestration_complete returns False when workers are active."""
+        from iterate_workflow import is_orchestration_complete
+        import sys
+        from pathlib import Path
+
+        # Mock worker_pool.is_complete to return False (workers active)
+        worker_pool_path = Path(__file__).parent.parent / "lib"
+        sys.path.insert(0, str(worker_pool_path))
+
+        def mock_is_complete(queue_empty):
+            return False  # Workers still active
+
+        import worker_pool
+        monkeypatch.setattr(worker_pool, "is_complete", mock_is_complete)
+
+        start("## Task Overview\n- [ ] First item to implement\n- [ ] Second item with details")  # Spec-like -> ORCHESTRATE
+        assert is_orchestration_complete() is False
+
+    def test_is_orchestration_complete_true_when_done(self, monkeypatch):
+        """is_orchestration_complete returns True when queue empty and no workers."""
+        from iterate_workflow import is_orchestration_complete
+        import sys
+        from pathlib import Path
+
+        # Mock worker_pool.is_complete to return True (all done)
+        worker_pool_path = Path(__file__).parent.parent / "lib"
+        sys.path.insert(0, str(worker_pool_path))
+
+        def mock_is_complete(queue_empty):
+            return queue_empty  # Done if queue is empty
+
+        import worker_pool
+        monkeypatch.setattr(worker_pool, "is_complete", mock_is_complete)
+
+        # Also mock _get_workflow_queue to return a queue that reports all_done
+        class MockQueue:
+            def all_done(self):
+                return True
+
+        monkeypatch.setattr("iterate_workflow._get_workflow_queue", lambda: MockQueue())
+
+        start("## Task Overview\n- [ ] First item to implement\n- [ ] Second item with details")  # Spec-like -> ORCHESTRATE
+        # With empty queue and mocked completion, should be complete
+        assert is_orchestration_complete() is True

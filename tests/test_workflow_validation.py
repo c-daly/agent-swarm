@@ -28,10 +28,21 @@ from iterate_workflow import (  # noqa: E402
     set_test_results,
     set_review_status,
     is_tool_allowed,
-    STATE_FILE,
+    verify_active,
+    add_requirement,
     LOG_FILE,
     _reset_logger,
 )
+import state_manager  # noqa: E402
+from state_manager import (  # noqa: E402
+    ORCHESTRATOR_STATE_FILE as STATE_FILE,
+    STATE_DIR,
+)
+
+
+def get_state():
+    """Helper to get orchestrator state for tests."""
+    return state_manager.get_state("orchestrator")
 
 
 @pytest.fixture(autouse=True)
@@ -243,8 +254,6 @@ class TestMaxIterations:
 
     def test_max_iterations_in_test_phase(self):
         """Hitting max iterations in TEST phase ends workflow."""
-        from iterate_workflow import get_state
-
         start("test task", max_iterations=2)
 
         # First iteration: test_writing -> implement -> test (fail) -> test_writing
@@ -265,8 +274,6 @@ class TestMaxIterations:
 
     def test_max_iterations_in_review_phase(self):
         """Hitting max iterations in REVIEW phase ends workflow."""
-        from iterate_workflow import get_state
-
         start("test task", max_iterations=2)
 
         # First iteration: review fails -> implement
@@ -303,10 +310,8 @@ class TestAddRequirementValidation:
 
     def test_add_requirement_raises_outside_intake(self):
         """add_requirement raises ValueError outside INTAKE phase."""
-        from iterate_workflow import add_requirement
-
-        start("test task")
-        # Default phase is test_writing, not intake
+        start("test task")  # Vague task starts in INTAKE
+        set_phase(Phase.TEST_WRITING)  # Manually set to non-intake phase
 
         with pytest.raises(ValueError, match="intake"):
             add_requirement("Some requirement")
@@ -316,14 +321,12 @@ class TestExceptionHandling:
     """Tests for exception handling in state loading and logging."""
 
     def test_load_state_handles_corrupted_json(self):
-        """_load_state returns {} when JSON is corrupted."""
-        from iterate_workflow import _load_state, STATE_FILE, STATE_DIR
-
+        """state_manager.get_state returns None when JSON is corrupted."""
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         STATE_FILE.write_text("{not valid json")
 
-        result = _load_state()
-        assert result == {}
+        result = state_manager.get_state("orchestrator")
+        assert result is None
 
     def test_log_handles_file_errors(self):
         """_log handles OSError when log file can't be created."""
@@ -358,20 +361,16 @@ class TestExceptionHandling:
 
     def test_get_phase_handles_invalid_phase_value(self):
         """get_phase returns None for invalid phase string."""
-        from iterate_workflow import _save_state, STATE_DIR
-
         STATE_DIR.mkdir(parents=True, exist_ok=True)
-        _save_state({"active": True, "phase": "bogus_phase"})
+        state_manager.set_state("orchestrator", {"active": True, "phase": "bogus_phase"})
 
         # Invalid phase value triggers ValueError in Phase() constructor
         assert get_phase() is None
 
     def test_get_phase_returns_none_when_no_phase_key(self):
         """get_phase returns None when phase key missing."""
-        from iterate_workflow import _save_state, STATE_DIR
-
         STATE_DIR.mkdir(parents=True, exist_ok=True)
-        _save_state({"active": True})  # No phase key
+        state_manager.set_state("orchestrator", {"active": True})  # No phase key
 
         assert get_phase() is None
 
@@ -411,8 +410,6 @@ class TestVerifyActive:
 
     def test_verify_active_raises_when_state_file_missing(self):
         """verify_active raises RuntimeError when state file deleted."""
-        from iterate_workflow import verify_active
-
         # Ensure state file doesn't exist
         if STATE_FILE.exists():
             STATE_FILE.unlink()
@@ -420,14 +417,12 @@ class TestVerifyActive:
         with pytest.raises(RuntimeError) as exc_info:
             verify_active()
         assert "WORKFLOW TERMINATED" in str(exc_info.value)
-        assert "State file was deleted" in str(exc_info.value)
+        assert "No state found" in str(exc_info.value)
 
     def test_verify_active_raises_when_workflow_inactive(self):
         """verify_active raises RuntimeError when workflow not active."""
-        from iterate_workflow import verify_active, _save_state, STATE_DIR
-
         STATE_DIR.mkdir(parents=True, exist_ok=True)
-        _save_state({"active": False, "exit_reason": "test_stopped"})
+        state_manager.set_state("orchestrator", {"active": False, "exit_reason": "test_stopped"})
 
         with pytest.raises(RuntimeError) as exc_info:
             verify_active()
@@ -436,9 +431,7 @@ class TestVerifyActive:
 
     def test_verify_active_raises_on_phase_mismatch(self):
         """verify_active raises RuntimeError when phase doesn't match."""
-        from iterate_workflow import verify_active
-
-        start("test task")
+        start("test task")  # Vague task starts in INTAKE
 
         with pytest.raises(RuntimeError) as exc_info:
             verify_active(expected_phase=Phase.REVIEW)
@@ -446,16 +439,11 @@ class TestVerifyActive:
 
     def test_verify_active_passes_when_active_and_phase_matches(self):
         """verify_active succeeds when workflow active and phase matches."""
-        from iterate_workflow import verify_active
-
-        start("test task")
-        # After start, we're in test_writing phase
-        verify_active(expected_phase=Phase.TEST_WRITING)  # Should not raise
+        start("test task")  # Vague task starts in INTAKE
+        verify_active(expected_phase=Phase.INTAKE)  # Should not raise
 
     def test_verify_active_passes_without_phase_check(self):
         """verify_active succeeds when workflow active, no phase check."""
-        from iterate_workflow import verify_active
-
         start("test task")
         verify_active()  # Should not raise
 
@@ -509,7 +497,8 @@ class TestCLI:
         """phase command shows current phase."""
         self.run_cli("start", "test")
         result = self.run_cli("phase")
-        assert "test_writing" in result.stdout or "none" in result.stdout
+        # Vague task starts in intake phase
+        assert "intake" in result.stdout or "test_writing" in result.stdout or "none" in result.stdout
 
     def test_cli_advance_command(self):
         """advance command advances phase."""
@@ -545,6 +534,10 @@ class TestCLI:
     def test_cli_advance_when_workflow_ends(self):
         """advance when workflow ends shows exit reason."""
         self.run_cli("start", "test")
+        # Vague task starts in INTAKE, need more advances
+        self.run_cli("advance")  # -> design
+        self.run_cli("advance")  # -> orchestrate
+        self.run_cli("advance")  # -> test_writing
         self.run_cli("advance")  # -> implement
         self.run_cli("advance")  # -> test
         self.run_cli("test", "1", "1", "1")
@@ -578,9 +571,10 @@ class TestNoWorkflowEnforcement:
     def test_editing_allowed_during_workflow(self):
         """Edit allowed when workflow is active in appropriate phase."""
         start("test task")
-        # test_writing phase allows editing
+        # Vague task starts in INTAKE, set to test_writing which allows editing
+        set_phase(Phase.TEST_WRITING)
         assert get_phase() == Phase.TEST_WRITING
-        allowed, reason = is_tool_allowed("Edit")
+        allowed, _ = is_tool_allowed("Edit")
         assert allowed, "Edit should be allowed during test_writing phase"
 
     def test_editing_blocked_in_test_phase(self):

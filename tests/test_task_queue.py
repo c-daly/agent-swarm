@@ -673,41 +673,43 @@ class TestLoadQueue:
         """load_queue restores task data."""
         from iterate_state import load_queue, TaskStatus
 
-        state_dir = tmp_path / ".state"
-        state_dir.mkdir()
-        state_file = state_dir / "session.json"
-        state_file.write_text(json.dumps({
-            "queue": {
-                "tasks": {
-                    "task-001": {
-                        "id": "task-001",
-                        "description": "Test task",
-                        "status": "pending",
-                        "priority": 3,
-                        "source": "original",
-                        "pr_id": "pr-001",
-                        "assigned_agent": None,
-                        "phase": "test_writing",
-                        "iteration": 0,
-                        "created_at": "2026-01-11T10:00:00Z",
-                        "metadata": {}
-                    }
-                },
-                "prs": {
-                    "pr-001": {
-                        "pr_id": "pr-001",
-                        "branch": "feature/test",
-                        "phase": "test_writing",
-                        "task_ids": ["task-001"],
-                        "iteration": 0
-                    }
-                },
-                "completed": [],
-                "failed": []
-            }
-        }))
+        # Mock state_manager to return queue data
+        queue_data = {
+            "tasks": {
+                "task-001": {
+                    "id": "task-001",
+                    "description": "Test task",
+                    "status": "pending",
+                    "priority": 3,
+                    "source": "original",
+                    "pr_id": "pr-001",
+                    "assigned_agent": None,
+                    "phase": "test_writing",
+                    "iteration": 0,
+                    "created_at": "2026-01-11T10:00:00Z",
+                    "depends_on": [],
+                    "metadata": {}
+                }
+            },
+            "prs": {
+                "pr-001": {
+                    "pr_id": "pr-001",
+                    "branch": "feature/test",
+                    "phase": "test_writing",
+                    "task_ids": ["task-001"],
+                    "iteration": 0
+                }
+            },
+            "completed": [],
+            "failed": []
+        }
 
-        monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
+        def mock_get_state(agent_id):
+            if agent_id == "queue":
+                return queue_data
+            return None
+
+        monkeypatch.setattr("lib.state_manager.get_state", mock_get_state)
 
         q = load_queue()
         assert "task-001" in q.tasks
@@ -720,27 +722,28 @@ class TestLoadQueue:
         """load_queue restores PR state."""
         from iterate_state import load_queue
 
-        state_dir = tmp_path / ".state"
-        state_dir.mkdir()
-        state_file = state_dir / "session.json"
-        state_file.write_text(json.dumps({
-            "queue": {
-                "tasks": {},
-                "prs": {
-                    "pr-001": {
-                        "pr_id": "pr-001",
-                        "branch": "feature/test",
-                        "phase": "implement",
-                        "task_ids": ["task-001"],
-                        "iteration": 2
-                    }
-                },
-                "completed": [],
-                "failed": []
-            }
-        }))
+        # Mock state_manager to return queue data
+        queue_data = {
+            "tasks": {},
+            "prs": {
+                "pr-001": {
+                    "pr_id": "pr-001",
+                    "branch": "feature/test",
+                    "phase": "implement",
+                    "task_ids": ["task-001"],
+                    "iteration": 2
+                }
+            },
+            "completed": [],
+            "failed": []
+        }
 
-        monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
+        def mock_get_state(agent_id):
+            if agent_id == "queue":
+                return queue_data
+            return None
+
+        monkeypatch.setattr("lib.state_manager.get_state", mock_get_state)
 
         q = load_queue()
         assert "pr-001" in q.prs
@@ -843,13 +846,28 @@ class TestQueueAddCLI:
 
     def test_queue_add_creates_task(self, tmp_path, monkeypatch, capsys):
         """queue add creates a new task."""
-        from iterate_state import main, load_queue
+        from iterate_state import main, load_queue, TaskStatus
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()
         state_file = state_dir / "session.json"
         state_file.write_text('{}')
 
+        # Clear state_manager before test
+        import lib.state_manager as sm
+        sm._states.clear()
+
+        # Mock both session file and state_manager
+        stored_state = {}
+        
+        def mock_get_state(agent_id):
+            return stored_state.get(agent_id)
+        
+        def mock_set_state(agent_id, state):
+            stored_state[agent_id] = state
+        
+        monkeypatch.setattr("lib.state_manager.get_state", mock_get_state)
+        monkeypatch.setattr("lib.state_manager.set_state", mock_set_state)
         monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
         monkeypatch.setattr("iterate_state.STATE_DIR", state_dir)
         monkeypatch.setattr("sys.argv", ["iterate_state.py", "queue", "add", "Test task description"])
@@ -890,6 +908,21 @@ class TestQueueAddCLI:
         state_file = state_dir / "session.json"
         state_file.write_text('{}')
 
+        # Clear state_manager before test
+        import lib.state_manager as sm
+        sm._states.clear()
+
+        # Mock both session file and state_manager
+        stored_state = {}
+        
+        def mock_get_state(agent_id):
+            return stored_state.get(agent_id)
+        
+        def mock_set_state(agent_id, state):
+            stored_state[agent_id] = state
+        
+        monkeypatch.setattr("lib.state_manager.get_state", mock_get_state)
+        monkeypatch.setattr("lib.state_manager.set_state", mock_set_state)
         monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
         monkeypatch.setattr("iterate_state.STATE_DIR", state_dir)
         monkeypatch.setattr("sys.argv", ["iterate_state.py", "queue", "add", "Task", "--priority", "1"])

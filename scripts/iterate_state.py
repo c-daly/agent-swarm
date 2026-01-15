@@ -64,6 +64,7 @@ class Task:
     iteration: int                   # Which iteration this task was created in
     created_at: str                  # ISO timestamp
     assigned_agent: Optional[str] = None  # Agent ID if currently running
+    depends_on: list[str] = field(default_factory=list)  # Task IDs this depends on
     metadata: dict = field(default_factory=dict)  # Flexible storage
 
 
@@ -182,17 +183,30 @@ class TaskQueue:
 
     def get_eligible_tasks(self, n: int) -> list[Task]:
         """Get up to N tasks eligible for work.
-        
+
         Eligibility rules:
         - Status must be pending
         - Task must be in parallel phase (test_writing/implement)
-        
+        - All dependencies must be completed (committed/done)
+
         Returns tasks sorted by priority (lower = first).
         """
-        eligible = [
-            t for t in self.tasks.values()
-            if t.status == TaskStatus.PENDING and t.phase in PARALLEL_PHASES
-        ]
+        eligible = []
+        for t in self.tasks.values():
+            if t.status != TaskStatus.PENDING:
+                continue
+            if t.phase not in PARALLEL_PHASES:
+                continue
+            # Check dependencies - all must be completed
+            deps_satisfied = True
+            for dep_id in t.depends_on:
+                dep_task = self.tasks.get(dep_id)
+                if dep_task and dep_task.status != TaskStatus.COMPLETED:
+                    deps_satisfied = False
+                    break
+            if deps_satisfied:
+                eligible.append(t)
+
         # Sort by priority (lower = higher priority)
         eligible.sort(key=lambda t: (t.priority, t.created_at))
         return eligible[:n]
@@ -231,6 +245,37 @@ class TaskQueue:
         if not self.prs:
             return True
         return all(pr.phase == "done" for pr in self.prs.values())
+
+    def is_pr_ready_for_push(self, pr_id: str) -> bool:
+        """Check if all tasks in a PR are committed (ready for batch push).
+
+        Returns True if ALL tasks for this PR have status COMPLETED.
+        This is the gate for batched push - we don't push until all tasks commit.
+        """
+        pr_tasks = self.get_tasks_for_pr(pr_id)
+        if not pr_tasks:
+            return False
+        return all(t.status == TaskStatus.COMPLETED for t in pr_tasks)
+
+    def get_pr_push_status(self, pr_id: str) -> dict:
+        """Get detailed push status for a PR.
+
+        Returns dict with:
+        - ready: bool - whether all tasks are committed
+        - completed: int - number of completed tasks
+        - total: int - total tasks in PR
+        - pending: list[str] - IDs of tasks not yet committed
+        """
+        pr_tasks = self.get_tasks_for_pr(pr_id)
+        completed = [t for t in pr_tasks if t.status == TaskStatus.COMPLETED]
+        pending = [t.id for t in pr_tasks if t.status != TaskStatus.COMPLETED]
+
+        return {
+            "ready": len(pending) == 0 and len(pr_tasks) > 0,
+            "completed": len(completed),
+            "total": len(pr_tasks),
+            "pending": pending,
+        }
 
     def advance_pr_to_sync_phase(self, pr_id: str, phase: str) -> None:
         """Manually advance PR to a sync phase (test, coverage, review)."""
@@ -285,10 +330,13 @@ def save_state(state: dict) -> None:
 
 
 def save_queue(queue: "TaskQueue") -> None:
-    """Save queue state to session.json under 'queue' key.
+    """Save queue state to in-memory state_manager under 'queue' key.
 
-    Merges with existing state (doesn't overwrite other keys).
+    Note: Queue is ephemeral - resets on process restart.
     """
+    from lib.state_manager import set_state, get_state
+
+    # Get existing session state (for compatibility with other keys)
     state = load_state()
 
     # Serialize tasks
@@ -305,6 +353,7 @@ def save_queue(queue: "TaskQueue") -> None:
             "phase": task.phase,
             "iteration": task.iteration,
             "created_at": task.created_at,
+            "depends_on": task.depends_on,
             "metadata": task.metadata,
         }
 
@@ -319,26 +368,40 @@ def save_queue(queue: "TaskQueue") -> None:
             "iteration": pr.iteration,
         }
 
-    state["queue"] = {
+    queue_data = {
         "tasks": tasks_data,
         "prs": prs_data,
         "completed": queue.completed,
         "failed": queue.failed,
     }
 
+    # Save to state_manager (in-memory, ephemeral)
+    set_state("queue", queue_data)
+
+    # Also save to session.json for backwards compatibility
+    state["queue"] = queue_data
     save_state(state)
 
 
 def load_queue() -> "TaskQueue":
-    """Load queue from session.json.
+    """Load queue from in-memory state_manager.
 
     Returns empty TaskQueue if no queue state exists.
     Handles missing/malformed data gracefully.
+    Note: Queue is ephemeral - resets on process restart.
     """
-    state = load_state()
+    from lib.state_manager import get_state
+
     queue = TaskQueue()
 
-    queue_data = state.get("queue")
+    # Try state_manager first (primary source)
+    queue_data = get_state("queue")
+    
+    # Fall back to session.json for backwards compatibility
+    if not queue_data:
+        state = load_state()
+        queue_data = state.get("queue")
+    
     if not queue_data:
         return queue
 
@@ -371,6 +434,7 @@ def load_queue() -> "TaskQueue":
                 phase=task_dict.get("phase", "test_writing"),
                 iteration=task_dict.get("iteration", 0),
                 created_at=task_dict.get("created_at", ""),
+                depends_on=task_dict.get("depends_on", []),
                 metadata=task_dict.get("metadata", {}),
             )
             queue.tasks[task_id] = task
@@ -401,157 +465,16 @@ def load_queue() -> "TaskQueue":
     return queue
 
 
-def init_iterate(tdd: bool = True, max_iter: int = 5) -> None:
-    """Initialize iterate session. TDD mode is default."""
-    state = load_state()
-
-    phases = TDD_PHASES if tdd else DEFAULT_PHASES
-
-    state["mode"] = "iterate-tdd" if tdd else "iterate"
-    state["iterate_phases"] = phases
-    state["iterate_phase"] = phases[0]
-    state["iteration"] = 0
-    state["max_iterations"] = max_iter
-    state["exit_reason"] = None
-    state["workflow_invoked"] = True  # Unlock editing tools
-
-    save_state(state)
-
-    mode_str = "TDD mode"
-    print(f"[ITERATE] Initialized - {mode_str}")
-    print(f"  Max iterations: {max_iter}")
-    print(f"  Starting phase: {phases[0]}")
-    print(f"  Phases: {' → '.join(phases)}")
-
-
-def advance_phase(direction: str = "next") -> None:
-    """Advance or retreat to a phase."""
-    state = load_state()
-
-    if state.get("mode") not in ("iterate", "iterate-tdd"):
-        print("ERROR: Not in iterate mode. Run 'iterate_state.py init' first.", file=sys.stderr)
-        sys.exit(1)
-
-    phases = state.get("iterate_phases", DEFAULT_PHASES)
-    current = state.get("iterate_phase", phases[0])
-    current_idx = phases.index(current) if current in phases else 0
-
-    if direction == "next":
-        if current_idx == len(phases) - 1:
-            # Completed loop, start new iteration
-            state["iteration"] = state.get("iteration", 0) + 1
-            state["iterate_phase"] = phases[0]
-
-            if state["iteration"] >= state.get("max_iterations", 5):
-                state["exit_reason"] = "max_reached"
-                print(f"[ITERATE] Max iterations ({state['max_iterations']}) reached")
-                print("  Checkpoint required for user approval")
-            else:
-                print(f"[ITERATE] Starting iteration {state['iteration'] + 1}")
-                print(f"  Phase: {phases[0]}")
-        else:
-            state["iterate_phase"] = phases[current_idx + 1]
-            print(f"[ITERATE] Phase: {state['iterate_phase']}")
-
-    elif direction == "back":
-        # Kick-back logic
-        mode = state.get("mode")
-
-        if current in ("test", "coverage"):
-            # Test/coverage failure - go back to appropriate phase
-            if mode == "iterate-tdd":
-                state["iterate_phase"] = "test_writing"
-                print("[ITERATE] Kicked back to TEST_WRITING (fix the spec)")
-            else:
-                state["iterate_phase"] = "implement"
-                print("[ITERATE] Kicked back to IMPLEMENT (fix the code)")
-        elif current == "review":
-            # Review failure - go back to implement
-            state["iterate_phase"] = "implement"
-            print("[ITERATE] Kicked back to IMPLEMENT (address review issues)")
-        else:
-            print(f"[ITERATE] Cannot go back from {current}", file=sys.stderr)
-            sys.exit(1)
-
-    save_state(state)
-
-
-def check_status() -> None:
-    """Check current iterate status."""
-    state = load_state()
-
-    if state.get("mode") not in ("iterate", "iterate-tdd"):
-        print("Not in iterate mode")
-        return
-
-    exit_reason = state.get("exit_reason")
-    iteration = state.get("iteration", 0)
-    max_iter = state.get("max_iterations", 5)
-    phase = state.get("iterate_phase", "unknown")
-    mode = state.get("mode")
-
-    if exit_reason:
-        print(f"[ITERATE] EXIT: {exit_reason}")
-        print(f"  Completed {iteration} iterations")
-        print("  Ready for checkpoint")
-    else:
-        print(f"[ITERATE] Mode: {mode}")
-        print(f"  Iteration: {iteration + 1}/{max_iter}")
-        print(f"  Phase: {phase}")
-        print("  Status: Running")
-
-
-def mark_exit(reason: str) -> None:
-    """Mark exit condition."""
-    if reason not in EXIT_CONDITIONS:
-        print(f"ERROR: Invalid exit reason '{reason}'", file=sys.stderr)
-        print(f"Valid reasons: {', '.join(EXIT_CONDITIONS)}", file=sys.stderr)
-        sys.exit(1)
-
-    state = load_state()
-    state["exit_reason"] = reason
-    save_state(state)
-
-    print(f"[ITERATE] Exit marked: {reason}")
-
-
-def show_state() -> None:
-    """Show full iterate state."""
-    state = load_state()
-
-    iterate_keys = ["mode", "iterate_phases", "iterate_phase", "iteration",
-                    "max_iterations", "exit_reason", "workflow_invoked"]
-
-    iterate_state = {k: state.get(k) for k in iterate_keys if k in state}
-
-    if iterate_state:
-        print(json.dumps(iterate_state, indent=2))
-    else:
-        print("No iterate state found")
-
+# =============================================================================
+# CLI - Queue and PR management only
+# Workflow functions (init, phase, check, exit, show) moved to iterate_workflow.py
+# =============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Iterate workflow state management")
+    parser = argparse.ArgumentParser(
+        description="Task queue and PR management (workflow commands in iterate_workflow.py)"
+    )
     subparsers = parser.add_subparsers(dest="command", help="Command")
-
-    # init command
-    init_parser = subparsers.add_parser("init", help="Initialize iterate session")
-    init_parser.add_argument("--no-tdd", action="store_true", help="Skip TDD mode (implement first)")
-    init_parser.add_argument("--max-iter", type=int, default=5, help="Max iterations (default: 5)")
-
-    # phase command
-    phase_parser = subparsers.add_parser("phase", help="Advance or retreat phase")
-    phase_parser.add_argument("direction", choices=["next", "back"], help="Direction")
-
-    # check command
-    subparsers.add_parser("check", help="Check current status")
-
-    # exit command
-    exit_parser = subparsers.add_parser("exit", help="Mark exit condition")
-    exit_parser.add_argument("reason", choices=EXIT_CONDITIONS, help="Exit reason")
-
-    # show command
-    subparsers.add_parser("show", help="Show full state")
 
     # -------------------------------------------------------------------------
     # Queue commands
@@ -565,6 +488,7 @@ def main():
     queue_add.add_argument("--pr", default="default", help="PR ID (default: default)")
     queue_add.add_argument("--priority", type=int, default=PRIORITY_ORIGINAL, help="Priority (0=highest)")
     queue_add.add_argument("--branch", help="Branch name (creates PR if needed)")
+    queue_add.add_argument("--depends", help="Comma-separated task IDs this depends on")
 
     # queue list
     queue_list = queue_subparsers.add_parser("list", help="List tasks")
@@ -603,22 +527,21 @@ def main():
     pr_create.add_argument("--branch", required=True, help="Branch name")
     pr_create.add_argument("--tasks", nargs="+", required=True, help="Task IDs to include")
 
+    # -------------------------------------------------------------------------
+    # Push command (gated)
+    # -------------------------------------------------------------------------
+    push_parser = subparsers.add_parser("push", help="Gated push - only proceeds if all PR tasks are committed")
+    push_parser.add_argument("--pr", required=True, help="PR ID to push")
+    push_parser.add_argument("--dry-run", action="store_true", help="Check status without pushing")
+
     args = parser.parse_args()
 
-    if args.command == "init":
-        init_iterate(tdd=not args.no_tdd, max_iter=args.max_iter)
-    elif args.command == "phase":
-        advance_phase(args.direction)
-    elif args.command == "check":
-        check_status()
-    elif args.command == "exit":
-        mark_exit(args.reason)
-    elif args.command == "show":
-        show_state()
-    elif args.command == "queue":
+    if args.command == "queue":
         handle_queue_command(args)
     elif args.command == "pr":
         handle_pr_command(args)
+    elif args.command == "push":
+        cmd_gated_push(args.pr, args.dry_run)
     else:
         parser.print_help()
         sys.exit(1)
@@ -627,7 +550,8 @@ def main():
 def handle_queue_command(args) -> None:
     """Handle queue subcommands."""
     if args.queue_command == "add":
-        cmd_queue_add(args.description, args.pr, args.priority, args.branch)
+        depends = args.depends.split(",") if args.depends else []
+        cmd_queue_add(args.description, args.pr, args.priority, args.branch, depends)
     elif args.queue_command == "list":
         cmd_queue_list(args.status, args.pr)
     elif args.queue_command == "show":
@@ -658,12 +582,18 @@ def handle_pr_command(args) -> None:
 # Queue CLI Commands
 # =============================================================================
 
-def cmd_queue_add(description: str, pr_id: str, priority: int, branch: str | None) -> None:
+def cmd_queue_add(description: str, pr_id: str, priority: int, branch: str | None, depends: list[str] | None = None) -> None:
     """Add a task to the queue."""
     import uuid
     from datetime import datetime, timezone
 
     queue = load_queue()
+
+    # Validate dependencies exist
+    depends = depends or []
+    for dep_id in depends:
+        if dep_id and dep_id not in queue.tasks:
+            print(f"Warning: dependency {dep_id} not found in queue", file=sys.stderr)
 
     task_id = f"task-{uuid.uuid4().hex[:8]}"
     task = Task(
@@ -677,6 +607,7 @@ def cmd_queue_add(description: str, pr_id: str, priority: int, branch: str | Non
         phase="test_writing",
         iteration=0,
         created_at=datetime.now(timezone.utc).isoformat(),
+        depends_on=[d for d in depends if d],  # Filter empty strings
         metadata={},
     )
 
@@ -688,6 +619,8 @@ def cmd_queue_add(description: str, pr_id: str, priority: int, branch: str | Non
 
     save_queue(queue)
     print(f"Added task: {task_id}")
+    if depends:
+        print(f"  Depends on: {', '.join(depends)}")
 
 
 def cmd_queue_list(status_filter: str | None, pr_filter: str | None) -> None:
@@ -852,6 +785,79 @@ def cmd_pr_create(pr_id: str, branch: str, task_ids: list[str]) -> None:
 
     save_queue(queue)
     print(f"Created PR: {pr_id} with {len(task_ids)} tasks")
+
+
+# =============================================================================
+# Gated Push Command
+# =============================================================================
+
+def cmd_gated_push(pr_id: str, dry_run: bool = False) -> None:
+    """Gated push - only proceeds if all tasks in PR are committed.
+
+    This is called by subagents when they complete their work.
+    If not all tasks are committed yet, it logs and returns (deferred push).
+    If all tasks are committed, it executes the actual git push.
+
+    Args:
+        pr_id: PR identifier to push
+        dry_run: If True, just check status without pushing
+    """
+    import subprocess
+
+    queue = load_queue()
+
+    # Check if PR exists
+    if pr_id not in queue.prs:
+        print(f"[PUSH] PR not found: {pr_id}", file=sys.stderr)
+        sys.exit(1)
+
+    pr = queue.prs[pr_id]
+    status = queue.get_pr_push_status(pr_id)
+
+    # Check if ready
+    if not status["ready"]:
+        # Not ready - log and return (deferred push)
+        print(f"[PUSH] Deferred - waiting on {len(status['pending'])} tasks")
+        print(f"  PR: {pr_id}")
+        print(f"  Completed: {status['completed']}/{status['total']}")
+        print(f"  Pending: {', '.join(status['pending'][:5])}")
+        if len(status['pending']) > 5:
+            print(f"    ... and {len(status['pending']) - 5} more")
+        return  # Exit cleanly - this is expected behavior
+
+    # Ready to push
+    print(f"[PUSH] All tasks committed for PR: {pr_id}")
+    print(f"  Branch: {pr.branch}")
+    print(f"  Tasks: {status['total']}")
+
+    if dry_run:
+        print("  (dry-run - would push here)")
+        return
+
+    # Execute git push
+    try:
+        result = subprocess.run(
+            ["git", "push", "-u", "origin", pr.branch],
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+
+        if result.returncode == 0:
+            print(f"[PUSH] Success - pushed {pr.branch}")
+            # Update PR phase to in_review
+            pr.phase = "review"
+            save_queue(queue)
+        else:
+            print(f"[PUSH] Failed: {result.stderr}", file=sys.stderr)
+            sys.exit(1)
+
+    except subprocess.TimeoutExpired:
+        print("[PUSH] Timed out", file=sys.stderr)
+        sys.exit(1)
+    except FileNotFoundError:
+        print("[PUSH] git not found", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

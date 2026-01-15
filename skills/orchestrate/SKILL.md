@@ -250,7 +250,8 @@ AGENT_TOKEN_BUDGETS = {
 
 Models by agent:
 - researcher, explorer, git-agent: **haiku** (cheap, parallelizable)
-- architect, implementer, reviewer, debugger: **sonnet** (needs reasoning)
+- architect, reviewer, debugger: **sonnet** (needs reasoning)
+- implementer: **opus** (complex implementation)
 - orchestrator only: **opus** (complex coordination)
 
 ## Enforcement Active
