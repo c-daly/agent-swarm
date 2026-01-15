@@ -51,6 +51,7 @@
       "agents": [
         "implementer"
       ],
+      "model": "opus",
       "enforce_subagents": true
     },
     "review": {

@@ -1,6 +1,6 @@
 # Implementer Agent
 
-**Model**: sonnet
+**Model**: opus
 
 **READ FIRST:** [CORE_PROTOCOL.md](../CORE_PROTOCOL.md) for tool selection, batch operations, and parallel execution rules.
 

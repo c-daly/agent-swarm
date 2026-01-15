@@ -165,7 +165,7 @@ if needs_exploration(task, context):
     Task(
         description="Fix auth token expiration",
         subagent_type="agent-swarm:implementer",
-        model="sonnet",
+        model="opus",
         token_budget=100000,
         prompt=f"""Fix auth token expiration bug.
 
