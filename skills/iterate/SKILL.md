@@ -51,6 +51,14 @@ The ORCHESTRATE phase enforces the orchestrator role through tool restrictions:
 - Track progress via TodoWrite
 - Check completion: `is_orchestration_complete()` → queue empty AND no workers
 
+### What the orchestrator does NOT do
+- **Does NOT evaluate agent work quality** - agents are responsible for their own verification
+- **Does NOT run tests** - test/review agents handle that
+- **Does NOT review code** - reviewer agents handle that
+- Just spawns agents, takes output, updates queue
+
+Future: Autokill feature may terminate long-running or failing agents.
+
 ### Subagent responsibilities (TDD loop phases)
 - Write tests (test_writing phase)
 - Write/modify code (implement phase)
