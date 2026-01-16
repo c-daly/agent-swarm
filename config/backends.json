@@ -2,5 +2,17 @@
   "serena": {
     "command": ["uvx", "--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server"],
     "tool_prefix": "serena"
+  },
+  "context7": {
+    "command": ["npx", "-y", "@upstash/context7-mcp"],
+    "tool_prefix": "context7"
+  },
+  "playwright": {
+    "command": ["npx", "@playwright/mcp@latest"],
+    "tool_prefix": "playwright"
+  },
+  "native": {
+    "command": ["python3", "/home/fearsidhe/.claude/plugins/agent-swarm/bin/mcp-native"],
+    "tool_prefix": "native"
   }
 }

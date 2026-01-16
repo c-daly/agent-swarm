@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""MCP Native Tools Server entry point.
+
+Starts the native MCP server on stdio for JSON-RPC communication.
+Provides native tools (grep, glob, read_file, etc.) without external dependencies.
+
+To make executable: chmod +x bin/mcp-native
+"""
+
+import json
+import signal
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT / "lib"))
+
+from mcp_native import MCPNativeServer  # noqa: E402
+
+
+def handle_shutdown(signum, frame):
+    """Handle graceful shutdown on SIGINT/SIGTERM."""
+    sys.exit(0)
+
+
+def main():
+    """Run the MCP native server stdio loop."""
+    # Set up signal handlers for graceful shutdown
+    signal.signal(signal.SIGINT, handle_shutdown)
+    signal.signal(signal.SIGTERM, handle_shutdown)
+
+    server = MCPNativeServer()
+
+    # JSON-RPC stdio loop: read requests from stdin, write responses to stdout
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+
+        try:
+            request = json.loads(line)
+            response = server.handle_request(request)
+            print(json.dumps(response), flush=True)
+        except json.JSONDecodeError as e:
+            # Return JSON-RPC error for malformed JSON
+            error_response = {
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": {
+                    "code": -32700,
+                    "message": f"Parse error: {e}",
+                },
+            }
+            print(json.dumps(error_response), flush=True)
+        except Exception as e:
+            # Return JSON-RPC error for internal errors
+            error_response = {
+                "jsonrpc": "2.0",
+                "id": request.get("id") if "request" in dir() else None,
+                "error": {
+                    "code": -32603,
+                    "message": f"Internal error: {e}",
+                },
+            }
+            print(json.dumps(error_response), flush=True)
+
+
+if __name__ == "__main__":
+    main()
