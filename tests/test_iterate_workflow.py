@@ -246,6 +246,112 @@ class TestPhaseAdvancement:
         assert new_phase == Phase.IMPLEMENT
 
 
+class TestPhaseTransitionValidation:
+    """Tests for set_phase() transition validation."""
+
+    def _setup_phase(self, phase: Phase):
+        """Helper to set initial phase bypassing validation for test setup.
+        
+        We start workflow then directly manipulate state to set phase,
+        simulating being in that phase already.
+        """
+        start("Test task")
+        # Directly set phase in state to bypass validation (for test setup)
+        state = get_state()
+        state["phase"] = phase.value
+        from iterate_workflow import state_manager
+        state_manager.set_state("orchestrator", state)
+
+    def test_set_phase_from_implement_to_done_blocked(self):
+        """Cannot skip from IMPLEMENT directly to DONE."""
+        self._setup_phase(Phase.IMPLEMENT)
+        with pytest.raises(RuntimeError) as exc_info:
+            set_phase(Phase.DONE)
+        assert "IMPLEMENT" in str(exc_info.value)
+
+    def test_set_phase_from_implement_to_review_blocked(self):
+        """Cannot skip from IMPLEMENT directly to REVIEW."""
+        self._setup_phase(Phase.IMPLEMENT)
+        with pytest.raises(RuntimeError) as exc_info:
+            set_phase(Phase.REVIEW)
+        assert "IMPLEMENT" in str(exc_info.value)
+
+    def test_set_phase_from_implement_to_test_allowed(self):
+        """IMPLEMENT -> TEST is valid (advance)."""
+        self._setup_phase(Phase.IMPLEMENT)
+        set_phase(Phase.TEST)  # Should not raise
+        assert get_phase() == Phase.TEST
+
+    def test_set_phase_from_test_to_done_blocked(self):
+        """Cannot skip from TEST directly to DONE."""
+        self._setup_phase(Phase.TEST)
+        with pytest.raises(RuntimeError) as exc_info:
+            set_phase(Phase.DONE)
+        assert "TEST" in str(exc_info.value)
+
+    def test_set_phase_from_test_to_review_allowed(self):
+        """TEST -> REVIEW is valid (tests passed)."""
+        self._setup_phase(Phase.TEST)
+        set_phase(Phase.REVIEW)  # Should not raise
+        assert get_phase() == Phase.REVIEW
+
+    def test_set_phase_from_test_to_implement_allowed(self):
+        """TEST -> IMPLEMENT is valid (kickback)."""
+        self._setup_phase(Phase.TEST)
+        set_phase(Phase.IMPLEMENT)  # Should not raise (kickback)
+        assert get_phase() == Phase.IMPLEMENT
+
+    def test_set_phase_from_test_to_test_writing_allowed(self):
+        """TEST -> TEST_WRITING is valid (coverage kickback)."""
+        self._setup_phase(Phase.TEST)
+        set_phase(Phase.TEST_WRITING)  # Should not raise (kickback)
+        assert get_phase() == Phase.TEST_WRITING
+
+    def test_set_phase_from_review_to_done_allowed(self):
+        """REVIEW -> DONE is valid (approved)."""
+        self._setup_phase(Phase.REVIEW)
+        set_phase(Phase.DONE)  # Should not raise
+        assert get_phase() == Phase.DONE
+
+    def test_set_phase_from_review_to_implement_allowed(self):
+        """REVIEW -> IMPLEMENT is valid (kickback)."""
+        self._setup_phase(Phase.REVIEW)
+        set_phase(Phase.IMPLEMENT)  # Should not raise (kickback)
+        assert get_phase() == Phase.IMPLEMENT
+
+    def test_set_phase_from_test_writing_to_done_blocked(self):
+        """Cannot skip from TEST_WRITING directly to DONE."""
+        self._setup_phase(Phase.TEST_WRITING)
+        with pytest.raises(RuntimeError) as exc_info:
+            set_phase(Phase.DONE)
+        assert "TEST_WRITING" in str(exc_info.value)
+
+    def test_set_phase_from_test_writing_to_implement_allowed(self):
+        """TEST_WRITING -> IMPLEMENT is valid."""
+        self._setup_phase(Phase.TEST_WRITING)
+        set_phase(Phase.IMPLEMENT)  # Should not raise
+        assert get_phase() == Phase.IMPLEMENT
+
+    def test_set_phase_from_orchestrate_allows_any_starting_phase(self):
+        """ORCHESTRATE can assign subagents to any phase (flexible)."""
+        start("## Task\n- [ ] Item 1")  # Spec -> ORCHESTRATE
+        # Should be able to set any phase from ORCHESTRATE (for subagent assignment)
+        set_phase(Phase.IMPLEMENT)  # Should not raise
+        assert get_phase() == Phase.IMPLEMENT
+
+    def test_set_phase_from_orchestrate_to_intake_allowed(self):
+        """ORCHESTRATE -> INTAKE is valid (need more info)."""
+        start("## Task\n- [ ] Item 1")  # Spec -> ORCHESTRATE
+        set_phase(Phase.INTAKE)  # Should not raise
+        assert get_phase() == Phase.INTAKE
+
+    def test_set_phase_from_orchestrate_to_done_allowed(self):
+        """ORCHESTRATE -> DONE is valid (complete)."""
+        start("## Task\n- [ ] Item 1")  # Spec -> ORCHESTRATE
+        set_phase(Phase.DONE)  # Should not raise
+        assert get_phase() == Phase.DONE
+
+
 class TestIterationLimit:
     """Tests for max iteration enforcement."""
 

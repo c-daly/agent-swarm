@@ -1244,7 +1244,7 @@ def start_stdio_server(router: MCPRouter):
         except json.JSONDecodeError as e:
             send({
                 "jsonrpc": "2.0",
-                "id": None,
+                "id": request_id,
                 "error": {"code": -32700, "message": f"Parse error: {e}"}
             })
         except Exception as e:

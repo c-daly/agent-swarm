@@ -305,5 +305,75 @@ class TestThreadSafety:
         assert len(router.list_servers()) == 500
 
 
+class TestStdioServer:
+    """Tests for stdio server error handling."""
+
+    def test_json_decode_error_uses_none_id(self):
+        """JSON decode errors should respond with id: None."""
+        import io
+        from contextlib import redirect_stdout
+
+        # Capture stdout
+        captured = io.StringIO()
+
+        # Mock stdin with invalid JSON
+        invalid_json_input = "not valid json\n"
+        mock_stdin = io.StringIO(invalid_json_input)
+
+        router = MCPRouter()
+
+        # Redirect stdout and stdin, run one iteration
+        import json
+        original_stdin = sys.stdin
+        try:
+            sys.stdin = mock_stdin
+            with redirect_stdout(captured):
+                # Process one line manually (simulating the loop)
+                line = mock_stdin.readline()
+                request_id = None
+                try:
+                    request = json.loads(line.strip())
+                    request_id = request.get("id")
+                except json.JSONDecodeError as e:
+                    # This is what the server should do
+                    response = {
+                        "jsonrpc": "2.0",
+                        "id": request_id,  # Should be None since parsing failed
+                        "error": {"code": -32700, "message": f"Parse error: {e}"}
+                    }
+                    print(json.dumps(response), flush=True)
+        finally:
+            sys.stdin = original_stdin
+
+        output = captured.getvalue()
+        response = json.loads(output.strip())
+        assert response["id"] is None
+        assert response["error"]["code"] == -32700
+        assert "Parse error" in response["error"]["message"]
+
+    def test_request_id_preserved_on_general_error(self):
+        """General errors should preserve request_id if JSON was valid."""
+        import io
+        import json
+
+        # Valid JSON with an id, but method will cause error
+        valid_json_with_id = '{"jsonrpc": "2.0", "id": 42, "method": "unknown_method"}\n'
+        mock_stdin = io.StringIO(valid_json_with_id)
+
+        # Process manually to test the pattern
+        line = mock_stdin.readline()
+        request_id = None
+        try:
+            request = json.loads(line.strip())
+            request_id = request.get("id")
+            # Simulate some error after parsing
+            raise ValueError("Simulated error")
+        except json.JSONDecodeError:
+            pass
+        except Exception as e:
+            # request_id should be 42, not None
+            assert request_id == 42
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

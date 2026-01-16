@@ -358,19 +358,38 @@ def verify_active(expected_phase: Optional[Phase] = None) -> None:
 def set_phase(phase: Phase) -> None:
     """Manually set phase (for kick-back scenarios).
 
-    Validates transitions:
-    - From ORCHESTRATE: only INTAKE allowed (if more info needed)
-    - Other phases: handled by advance_phase() logic
+    Validates transitions to prevent skipping phases:
+    - From ORCHESTRATE: INTAKE or DONE for orchestrator; subagents can be assigned any phase
+    - From IMPLEMENT: only TEST allowed (can't skip to DONE/REVIEW)
+    - From TEST: REVIEW, IMPLEMENT, or TEST_WRITING allowed (not DONE directly)
+    - From TEST_WRITING: only IMPLEMENT allowed
+    - From REVIEW: DONE or IMPLEMENT allowed
+    - From INTAKE/DESIGN: flexible (discovery phases)
     """
     state = state_manager.get_state("orchestrator") or {}
     current_phase = state.get("phase")
 
-    # Block orchestrator from jumping to implementation phases
-    if current_phase == Phase.ORCHESTRATE.value:
-        if phase not in (Phase.INTAKE, Phase.DONE):
+    # Define valid transitions for TDD loop phases
+    # ORCHESTRATE can assign any starting phase (for subagents)
+    # Discovery phases (INTAKE, DESIGN) are flexible
+    valid_transitions = {
+        # TDD loop has strict transitions
+        Phase.IMPLEMENT.value: {Phase.TEST},
+        Phase.TEST.value: {Phase.REVIEW, Phase.IMPLEMENT, Phase.TEST_WRITING},
+        Phase.TEST_WRITING.value: {Phase.IMPLEMENT},
+        Phase.REVIEW.value: {Phase.DONE, Phase.IMPLEMENT},
+        # DONE is terminal
+        Phase.DONE.value: {Phase.DONE},
+    }
+
+    # Validate transition only for TDD loop phases (strict enforcement)
+    if current_phase and current_phase in valid_transitions:
+        allowed = valid_transitions[current_phase]
+        if phase not in allowed:
+            allowed_names = ", ".join(p.value for p in allowed)
             raise RuntimeError(
-                f"Cannot set phase to {phase.value} from ORCHESTRATE. "
-                "Orchestrator can only go to INTAKE (for more info) or spawn subagents."
+                f"Cannot transition from {current_phase.upper()} to {phase.value}. "
+                f"Valid transitions: {allowed_names}"
             )
 
     state["phase"] = phase.value

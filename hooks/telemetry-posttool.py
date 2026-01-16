@@ -151,7 +151,13 @@ def update_aggregates(telemetry: dict, event: dict, is_error: bool) -> None:
     agg.setdefault("by_tool", {})
     agg.setdefault("by_backend", {})
     agg.setdefault("subagents", {})
-    agg.setdefault("totals", {"calls": 0, "errors": 0, "tokens": 0, "duration_ms": 0})
+    agg.setdefault("totals", {})
+    # Handle legacy data missing tokens/duration keys
+    totals = agg["totals"]
+    totals.setdefault("calls", 0)
+    totals.setdefault("errors", 0)
+    totals.setdefault("tokens", 0)
+    totals.setdefault("duration_ms", 0)
 
     tool = event["tool"]
     backend = event["backend"]
