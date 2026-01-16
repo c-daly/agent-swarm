@@ -804,7 +804,8 @@ def chart_token_trend():
         return None
 
     telemetry = json.loads(TELEMETRY_FILE.read_text())
-    daily_summaries = telemetry.get("daily_summaries", {})
+    # Prefer actual data if available
+    daily_summaries = telemetry.get("daily_summaries_actual", telemetry.get("daily_summaries", {}))
     events = telemetry.get("events", [])
 
     if not daily_summaries and len(events) < 2:
@@ -814,8 +815,14 @@ def chart_token_trend():
     # Use daily_summaries for daily view (historical data that persists)
     # Format: {"2025-01-15": {"calls": 50, "tokens": 125000, ...}, ...}
     daily_data = {}
+    daily_efficiency = {}  # tokens per call
+    daily_calls = {}
     for date_str, summary in daily_summaries.items():
-        daily_data[date_str] = summary.get("tokens", 0)
+        tokens = summary.get("tokens", summary.get("total_tokens", 0))
+        calls = summary.get("calls", 1)
+        daily_data[date_str] = tokens
+        daily_calls[date_str] = calls
+        daily_efficiency[date_str] = round(tokens / max(calls, 1))
 
     # Parse event timestamp and convert to EST (for hourly view)
     def parse_event_time(event):
@@ -853,20 +860,23 @@ def chart_token_trend():
     sorted_daily = sorted(daily_data.items())
     all_labels = [date for date, _ in sorted_daily]
     all_tokens = [tokens for _, tokens in sorted_daily]
+    all_efficiency = [daily_efficiency.get(date, 0) for date, _ in sorted_daily]
 
     # Last 7 days
     week_ago = (now - timedelta(days=7)).strftime("%Y-%m-%d")
     week_data = [(d, t) for d, t in sorted_daily if d >= week_ago]
     week_labels = [date for date, _ in week_data]
     week_tokens = [tokens for _, tokens in week_data]
+    week_efficiency = [daily_efficiency.get(date, 0) for date, _ in week_data]
 
     # Last 30 days
     month_ago = (now - timedelta(days=30)).strftime("%Y-%m-%d")
     month_data = [(d, t) for d, t in sorted_daily if d >= month_ago]
     month_labels = [date for date, _ in month_data]
     month_tokens = [tokens for _, tokens in month_data]
+    month_efficiency = [daily_efficiency.get(date, 0) for date, _ in month_data]
 
-    # Hourly (Last 48h)
+    # Hourly (Last 48h) - no efficiency for hourly view
     sorted_hourly = sorted(hourly_data.items())[-48:]
     hourly_labels = [hour for hour, _ in sorted_hourly]
     hourly_tokens = [tokens for _, tokens in sorted_hourly]
@@ -958,36 +968,66 @@ def chart_token_trend():
         const weekData = {{
             labels: {json.dumps(week_labels)},
             datasets: [{{
-                label: 'Tokens per Day (Last 7 Days)',
+                label: 'Total Tokens',
                 data: {json.dumps(week_tokens)},
                 borderColor: '#4cc9f0',
                 backgroundColor: 'rgba(76, 201, 240, 0.2)',
                 tension: 0.1,
-                fill: true
+                fill: true,
+                yAxisID: 'y'
+            }}, {{
+                label: 'Tokens/Call (Efficiency)',
+                data: {json.dumps(week_efficiency)},
+                borderColor: '#f59e0b',
+                backgroundColor: 'transparent',
+                tension: 0.1,
+                fill: false,
+                borderDash: [5, 5],
+                yAxisID: 'y1'
             }}]
         }};
 
         const monthData = {{
             labels: {json.dumps(month_labels)},
             datasets: [{{
-                label: 'Tokens per Day (Last 30 Days)',
+                label: 'Total Tokens',
                 data: {json.dumps(month_tokens)},
                 borderColor: '#8b5cf6',
                 backgroundColor: 'rgba(139, 92, 246, 0.2)',
                 tension: 0.1,
-                fill: true
+                fill: true,
+                yAxisID: 'y'
+            }}, {{
+                label: 'Tokens/Call (Efficiency)',
+                data: {json.dumps(month_efficiency)},
+                borderColor: '#f59e0b',
+                backgroundColor: 'transparent',
+                tension: 0.1,
+                fill: false,
+                borderDash: [5, 5],
+                yAxisID: 'y1'
             }}]
         }};
 
         const allData = {{
             labels: {json.dumps(all_labels)},
             datasets: [{{
-                label: 'Tokens per Day (All Time)',
+                label: 'Total Tokens',
                 data: {json.dumps(all_tokens)},
-                borderColor: '#f59e0b',
-                backgroundColor: 'rgba(245, 158, 11, 0.2)',
+                borderColor: '#4cc9f0',
+                backgroundColor: 'rgba(76, 201, 240, 0.2)',
                 tension: 0.1,
-                fill: true
+                fill: true,
+                yAxisID: 'y'
+            }}, {{
+                label: 'Tokens/Call (Efficiency)',
+                data: {json.dumps(all_efficiency)},
+                borderColor: '#f59e0b',
+                backgroundColor: 'transparent',
+                tension: 0.1,
+                fill: false,
+                borderDash: [5, 5],
+                yAxisID: 'y1'
             }}]
         }};
 
@@ -999,7 +1039,8 @@ def chart_token_trend():
                 borderColor: '#10b981',
                 backgroundColor: 'rgba(16, 185, 129, 0.2)',
                 tension: 0.1,
-                fill: true
+                fill: true,
+                yAxisID: 'y'
             }}]
         }};
 
@@ -1021,9 +1062,22 @@ def chart_token_trend():
                 }},
                 scales: {{
                     y: {{
+                        type: 'linear',
+                        display: true,
+                        position: 'left',
                         beginAtZero: true,
-                        ticks: {{ color: '#888' }},
-                        grid: {{ color: '#333' }}
+                        ticks: {{ color: '#4cc9f0' }},
+                        grid: {{ color: '#333' }},
+                        title: {{ display: true, text: 'Total Tokens', color: '#4cc9f0' }}
+                    }},
+                    y1: {{
+                        type: 'linear',
+                        display: true,
+                        position: 'right',
+                        beginAtZero: true,
+                        ticks: {{ color: '#f59e0b' }},
+                        grid: {{ drawOnChartArea: false }},
+                        title: {{ display: true, text: 'Tokens/Call', color: '#f59e0b' }}
                     }},
                     x: {{
                         ticks: {{ color: '#888' }},
@@ -1843,6 +1897,174 @@ def chart_token_efficiency():
     return path
 
 
+def chart_cache_efficiency():
+    """Chart cache hit rate over time using actual token data."""
+    if not TELEMETRY_FILE.exists():
+        print("⚠️  No telemetry data found")
+        return None
+
+    telemetry = json.loads(TELEMETRY_FILE.read_text())
+
+    # Try daily_summaries_actual first, then fall back to daily_summaries
+    daily = telemetry.get("daily_summaries_actual", {})
+    if not daily:
+        daily = telemetry.get("daily_summaries", {})
+
+    if not daily:
+        print("⚠️  No daily summary data found")
+        return None
+
+    # Extract cache data by date
+    dates = sorted(daily.keys())
+    cache_reads = []
+    cache_creates = []
+    hit_rates = []
+
+    for date in dates:
+        data = daily[date]
+        cr = data.get("cache_read", 0)
+        cc = data.get("cache_create", 0)
+        cache_reads.append(cr)
+        cache_creates.append(cc)
+        if cr + cc > 0:
+            hit_rates.append(round(cr / (cr + cc) * 100, 1))
+        else:
+            hit_rates.append(0)
+
+    # Format labels as short dates
+    labels = [d[5:] for d in dates]  # MM-DD format
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Cache Efficiency</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {{ font-family: -apple-system, sans-serif; padding: 20px; background: #1a1a2e; color: #eee; }}
+        h1 {{ color: #4cc9f0; }}
+        .back {{ color: #4cc9f0; text-decoration: none; }}
+        .chart-container {{ max-width: 1000px; margin: 20px auto; }}
+        .stats {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; max-width: 1000px; margin: 30px auto; }}
+        .stat {{ background: #2a2a4e; padding: 20px; border-radius: 8px; text-align: center; }}
+        .stat-value {{ font-size: 28px; font-weight: bold; color: #4cc9f0; }}
+        .stat-label {{ color: #888; font-size: 14px; margin-top: 5px; }}
+        .controls {{ text-align: center; margin: 20px; }}
+        .controls select {{ padding: 8px 16px; border-radius: 4px; background: #2a2a4e; color: #eee; border: 1px solid #4cc9f0; }}
+    </style>
+</head>
+<body>
+    <a href="dashboard.html" class="back">← Back to Dashboard</a>
+    <h1>📊 Cache Efficiency</h1>
+
+    <div class="stats">
+        <div class="stat">
+            <div class="stat-value">{sum(cache_reads):,}</div>
+            <div class="stat-label">Cache Hits (tokens)</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value">{sum(cache_creates):,}</div>
+            <div class="stat-label">Cache Misses (tokens)</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value">{round(sum(cache_reads)/(sum(cache_reads)+sum(cache_creates))*100 if sum(cache_reads)+sum(cache_creates) > 0 else 0, 1)}%</div>
+            <div class="stat-label">Overall Hit Rate</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value">${round(sum(cache_creates) * 0.000003 - sum(cache_reads) * 0.0000003, 2):,.2f}</div>
+            <div class="stat-label">Cache Savings (est.)</div>
+        </div>
+    </div>
+
+    <div class="controls">
+        <select id="viewSelect" onchange="switchView()">
+            <option value="hitrate">Hit Rate %</option>
+            <option value="volume">Cache Volume</option>
+        </select>
+    </div>
+
+    <div class="chart-container">
+        <canvas id="chart"></canvas>
+    </div>
+
+    <script>
+        const labels = {json.dumps(labels)};
+        const cacheReads = {json.dumps(cache_reads)};
+        const cacheCreates = {json.dumps(cache_creates)};
+        const hitRates = {json.dumps(hit_rates)};
+
+        let chart = null;
+
+        function createChart(type) {{
+            if (chart) chart.destroy();
+
+            const ctx = document.getElementById('chart');
+            const config = type === 'hitrate' ? {{
+                type: 'line',
+                data: {{
+                    labels: labels,
+                    datasets: [{{
+                        label: 'Cache Hit Rate %',
+                        data: hitRates,
+                        borderColor: '#4cc9f0',
+                        backgroundColor: 'rgba(76, 201, 240, 0.1)',
+                        fill: true,
+                        tension: 0.4
+                    }}]
+                }},
+                options: {{
+                    responsive: true,
+                    plugins: {{ legend: {{ labels: {{ color: '#888' }} }} }},
+                    scales: {{
+                        x: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }},
+                        y: {{ min: 0, max: 100, ticks: {{ color: '#888' }}, grid: {{ color: '#333' }}, title: {{ display: true, text: 'Hit Rate %', color: '#888' }} }}
+                    }}
+                }}
+            }} : {{
+                type: 'bar',
+                data: {{
+                    labels: labels,
+                    datasets: [
+                        {{
+                            label: 'Cache Hits',
+                            data: cacheReads,
+                            backgroundColor: 'rgba(74, 222, 128, 0.8)'
+                        }},
+                        {{
+                            label: 'Cache Misses',
+                            data: cacheCreates,
+                            backgroundColor: 'rgba(248, 113, 113, 0.8)'
+                        }}
+                    ]
+                }},
+                options: {{
+                    responsive: true,
+                    plugins: {{ legend: {{ labels: {{ color: '#888' }} }} }},
+                    scales: {{
+                        x: {{ stacked: true, ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }},
+                        y: {{ stacked: true, ticks: {{ color: '#888' }}, grid: {{ color: '#333' }}, title: {{ display: true, text: 'Tokens', color: '#888' }} }}
+                    }}
+                }}
+            }};
+
+            chart = new Chart(ctx, config);
+        }}
+
+        function switchView() {{
+            createChart(document.getElementById('viewSelect').value);
+        }}
+
+        createChart('hitrate');
+    </script>
+</body>
+</html>"""
+
+    path = CHARTS_DIR / "cache_efficiency.html"
+    path.write_text(html, encoding='utf-8')
+    print(f"✅ Cache efficiency chart generated: {path}")
+    return path
+
+
 def chart_session_comparison():
     """Compare metrics across sessions."""
     if not TELEMETRY_FILE.exists():
@@ -2285,6 +2507,12 @@ def generate_dashboard():
                 <p>Failed and blocked tool calls</p>
                 <a href="blocked_tools.html" class="chart-link">View Chart →</a>
             </div>
+
+            <div class="chart-card">
+                <h2>📊 Cache Efficiency</h2>
+                <p>Cache hit rate and savings</p>
+                <a href="cache_efficiency.html" class="chart-link">View Chart →</a>
+            </div>
         </div>
 
         <div class="section-title">Trend Analysis</div>
@@ -2297,7 +2525,7 @@ def generate_dashboard():
 
             <div class="chart-card">
                 <h2>💰 Token Trend</h2>
-                <p>Estimated tokens over time (daily/hourly)</p>
+                <p>Actual token usage with efficiency overlay</p>
                 <a href="token_trend.html" class="chart-link">View Chart →</a>
             </div>
 
@@ -2430,6 +2658,9 @@ def main():
     elif cmd == "blocked-tools":
         chart_blocked_tools()
 
+    elif cmd == "cache":
+        chart_cache_efficiency()
+
     elif cmd == "dashboard":
         # Generate all charts
         print("Generating charts...")
@@ -2442,6 +2673,7 @@ def main():
         chart_token_efficiency()
         chart_session_comparison()
         chart_blocked_tools()
+        chart_cache_efficiency()
         # Trend charts
         chart_efficiency_trend()
         chart_token_trend()
@@ -2460,6 +2692,7 @@ def main():
         chart_token_efficiency()
         chart_session_comparison()
         chart_blocked_tools()
+        chart_cache_efficiency()
         # Trend charts
         chart_efficiency_trend()
         chart_token_trend()
