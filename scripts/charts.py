@@ -1960,10 +1960,10 @@ def chart_cache_efficiency():
     <div class="stats">
         <div class="stat">
             <div class="stat-value">{sum(cache_reads)/1_000_000_000:.2f}B</div>
-            <div class="stat-label">Tokens Saved (Cache Hits)</div>
+            <div class="stat-label">Cache Hits</div>
         </div>
         <div class="stat">
-            <div class="stat-value">{sum(cache_creates)/1_000_000:.1f}M</div>
+            <div class="stat-value">{sum(cache_creates)/1_000_000:.0f}M</div>
             <div class="stat-label">Cache Misses</div>
         </div>
         <div class="stat">
@@ -1971,8 +1971,8 @@ def chart_cache_efficiency():
             <div class="stat-label">Hit Rate</div>
         </div>
         <div class="stat">
-            <div class="stat-value">${round(sum(cache_reads) * 0.0000087, 2):,.2f}</div>
-            <div class="stat-label">Est. Savings (blended)</div>
+            <div class="stat-value">{(sum(cache_reads)+sum(cache_creates))/1_000_000_000:.1f}B</div>
+            <div class="stat-label">Total Context</div>
         </div>
     </div>
 
