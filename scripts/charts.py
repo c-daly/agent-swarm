@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
 """
-Generate visual charts from agent-swarm metrics.
+Generate visual charts from agent-swarm telemetry.
 
 Usage:
-    python3 charts.py efficiency          # Efficiency score over time
-    python3 charts.py script-adoption     # Script adoption trend
+    python3 charts.py dashboard           # All charts dashboard
+    python3 charts.py telemetry           # Real-time telemetry stats
     python3 charts.py tool-usage          # Tool usage breakdown
-    python3 charts.py blocks              # Block reasons pie chart
+    python3 charts.py token-trend         # Token usage over time
+    python3 charts.py efficiency          # Success rate trend
     python3 charts.py subagents           # Subagent token usage
-    python3 charts.py dashboard           # All charts in one HTML page
+    python3 charts.py latency             # Tool call latency
+    python3 charts.py errors              # Error timeline
+    python3 charts.py heatmap             # Activity by hour
+    python3 charts.py native-vs-mcp       # Backend comparison
+    python3 charts.py token-efficiency    # Tokens per call
+    python3 charts.py blocked-tools       # Failed/blocked tools
 
 Output: HTML files with interactive charts (opens in browser)
+All times displayed in EST.
 """
 
 import json
@@ -24,6 +31,7 @@ CHARTS_DIR = STATE_DIR / "charts"
 HISTORY_FILE = STATE_DIR / "metrics_history.json"
 ACTIVITY_LOG = STATE_DIR / "activity.log"
 SUBAGENT_METRICS = STATE_DIR / "subagent_metrics.json"
+TELEMETRY_FILE = STATE_DIR / "telemetry.json"
 
 def ensure_charts_dir():
     """Create charts directory if needed."""
@@ -56,17 +64,22 @@ def save_snapshot(metrics_data):
 
 def generate_html_chart(title, chart_type, data, labels, output_file, options=None):
     """Generate standalone HTML with Chart.js."""
+    from datetime import timedelta, timezone
+
+    # EST timezone offset (UTC-5)
+    EST = timezone(timedelta(hours=-5))
+    now_est = datetime.now(EST)
 
     if options is None:
         options = {}
 
-    # Prepare data for Chart.js
+    # Prepare data for Chart.js (using dark theme colors)
     if chart_type == "line":
         datasets = [{
             "label": data.get("label", "Value"),
             "data": data.get("values", []),
-            "borderColor": "rgb(75, 192, 192)",
-            "backgroundColor": "rgba(75, 192, 192, 0.2)",
+            "borderColor": "#4cc9f0",
+            "backgroundColor": "rgba(76, 201, 240, 0.2)",
             "tension": 0.1
         }]
     elif chart_type == "bar":
@@ -74,25 +87,25 @@ def generate_html_chart(title, chart_type, data, labels, output_file, options=No
             "label": data.get("label", "Value"),
             "data": data.get("values", []),
             "backgroundColor": [
-                "rgba(255, 99, 132, 0.5)",
-                "rgba(54, 162, 235, 0.5)",
-                "rgba(255, 206, 86, 0.5)",
-                "rgba(75, 192, 192, 0.5)",
-                "rgba(153, 102, 255, 0.5)",
-                "rgba(255, 159, 64, 0.5)"
+                "rgba(76, 201, 240, 0.6)",
+                "rgba(16, 185, 129, 0.6)",
+                "rgba(251, 191, 36, 0.6)",
+                "rgba(248, 113, 113, 0.6)",
+                "rgba(167, 139, 250, 0.6)",
+                "rgba(251, 146, 60, 0.6)"
             ][:len(data.get("values", []))]
         }]
     elif chart_type == "pie":
         datasets = [{
             "data": data.get("values", []),
             "backgroundColor": [
-                "rgba(255, 99, 132, 0.8)",
-                "rgba(54, 162, 235, 0.8)",
-                "rgba(255, 206, 86, 0.8)",
-                "rgba(75, 192, 192, 0.8)",
-                "rgba(153, 102, 255, 0.8)",
-                "rgba(255, 159, 64, 0.8)",
-                "rgba(201, 203, 207, 0.8)"
+                "rgba(76, 201, 240, 0.8)",
+                "rgba(16, 185, 129, 0.8)",
+                "rgba(251, 191, 36, 0.8)",
+                "rgba(248, 113, 113, 0.8)",
+                "rgba(167, 139, 250, 0.8)",
+                "rgba(251, 146, 60, 0.8)",
+                "rgba(156, 163, 175, 0.8)"
             ][:len(data.get("values", []))]
         }]
 
@@ -100,6 +113,14 @@ def generate_html_chart(title, chart_type, data, labels, output_file, options=No
         "labels": labels,
         "datasets": datasets
     }
+
+    # Default scales for dark theme
+    default_scales = {
+        "y": {"ticks": {"color": "#888"}, "grid": {"color": "#333"}},
+        "x": {"ticks": {"color": "#888"}, "grid": {"color": "#333"}}
+    }
+    scales_json = json.dumps(options.get('scales', default_scales)) if chart_type != "pie" else ""
+    scales_section = f", scales: {scales_json}" if scales_json else ""
 
     html = f"""<!DOCTYPE html>
 <html>
@@ -111,22 +132,23 @@ def generate_html_chart(title, chart_type, data, labels, output_file, options=No
         body {{
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             padding: 40px;
-            background: #f5f5f5;
+            background: #1a1a2e;
+            color: #eee;
         }}
         .container {{
             max-width: 1200px;
             margin: 0 auto;
-            background: white;
+            background: #16213e;
             padding: 30px;
             border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            border: 1px solid #333;
         }}
         h1 {{
-            color: #333;
+            color: #4cc9f0;
             margin-bottom: 10px;
         }}
         .timestamp {{
-            color: #666;
+            color: #888;
             font-size: 14px;
             margin-bottom: 30px;
         }}
@@ -136,7 +158,7 @@ def generate_html_chart(title, chart_type, data, labels, output_file, options=No
         .back-link {{
             display: inline-block;
             margin-top: 20px;
-            color: #0066cc;
+            color: #4cc9f0;
             text-decoration: none;
         }}
         .back-link:hover {{
@@ -147,7 +169,7 @@ def generate_html_chart(title, chart_type, data, labels, output_file, options=No
 <body>
     <div class="container">
         <h1>{title}</h1>
-        <div class="timestamp">Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
+        <div class="timestamp">Generated: {now_est.strftime("%Y-%m-%d %H:%M:%S")} EST</div>
         <canvas id="chart"></canvas>
         <a href="dashboard.html" class="back-link">← Back to Dashboard</a>
     </div>
@@ -163,11 +185,12 @@ def generate_html_chart(title, chart_type, data, labels, output_file, options=No
                 plugins: {{
                     legend: {{
                         position: 'top',
+                        labels: {{ color: '#888' }}
                     }},
                     title: {{
                         display: false
                     }}
-                }}{(',' + 'scales:' + json.dumps(options.get('scales', {}))) if 'scales' in options else ''}
+                }}{scales_section}
             }}
         }});
     </script>
@@ -179,36 +202,72 @@ def generate_html_chart(title, chart_type, data, labels, output_file, options=No
     return output_path
 
 def chart_efficiency_trend():
-    """Chart efficiency score over time with daily/session view toggle."""
-    history = load_history()
+    """Chart success rate trend over time with daily/hourly view toggle (uses telemetry.json)."""
+    from datetime import datetime, timedelta, timezone
+    from collections import defaultdict
 
-    if len(history["snapshots"]) < 2:
-        print("⚠️  Need at least 2 snapshots for trend chart")
-        print("   Run: python3 metrics.py report  (to capture current state)")
+    # EST timezone offset (UTC-5)
+    EST = timezone(timedelta(hours=-5))
+
+    if not TELEMETRY_FILE.exists():
+        print("⚠️  No telemetry data found")
         return None
 
-    # Prepare session view
-    session_labels = []
-    session_scores = []
+    telemetry = json.loads(TELEMETRY_FILE.read_text())
+    events = telemetry.get("events", [])
 
-    for snapshot in history["snapshots"]:
-        session_labels.append(snapshot["date"])
-        session_scores.append(snapshot["metrics"].get("efficiency_score", 0))
+    if len(events) < 2:
+        print("⚠️  Need at least 2 events for trend chart")
+        return None
 
-    # Prepare daily view (average by date)
-    from collections import defaultdict
-    daily_data = defaultdict(list)
-    
-    for snapshot in history["snapshots"]:
-        full_date = snapshot.get("date", "Unknown")
-        date_only = full_date.split()[0] if " " in full_date else full_date
-        score = snapshot["metrics"].get("efficiency_score", 0)
-        daily_data[date_only].append(score)
-    
-    # Average scores per day
-    sorted_daily = sorted(daily_data.items())
+    # Parse event timestamp and convert to EST
+    def parse_event_time(event):
+        try:
+            ts = event.get("ts", "")
+            if ts:
+                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                return dt.astimezone(EST)
+        except:
+            pass
+        return None
+
+    # Aggregate success rate by day
+    daily_counts = defaultdict(lambda: {"success": 0, "total": 0})
+    for event in events:
+        dt = parse_event_time(event)
+        if dt:
+            date_str = dt.strftime("%Y-%m-%d")
+            daily_counts[date_str]["total"] += 1
+            if event.get("status") != "error":
+                daily_counts[date_str]["success"] += 1
+
+    # Aggregate success rate by hour (for recent view)
+    hourly_counts = defaultdict(lambda: {"success": 0, "total": 0})
+    for event in events:
+        dt = parse_event_time(event)
+        if dt:
+            hour_str = dt.strftime("%Y-%m-%d %H:00")
+            hourly_counts[hour_str]["total"] += 1
+            if event.get("status") != "error":
+                hourly_counts[hour_str]["success"] += 1
+
+    # Calculate success rates
+    sorted_daily = sorted(daily_counts.items())
     daily_labels = [date for date, _ in sorted_daily]
-    daily_scores = [sum(scores) / len(scores) for _, scores in sorted_daily]
+    daily_scores = [
+        (data["success"] / data["total"] * 100) if data["total"] > 0 else 100
+        for _, data in sorted_daily
+    ]
+
+    sorted_hourly = sorted(hourly_counts.items())[-48:]  # Last 48 hours
+    hourly_labels = [hour for hour, _ in sorted_hourly]
+    hourly_scores = [
+        (data["success"] / data["total"] * 100) if data["total"] > 0 else 100
+        for _, data in sorted_hourly
+    ]
+
+    # Current time in EST for display
+    now = datetime.now(EST)
 
     # Generate HTML with dropdown
     html = f"""<!DOCTYPE html>
@@ -221,18 +280,19 @@ def chart_efficiency_trend():
         body {{
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             padding: 40px;
-            background: #f5f5f5;
+            background: #1a1a2e;
+            color: #eee;
         }}
         .container {{
             max-width: 1200px;
             margin: 0 auto;
-            background: white;
+            background: #16213e;
             padding: 30px;
             border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            border: 1px solid #333;
         }}
         h1 {{
-            color: #333;
+            color: #4cc9f0;
             margin-bottom: 10px;
         }}
         .controls {{
@@ -243,18 +303,19 @@ def chart_efficiency_trend():
         }}
         .controls label {{
             font-weight: 600;
-            color: #555;
+            color: #888;
         }}
         .controls select {{
             padding: 8px 12px;
-            border: 1px solid #ddd;
+            border: 1px solid #333;
             border-radius: 4px;
             font-size: 14px;
-            background: white;
+            background: #0f0f1e;
+            color: #eee;
             cursor: pointer;
         }}
         .timestamp {{
-            color: #666;
+            color: #888;
             font-size: 14px;
             margin-bottom: 20px;
         }}
@@ -264,7 +325,7 @@ def chart_efficiency_trend():
         .back-link {{
             display: inline-block;
             margin-top: 20px;
-            color: #0066cc;
+            color: #4cc9f0;
             text-decoration: none;
         }}
         .back-link:hover {{
@@ -274,17 +335,17 @@ def chart_efficiency_trend():
 </head>
 <body>
     <div class="container">
-        <h1>Efficiency Score Trend</h1>
-        <div class="timestamp">Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
-        
+        <h1>📈 Success Rate Trend</h1>
+        <div class="timestamp">Generated: {now.strftime("%Y-%m-%d %H:%M:%S")} EST</div>
+
         <div class="controls">
             <label for="viewSelect">View:</label>
             <select id="viewSelect" onchange="switchView()">
                 <option value="daily">Daily Average</option>
-                <option value="session">Per Session</option>
+                <option value="hourly">Hourly (Last 48h)</option>
             </select>
         </div>
-        
+
         <canvas id="chart"></canvas>
         <a href="dashboard.html" class="back-link">← Back to Dashboard</a>
     </div>
@@ -293,22 +354,22 @@ def chart_efficiency_trend():
         const dailyData = {{
             labels: {json.dumps(daily_labels)},
             datasets: [{{
-                label: 'Efficiency Score (Daily Avg)',
+                label: 'Success Rate % (Daily)',
                 data: {json.dumps(daily_scores)},
-                borderColor: 'rgb(75, 192, 192)',
-                backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                borderColor: '#4cc9f0',
+                backgroundColor: 'rgba(76, 201, 240, 0.2)',
                 tension: 0.1,
                 fill: true
             }}]
         }};
 
-        const sessionData = {{
-            labels: {json.dumps(session_labels)},
+        const hourlyData = {{
+            labels: {json.dumps(hourly_labels)},
             datasets: [{{
-                label: 'Efficiency Score (Per Session)',
-                data: {json.dumps(session_scores)},
-                borderColor: 'rgb(54, 162, 235)',
-                backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                label: 'Success Rate % (Hourly)',
+                data: {json.dumps(hourly_scores)},
+                borderColor: '#10b981',
+                backgroundColor: 'rgba(16, 185, 129, 0.2)',
                 tension: 0.1,
                 fill: true
             }}]
@@ -324,6 +385,7 @@ def chart_efficiency_trend():
                 plugins: {{
                     legend: {{
                         position: 'top',
+                        labels: {{ color: '#888' }}
                     }},
                     title: {{
                         display: false
@@ -332,7 +394,13 @@ def chart_efficiency_trend():
                 scales: {{
                     y: {{
                         beginAtZero: true,
-                        max: 100
+                        max: 100,
+                        ticks: {{ color: '#888' }},
+                        grid: {{ color: '#333' }}
+                    }},
+                    x: {{
+                        ticks: {{ color: '#888' }},
+                        grid: {{ color: '#333' }}
                     }}
                 }}
             }}
@@ -340,7 +408,7 @@ def chart_efficiency_trend():
 
         function switchView() {{
             const view = document.getElementById('viewSelect').value;
-            chart.data = view === 'daily' ? dailyData : sessionData;
+            chart.data = view === 'daily' ? dailyData : hourlyData;
             chart.update();
         }}
     </script>
@@ -354,249 +422,77 @@ def chart_efficiency_trend():
     return output_path
 
 def chart_script_adoption():
-    """Chart script adoption over time with daily/session view toggle."""
-    history = load_history()
+    """DEPRECATED: Script adoption tracking not available in telemetry.json.
 
-    if len(history["snapshots"]) < 2:
-        print("⚠️  Need at least 2 snapshots for trend chart")
-        return None
-
-    # Prepare session view
-    session_labels = []
-    session_rates = []
-
-    for snapshot in history["snapshots"]:
-        session_labels.append(snapshot["date"])
-        metrics = snapshot["metrics"]
-
-        script_calls = metrics.get("script_calls", 0)
-        direct_reads = metrics.get("tools_by_type", {}).get("Read", 0)
-        total = script_calls + direct_reads
-
-        if total > 0:
-            rate = (script_calls / total) * 100
-        else:
-            rate = 0
-
-        session_rates.append(rate)
-
-    # Prepare daily view (aggregate by date)
-    from collections import defaultdict
-    daily_scripts = defaultdict(int)
-    daily_reads = defaultdict(int)
-    
-    for snapshot in history["snapshots"]:
-        full_date = snapshot.get("date", "Unknown")
-        date_only = full_date.split()[0] if " " in full_date else full_date
-        
-        metrics = snapshot["metrics"]
-        daily_scripts[date_only] += metrics.get("script_calls", 0)
-        daily_reads[date_only] += metrics.get("tools_by_type", {}).get("Read", 0)
-    
-    # Calculate daily adoption rates
-    sorted_daily = sorted(daily_scripts.keys())
-    daily_labels = sorted_daily
-    daily_rates = []
-    for date in sorted_daily:
-        scripts = daily_scripts[date]
-        reads = daily_reads[date]
-        total = scripts + reads
-        rate = (scripts / total * 100) if total > 0 else 0
-        daily_rates.append(rate)
-
-    # Generate HTML with dropdown
-    html = f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>Script Adoption Trend</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            padding: 40px;
-            background: #f5f5f5;
-        }}
-        .container {{
-            max-width: 1200px;
-            margin: 0 auto;
-            background: white;
-            padding: 30px;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        }}
-        h1 {{
-            color: #333;
-            margin-bottom: 10px;
-        }}
-        .controls {{
-            margin-bottom: 20px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }}
-        .controls label {{
-            font-weight: 600;
-            color: #555;
-        }}
-        .controls select {{
-            padding: 8px 12px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            font-size: 14px;
-            background: white;
-            cursor: pointer;
-        }}
-        .timestamp {{
-            color: #666;
-            font-size: 14px;
-            margin-bottom: 20px;
-        }}
-        canvas {{
-            max-height: 500px;
-        }}
-        .back-link {{
-            display: inline-block;
-            margin-top: 20px;
-            color: #0066cc;
-            text-decoration: none;
-        }}
-        .back-link:hover {{
-            text-decoration: underline;
-        }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Script Adoption Trend</h1>
-        <div class="timestamp">Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
-        
-        <div class="controls">
-            <label for="viewSelect">View:</label>
-            <select id="viewSelect" onchange="switchView()">
-                <option value="daily">Daily Totals</option>
-                <option value="session">Per Session</option>
-            </select>
-        </div>
-        
-        <canvas id="chart"></canvas>
-        <a href="dashboard.html" class="back-link">← Back to Dashboard</a>
-    </div>
-
-    <script>
-        const dailyData = {{
-            labels: {json.dumps(daily_labels)},
-            datasets: [{{
-                label: 'Script Adoption % (Daily)',
-                data: {json.dumps(daily_rates)},
-                borderColor: 'rgb(75, 192, 192)',
-                backgroundColor: 'rgba(75, 192, 192, 0.2)',
-                tension: 0.1,
-                fill: true
-            }}]
-        }};
-
-        const sessionData = {{
-            labels: {json.dumps(session_labels)},
-            datasets: [{{
-                label: 'Script Adoption % (Per Session)',
-                data: {json.dumps(session_rates)},
-                borderColor: 'rgb(54, 162, 235)',
-                backgroundColor: 'rgba(54, 162, 235, 0.2)',
-                tension: 0.1,
-                fill: true
-            }}]
-        }};
-
-        const ctx = document.getElementById('chart').getContext('2d');
-        let chart = new Chart(ctx, {{
-            type: 'line',
-            data: dailyData,
-            options: {{
-                responsive: true,
-                maintainAspectRatio: true,
-                plugins: {{
-                    legend: {{
-                        position: 'top',
-                    }},
-                    title: {{
-                        display: false
-                    }}
-                }},
-                scales: {{
-                    y: {{
-                        beginAtZero: true,
-                        max: 100
-                    }}
-                }}
-            }}
-        }});
-
-        function switchView() {{
-            const view = document.getElementById('viewSelect').value;
-            chart.data = view === 'daily' ? dailyData : sessionData;
-            chart.update();
-        }}
-    </script>
-</body>
-</html>"""
-
-    output_path = CHARTS_DIR / "script_adoption.html"
-    output_path.write_text(html, encoding='utf-8')
-    
-    print(f"✅ Chart generated: {output_path}")
-    return output_path
+    The new telemetry system tracks tool calls but not script usage patterns.
+    Use chart_tool_usage() or chart_native_vs_mcp() instead.
+    """
+    print("⚠️  chart_script_adoption is DEPRECATED")
+    print("   Script usage tracking is not available in the new telemetry system.")
+    print("   Use these alternatives:")
+    print("     - tool-usage: See tool call breakdown")
+    print("     - native-vs-mcp: Compare native vs MCP tools")
+    return None
 
 def chart_tool_usage():
-    """Chart tool usage breakdown with time range filtering."""
-    from datetime import datetime, timedelta
+    """Chart tool usage breakdown with time range filtering (uses telemetry.json)."""
+    from datetime import datetime, timedelta, timezone
     from collections import defaultdict
 
-    history = load_history()
-    snapshots = history.get("snapshots", [])
+    # EST timezone offset (UTC-5)
+    EST = timezone(timedelta(hours=-5))
 
-    if len(snapshots) < 1:
-        print("⚠️  Need at least 1 snapshot for chart")
+    if not TELEMETRY_FILE.exists():
+        print("⚠️  No telemetry data found")
         return None
 
-    # Helper to aggregate tool usage for a time range
-    def aggregate_tools(snapshots_subset):
+    telemetry = json.loads(TELEMETRY_FILE.read_text())
+    events = telemetry.get("events", [])
+    aggregates = telemetry.get("aggregates", {})
+
+    if not events and not aggregates.get("by_tool"):
+        print("⚠️  No tool usage data found")
+        return None
+
+    # Helper to aggregate tool usage from events
+    def aggregate_tools_from_events(events_subset):
         aggregated = defaultdict(int)
-        for snapshot in snapshots_subset:
-            snapshot_tools = snapshot.get("metrics", {}).get("tools_by_type", {})
-            for tool, count in snapshot_tools.items():
-                aggregated[tool] += count
+        for event in events_subset:
+            tool = event.get("tool", "unknown")
+            aggregated[tool] += 1
         return aggregated
 
-    # Parse dates and filter snapshots
-    now = datetime.now()
+    # Parse event timestamp (ISO format in UTC, convert to EST)
+    def parse_event_time(event):
+        try:
+            ts = event.get("ts", "")
+            if ts:
+                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                return dt.astimezone(EST)
+        except:
+            pass
+        return None
+
+    # Current time in EST
+    now = datetime.now(EST)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_ago = now - timedelta(days=7)
     month_ago = now - timedelta(days=30)
 
-    def parse_snapshot_date(snapshot):
-        try:
-            date_str = snapshot.get("timestamp") or snapshot.get("date", "")
-            if "T" in date_str:  # ISO format
-                return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-            else:  # "YYYY-MM-DD HH:MM" format
-                return datetime.strptime(date_str, "%Y-%m-%d %H:%M")
-        except:
-            return None
-
-    # Filter snapshots by time range
-    session_snapshots = snapshots[-1:] if snapshots else []
-    today_snapshots = [s for s in snapshots if parse_snapshot_date(s) and parse_snapshot_date(s) >= today_start]
-    week_snapshots = [s for s in snapshots if parse_snapshot_date(s) and parse_snapshot_date(s) >= week_ago]
-    month_snapshots = [s for s in snapshots if parse_snapshot_date(s) and parse_snapshot_date(s) >= month_ago]
-    all_snapshots = snapshots
+    # Filter events by time range
+    session_events = events[-50:] if events else []  # Last 50 events as "session"
+    today_events = [e for e in events if parse_event_time(e) and parse_event_time(e) >= today_start]
+    week_events = [e for e in events if parse_event_time(e) and parse_event_time(e) >= week_ago]
+    month_events = [e for e in events if parse_event_time(e) and parse_event_time(e) >= month_ago]
 
     # Aggregate for each time range
-    session_tools = aggregate_tools(session_snapshots)
-    today_tools = aggregate_tools(today_snapshots)
-    week_tools = aggregate_tools(week_snapshots)
-    month_tools = aggregate_tools(month_snapshots)
-    all_tools = aggregate_tools(all_snapshots)
+    session_tools = aggregate_tools_from_events(session_events)
+    today_tools = aggregate_tools_from_events(today_events)
+    week_tools = aggregate_tools_from_events(week_events)
+    month_tools = aggregate_tools_from_events(month_events)
+
+    # For all-time, use aggregates (includes data beyond the 500-event window)
+    all_tools = {tool: data.get("count", 0) for tool, data in aggregates.get("by_tool", {}).items()}
 
     # Prepare sorted top 10 for each view
     def get_top_10(tools_dict):
@@ -622,18 +518,19 @@ def chart_tool_usage():
         body {{
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             padding: 40px;
-            background: #f5f5f5;
+            background: #1a1a2e;
+            color: #eee;
         }}
         .container {{
             max-width: 1200px;
             margin: 0 auto;
-            background: white;
+            background: #16213e;
             padding: 30px;
             border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            border: 1px solid #333;
         }}
         h1 {{
-            color: #333;
+            color: #4cc9f0;
             margin-bottom: 10px;
         }}
         .controls {{
@@ -644,18 +541,19 @@ def chart_tool_usage():
         }}
         .controls label {{
             font-weight: 600;
-            color: #555;
+            color: #888;
         }}
         .controls select {{
             padding: 8px 12px;
-            border: 1px solid #ddd;
+            border: 1px solid #333;
             border-radius: 4px;
             font-size: 14px;
-            background: white;
+            background: #0f0f1e;
+            color: #eee;
             cursor: pointer;
         }}
         .timestamp {{
-            color: #666;
+            color: #888;
             font-size: 14px;
             margin-bottom: 20px;
         }}
@@ -665,7 +563,7 @@ def chart_tool_usage():
         .back-link {{
             display: inline-block;
             margin-top: 20px;
-            color: #0066cc;
+            color: #4cc9f0;
             text-decoration: none;
         }}
         .back-link:hover {{
@@ -675,8 +573,8 @@ def chart_tool_usage():
 </head>
 <body>
     <div class="container">
-        <h1>Tool Usage Breakdown</h1>
-        <div class="timestamp">Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
+        <h1>🔧 Tool Usage Breakdown</h1>
+        <div class="timestamp">Generated: {now.strftime("%Y-%m-%d %H:%M:%S")} EST</div>
 
         <div class="controls">
             <label for="viewSelect">Time Range:</label>
@@ -695,16 +593,16 @@ def chart_tool_usage():
 
     <script>
         const colors = [
-            'rgba(255, 99, 132, 0.5)',
-            'rgba(54, 162, 235, 0.5)',
-            'rgba(255, 206, 86, 0.5)',
-            'rgba(75, 192, 192, 0.5)',
-            'rgba(153, 102, 255, 0.5)',
-            'rgba(255, 159, 64, 0.5)',
-            'rgba(201, 203, 207, 0.5)',
-            'rgba(255, 99, 71, 0.5)',
-            'rgba(60, 179, 113, 0.5)',
-            'rgba(123, 104, 238, 0.5)'
+            'rgba(76, 201, 240, 0.6)',
+            'rgba(16, 185, 129, 0.6)',
+            'rgba(251, 191, 36, 0.6)',
+            'rgba(248, 113, 113, 0.6)',
+            'rgba(167, 139, 250, 0.6)',
+            'rgba(251, 146, 60, 0.6)',
+            'rgba(156, 163, 175, 0.6)',
+            'rgba(236, 72, 153, 0.6)',
+            'rgba(34, 211, 238, 0.6)',
+            'rgba(163, 230, 53, 0.6)'
         ];
 
         const sessionData = {{
@@ -762,6 +660,7 @@ def chart_tool_usage():
                 plugins: {{
                     legend: {{
                         position: 'top',
+                        labels: {{ color: '#888' }}
                     }},
                     title: {{
                         display: false
@@ -769,7 +668,13 @@ def chart_tool_usage():
                 }},
                 scales: {{
                     y: {{
-                        beginAtZero: true
+                        beginAtZero: true,
+                        ticks: {{ color: '#888' }},
+                        grid: {{ color: '#333' }}
+                    }},
+                    x: {{
+                        ticks: {{ color: '#888' }},
+                        grid: {{ color: '#333' }}
                     }}
                 }}
             }}
@@ -798,388 +703,79 @@ def chart_tool_usage():
     return output_path
 
 def chart_blocks():
-    """Chart block reasons pie chart."""
-    from metrics import analyze_activity_log
-    metrics = analyze_activity_log()
+    """DEPRECATED: Replaced by chart_blocked_tools() which uses telemetry.json.
 
-    blocks = metrics.get("blocks_by_reason", {})
-
-    if not blocks:
-        print("⚠️  No block data found")
-        return None
-
-    # Top 6 reasons
-    sorted_blocks = sorted(blocks.items(), key=lambda x: -x[1])[:6]
-
-    labels = [reason for reason, _ in sorted_blocks]
-    values = [count for _, count in sorted_blocks]
-
-    data = {
-        "values": values
-    }
-
-    path = generate_html_chart(
-        "Block Reasons Distribution",
-        "pie",
-        data,
-        labels,
-        "blocks.html"
-    )
-
-    print(f"✅ Chart generated: {path}")
-    return path
+    The new telemetry system tracks errors/blocks per tool directly.
+    Use chart_blocked_tools() for the equivalent functionality.
+    """
+    print("⚠️  chart_blocks is DEPRECATED")
+    print("   Use 'blocked-tools' instead, which uses telemetry.json")
+    return None
 
 def chart_token_impact():
-    """Chart actionable token impact metrics with recommendations."""
-    from datetime import datetime
-    
-    # Get token impact analysis
-    from metrics import analyze_activity_log, calculate_token_impact
-    log_metrics = analyze_activity_log()
-    impact = calculate_token_impact(log_metrics)
-    
-    impact_score = impact["impact_score"]
-    data_volume = impact["data_volume"]
-    efficiency = impact["efficiency"]
-    recommendations = impact["recommendations"]
-    
-    # Determine impact level and color
-    if impact_score >= 50:
-        level = "HIGH"
-        color = "#dc3545"
-        emoji = "🔴"
-    elif impact_score >= 25:
-        level = "MEDIUM"
-        color = "#ffc107"
-        emoji = "🟡"
-    else:
-        level = "LOW"
-        color = "#28a745"
-        emoji = "🟢"
-    
-    # Build recommendations HTML
-    rec_html = ""
-    for rec in recommendations:
-        priority = rec["priority"]
-        icon = {"HIGH": "🔴", "MEDIUM": "🟡", "INFO": "ℹ️", "SUCCESS": "✅"}.get(priority, "•")
-        issue = rec["issue"]
-        action = rec["action"]
-        
-        rec_html += f"""
-            <div class="recommendation {priority.lower()}">
-                <div class="rec-header">{icon} {issue}</div>
-                <div class="rec-action">→ {action}</div>
-            </div>
-        """
-    
-    html = f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>Token Impact Analysis</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            padding: 40px;
-            background: #f5f5f5;
-        }}
-        .container {{
-            max-width: 1200px;
-            margin: 0 auto;
-            background: white;
-            padding: 30px;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        }}
-        h1 {{
-            color: #333;
-            margin-bottom: 10px;
-        }}
-        .timestamp {{
-            color: #666;
-            font-size: 14px;
-            margin-bottom: 20px;
-        }}
-        .grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 20px;
-            margin: 20px 0;
-        }}
-        .metric-card {{
-            background: #f8f9fa;
-            padding: 20px;
-            border-radius: 8px;
-            border-left: 4px solid #0066cc;
-        }}
-        .metric-card h3 {{
-            margin: 0 0 10px 0;
-            font-size: 14px;
-            color: #666;
-            text-transform: uppercase;
-        }}
-        .metric-value {{
-            font-size: 28px;
-            font-weight: bold;
-            color: #333;
-        }}
-        .gauge-container {{
-            text-align: center;
-            margin: 30px 0;
-        }}
-        .gauge {{
-            width: 200px;
-            height: 200px;
-            margin: 0 auto;
-        }}
-        .impact-level {{
-            font-size: 24px;
-            font-weight: bold;
-            margin-top: 10px;
-        }}
-        .recommendations {{
-            margin-top: 30px;
-        }}
-        .recommendations h2 {{
-            color: #333;
-            margin-bottom: 15px;
-        }}
-        .recommendation {{
-            background: #f8f9fa;
-            padding: 15px;
-            border-radius: 6px;
-            margin-bottom: 10px;
-            border-left: 4px solid #ccc;
-        }}
-        .recommendation.high {{
-            border-left-color: #dc3545;
-            background: #fff5f5;
-        }}
-        .recommendation.medium {{
-            border-left-color: #ffc107;
-            background: #fffef5;
-        }}
-        .recommendation.info {{
-            border-left-color: #17a2b8;
-            background: #f5feff;
-        }}
-        .recommendation.success {{
-            border-left-color: #28a745;
-            background: #f5fff8;
-        }}
-        .rec-header {{
-            font-weight: 600;
-            margin-bottom: 5px;
-            color: #333;
-        }}
-        .rec-action {{
-            color: #555;
-            font-size: 14px;
-            margin-left: 20px;
-        }}
-        .back-link {{
-            display: inline-block;
-            margin-top: 20px;
-            color: #0066cc;
-            text-decoration: none;
-        }}
-        .back-link:hover {{
-            text-decoration: underline;
-        }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🎯 Token Impact Analysis</h1>
-        <div class="timestamp">Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
-        
-        <div class="gauge-container">
-            <canvas id="gauge" class="gauge"></canvas>
-            <div class="impact-level" style="color: {color};">
-                {emoji} {level} IMPACT ({impact_score:.0f}/100)
-            </div>
-            <p style="color: #666; margin-top: 10px;">
-                {level} optimization potential detected
-            </p>
-        </div>
-        
-        <h2 style="margin-top: 30px;">📊 Data Volume</h2>
-        <div class="grid">
-            <div class="metric-card">
-                <h3>Total Reads</h3>
-                <div class="metric-value">{data_volume['total_reads']}</div>
-            </div>
-            <div class="metric-card">
-                <h3>Estimated Lines</h3>
-                <div class="metric-value">{data_volume['estimated_lines']:,}</div>
-            </div>
-            <div class="metric-card">
-                <h3>Searches</h3>
-                <div class="metric-value">{data_volume['searches']}</div>
-            </div>
-        </div>
-        
-        <h2 style="margin-top: 30px;">⚡ Efficiency Metrics</h2>
-        <div class="grid">
-            <div class="metric-card">
-                <h3>Duplicate Rate</h3>
-                <div class="metric-value">{efficiency['duplicate_rate']:.1f}%</div>
-            </div>
-            <div class="metric-card">
-                <h3>Script Adoption</h3>
-                <div class="metric-value">{efficiency['script_adoption']:.1f}%</div>
-            </div>
-            <div class="metric-card">
-                <h3>Direct Reads</h3>
-                <div class="metric-value">{efficiency['direct_reads']}</div>
-            </div>
-            <div class="metric-card">
-                <h3>Script Calls</h3>
-                <div class="metric-value">{efficiency['script_calls']}</div>
-            </div>
-            <div class="metric-card">
-                <h3>Subagents</h3>
-                <div class="metric-value">{efficiency['subagent_count']}</div>
-            </div>
-        </div>
-        
-        <div class="recommendations">
-            <h2>💡 Recommendations</h2>
-            {rec_html if rec_html else '<p style="color: #666;">No recommendations - keep up the good work!</p>'}
-        </div>
-        
-        <a href="dashboard.html" class="back-link">← Back to Dashboard</a>
-    </div>
+    """DEPRECATED: Replaced by telemetry-based charts.
 
-    <script>
-        const ctx = document.getElementById('gauge').getContext('2d');
-        const impactScore = {impact_score:.0f};
-        
-        new Chart(ctx, {{
-            type: 'doughnut',
-            data: {{
-                labels: ['Impact', 'Remaining'],
-                datasets: [{{
-                    data: [impactScore, 100 - impactScore],
-                    backgroundColor: ['{color}', '#e9ecef'],
-                    borderWidth: 0
-                }}]
-            }},
-            options: {{
-                responsive: true,
-                maintainAspectRatio: true,
-                circumference: 180,
-                rotation: 270,
-                cutout: '75%',
-                plugins: {{
-                    legend: {{
-                        display: false
-                    }},
-                    tooltip: {{
-                        enabled: false
-                    }}
-                }}
-            }}
-        }});
-    </script>
-</body>
-</html>"""
+    The new telemetry system provides better token analysis through:
+    - token-efficiency: Tokens per call by tool
+    - native-vs-mcp: Backend comparison
+    - latency: Tool performance
 
-    output_path = CHARTS_DIR / "token_impact.html"
-    output_path.write_text(html, encoding='utf-8')
-    
-    print(f"✅ Chart generated: {output_path}")
-    return output_path
+    Use these alternatives for token impact insights.
+    """
+    print("⚠️  chart_token_impact is DEPRECATED")
+    print("   The new telemetry system provides better alternatives:")
+    print("     - token-efficiency: Tokens per call by tool")
+    print("     - native-vs-mcp: Compare native vs MCP tools")
+    print("     - latency: Tool call durations")
+    return None
 
 def chart_subagents(session_filter=None):
-    """Chart subagent token usage by type (or by individual agent if session filtered)."""
-    if not SUBAGENT_METRICS.exists():
-        print("⚠️  No subagent metrics found")
-        print("   Subagent tracking is automatic via post-tool-tracking.py hook")
-        print("   Spawn some agents and they'll be tracked automatically")
+    """Chart subagent token usage by type (uses telemetry.json)."""
+    from datetime import datetime, timedelta, timezone
+
+    # EST timezone offset (UTC-5)
+    EST = timezone(timedelta(hours=-5))
+
+    if not TELEMETRY_FILE.exists():
+        print("⚠️  No telemetry data found")
         return None
 
-    metrics = json.loads(SUBAGENT_METRICS.read_text())
+    telemetry = json.loads(TELEMETRY_FILE.read_text())
+    subagents = telemetry.get("aggregates", {}).get("subagents", {})
 
-    if not metrics:
-        print("⚠️  No subagent data found")
+    if not subagents:
+        print("⚠️  No subagent data found in telemetry")
         return None
 
-    # Token estimates per agent type (from metrics.py)
-    TOKEN_ESTIMATES = {
-        "explorer": 25000,
-        "implementer": 100000,
-        "reviewer": 40000,
-        "architect": 120000,
-        "debugger": 150000,
-        "researcher": 150000,
-        "git-agent": 30000,
-        "default": 50000
-    }
+    # Extract type name (remove prefix if present) and collect data
+    results = {}
+    for agent_type, data in subagents.items():
+        type_name = agent_type.split(':')[-1] if ':' in agent_type else agent_type
+        tokens = data.get("tokens", 0)
+        count = data.get("count", 0)
 
-    # Filter by session if requested
-    if session_filter:
-        # Filter metrics to only agents from specific session
-        # (Assuming session info will be added to metrics in future)
-        filtered_metrics = {k: v for k, v in metrics.items()
-                          if v.get("session") == session_filter}
-        if not filtered_metrics:
-            print(f"⚠️  No agents found for session: {session_filter}")
-            return None
-        metrics = filtered_metrics
-        show_individual = True
-        title = f"Subagent Tokens - Session {session_filter}"
-    else:
-        show_individual = False
-        title = "Subagent Token Usage by Type"
-
-    if show_individual:
-        # Show individual agents (for session view)
-        results = {}
-        for agent_id, data in metrics.items():
-            agent_type = data.get("agent_type", "unknown")
-            tokens = TOKEN_ESTIMATES.get("default", 50000)
-            for key in TOKEN_ESTIMATES:
-                if key in agent_type.lower():
-                    tokens = TOKEN_ESTIMATES[key]
-                    break
-
-            type_name = agent_type.split(':')[-1] if ':' in agent_type else agent_type
-            label = f"{type_name} ({agent_id[:7]})"
-            results[label] = tokens
-    else:
-        # Group by agent type (default view)
-        by_type = {}
-        for agent_id, data in metrics.items():
-            agent_type = data.get("agent_type", "unknown")
-
-            # Extract type name (remove prefix if present)
-            type_name = agent_type.split(':')[-1] if ':' in agent_type else agent_type
-
-            # Estimate tokens for this agent
-            tokens = TOKEN_ESTIMATES.get("default", 50000)
-            for key in TOKEN_ESTIMATES:
-                if key in agent_type.lower():
-                    tokens = TOKEN_ESTIMATES[key]
-                    break
-
-            by_type[type_name] = by_type.get(type_name, 0) + tokens
-
-        results = by_type
+        # Accumulate if type already exists (for renamed types)
+        if type_name in results:
+            results[type_name]["tokens"] += tokens
+            results[type_name]["count"] += count
+        else:
+            results[type_name] = {"tokens": tokens, "count": count}
 
     if not results:
         print("⚠️  No subagent data to chart")
         return None
 
-    labels = list(results.keys())
-    values = list(results.values())
+    # Sort by tokens and prepare for chart
+    sorted_results = sorted(results.items(), key=lambda x: -x[1]["tokens"])
+    labels = [name for name, _ in sorted_results]
+    values = [data["tokens"] for _, data in sorted_results]
 
     data = {
         "label": "Estimated Tokens",
         "values": values
     }
 
+    title = "Subagent Token Usage by Type"
     path = generate_html_chart(
         title,
         "bar",
@@ -1192,73 +788,88 @@ def chart_subagents(session_filter=None):
     return path
 
 def chart_token_trend():
-    """Chart token usage trend over time with daily/session view toggle."""
-    history = load_history()
-    snapshots = history.get("snapshots", [])
+    """Chart token usage trend over time with daily/hourly view toggle (uses telemetry.json).
 
-    if len(snapshots) < 2:
-        print("⚠️  Need at least 2 snapshots for trend. Run: charts.py snapshot")
+    Uses daily_summaries for historical daily data (persists forever).
+    Uses events[] for hourly granularity (recent data only).
+    """
+    from datetime import datetime, timedelta, timezone
+    from collections import defaultdict
+
+    # EST timezone offset (UTC-5)
+    EST = timezone(timedelta(hours=-5))
+
+    if not TELEMETRY_FILE.exists():
+        print("⚠️  No telemetry data found")
         return None
 
-    # Prepare session view (existing logic)
-    session_labels = []
-    session_tokens = []
-    prev_tools = {}
+    telemetry = json.loads(TELEMETRY_FILE.read_text())
+    daily_summaries = telemetry.get("daily_summaries", {})
+    events = telemetry.get("events", [])
 
-    for snapshot in snapshots:
-        session_labels.append(snapshot.get("date", "Unknown"))
-        metrics = snapshot.get("metrics", {})
-        current_tools = metrics.get("tools_by_type", {})
+    if not daily_summaries and len(events) < 2:
+        print("⚠️  Need data for trend")
+        return None
 
-        # Calculate tokens for this session only (delta from previous)
-        tokens = 0
-        for tool, count in current_tools.items():
-            prev_count = prev_tools.get(tool, 0)
-            delta = count - prev_count
+    # Use daily_summaries for daily view (historical data that persists)
+    # Format: {"2025-01-15": {"calls": 50, "tokens": 125000, ...}, ...}
+    daily_data = {}
+    for date_str, summary in daily_summaries.items():
+        daily_data[date_str] = summary.get("tokens", 0)
 
-            estimate = {
-                "Bash": 500, "Read": 2000, "Edit": 1500,
-                "Write": 1000, "Task": 5000, "Grep": 1000,
-                "Glob": 500
-            }.get(tool, 500)
-            tokens += estimate * delta
+    # Parse event timestamp and convert to EST (for hourly view)
+    def parse_event_time(event):
+        try:
+            ts = event.get("ts", "")
+            if ts:
+                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                return dt.astimezone(EST)
+        except:
+            pass
+        return None
 
-        session_tokens.append(max(0, tokens))
-        prev_tools = current_tools.copy()
+    # Aggregate tokens by hour from events (for recent granular view)
+    hourly_data = defaultdict(int)
+    for event in events:
+        dt = parse_event_time(event)
+        if dt:
+            hour_str = dt.strftime("%Y-%m-%d %H:00")
+            hourly_data[hour_str] += event.get("tokens_est", 0)
 
-    # Prepare daily view (aggregate by date)
-    from collections import defaultdict
-    daily_data = defaultdict(int)
-    
-    prev_tools_daily = {}
-    for snapshot in snapshots:
-        # Extract date only (YYYY-MM-DD)
-        full_date = snapshot.get("date", "Unknown")
-        date_only = full_date.split()[0] if " " in full_date else full_date
-        
-        metrics = snapshot.get("metrics", {})
-        current_tools = metrics.get("tools_by_type", {})
-        
-        # Calculate token delta
-        tokens = 0
-        for tool, count in current_tools.items():
-            prev_count = prev_tools_daily.get(tool, 0)
-            delta = count - prev_count
-            
-            estimate = {
-                "Bash": 500, "Read": 2000, "Edit": 1500,
-                "Write": 1000, "Task": 5000, "Grep": 1000,
-                "Glob": 500
-            }.get(tool, 500)
-            tokens += estimate * delta
-        
-        daily_data[date_only] += max(0, tokens)
-        prev_tools_daily = current_tools.copy()
-    
-    # Sort daily data by date
+    # Fallback: if no daily_summaries yet, aggregate from events
+    if not daily_data and events:
+        for event in events:
+            dt = parse_event_time(event)
+            if dt:
+                date_str = dt.strftime("%Y-%m-%d")
+                if date_str not in daily_data:
+                    daily_data[date_str] = 0
+                daily_data[date_str] += event.get("tokens_est", 0)
+
+    # Current time in EST for display
+    now = datetime.now(EST)
+
+    # Sort data by time - All Time
     sorted_daily = sorted(daily_data.items())
-    daily_labels = [date for date, _ in sorted_daily]
-    daily_tokens = [tokens for _, tokens in sorted_daily]
+    all_labels = [date for date, _ in sorted_daily]
+    all_tokens = [tokens for _, tokens in sorted_daily]
+
+    # Last 7 days
+    week_ago = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+    week_data = [(d, t) for d, t in sorted_daily if d >= week_ago]
+    week_labels = [date for date, _ in week_data]
+    week_tokens = [tokens for _, tokens in week_data]
+
+    # Last 30 days
+    month_ago = (now - timedelta(days=30)).strftime("%Y-%m-%d")
+    month_data = [(d, t) for d, t in sorted_daily if d >= month_ago]
+    month_labels = [date for date, _ in month_data]
+    month_tokens = [tokens for _, tokens in month_data]
+
+    # Hourly (Last 48h)
+    sorted_hourly = sorted(hourly_data.items())[-48:]
+    hourly_labels = [hour for hour, _ in sorted_hourly]
+    hourly_tokens = [tokens for _, tokens in sorted_hourly]
 
     # Generate HTML with dropdown selector
     html = f"""<!DOCTYPE html>
@@ -1271,18 +882,19 @@ def chart_token_trend():
         body {{
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             padding: 40px;
-            background: #f5f5f5;
+            background: #1a1a2e;
+            color: #eee;
         }}
         .container {{
             max-width: 1200px;
             margin: 0 auto;
-            background: white;
+            background: #16213e;
             padding: 30px;
             border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            border: 1px solid #333;
         }}
         h1 {{
-            color: #333;
+            color: #4cc9f0;
             margin-bottom: 10px;
         }}
         .controls {{
@@ -1293,18 +905,19 @@ def chart_token_trend():
         }}
         .controls label {{
             font-weight: 600;
-            color: #555;
+            color: #888;
         }}
         .controls select {{
             padding: 8px 12px;
-            border: 1px solid #ddd;
+            border: 1px solid #333;
             border-radius: 4px;
             font-size: 14px;
-            background: white;
+            background: #0f0f1e;
+            color: #eee;
             cursor: pointer;
         }}
         .timestamp {{
-            color: #666;
+            color: #888;
             font-size: 14px;
             margin-bottom: 20px;
         }}
@@ -1314,7 +927,7 @@ def chart_token_trend():
         .back-link {{
             display: inline-block;
             margin-top: 20px;
-            color: #0066cc;
+            color: #4cc9f0;
             text-decoration: none;
         }}
         .back-link:hover {{
@@ -1324,41 +937,67 @@ def chart_token_trend():
 </head>
 <body>
     <div class="container">
-        <h1>Token Usage Trend</h1>
-        <div class="timestamp">Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
-        
+        <h1>💰 Token Usage Trend</h1>
+        <div class="timestamp">Generated: {now.strftime("%Y-%m-%d %H:%M:%S")} EST</div>
+
         <div class="controls">
             <label for="viewSelect">View:</label>
             <select id="viewSelect" onchange="switchView()">
-                <option value="daily">Daily Totals</option>
-                <option value="session">Per Session</option>
+                <option value="week">Last 7 Days</option>
+                <option value="month">Last 30 Days</option>
+                <option value="all">All Time</option>
+                <option value="hourly">Hourly (Last 48h)</option>
             </select>
         </div>
-        
+
         <canvas id="chart"></canvas>
         <a href="dashboard.html" class="back-link">← Back to Dashboard</a>
     </div>
 
     <script>
-        const dailyData = {{
-            labels: {json.dumps(daily_labels)},
+        const weekData = {{
+            labels: {json.dumps(week_labels)},
             datasets: [{{
-                label: 'Tokens per Day',
-                data: {json.dumps(daily_tokens)},
-                borderColor: 'rgb(75, 192, 192)',
-                backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                label: 'Tokens per Day (Last 7 Days)',
+                data: {json.dumps(week_tokens)},
+                borderColor: '#4cc9f0',
+                backgroundColor: 'rgba(76, 201, 240, 0.2)',
                 tension: 0.1,
                 fill: true
             }}]
         }};
 
-        const sessionData = {{
-            labels: {json.dumps(session_labels)},
+        const monthData = {{
+            labels: {json.dumps(month_labels)},
             datasets: [{{
-                label: 'Tokens per Session',
-                data: {json.dumps(session_tokens)},
-                borderColor: 'rgb(54, 162, 235)',
-                backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                label: 'Tokens per Day (Last 30 Days)',
+                data: {json.dumps(month_tokens)},
+                borderColor: '#8b5cf6',
+                backgroundColor: 'rgba(139, 92, 246, 0.2)',
+                tension: 0.1,
+                fill: true
+            }}]
+        }};
+
+        const allData = {{
+            labels: {json.dumps(all_labels)},
+            datasets: [{{
+                label: 'Tokens per Day (All Time)',
+                data: {json.dumps(all_tokens)},
+                borderColor: '#f59e0b',
+                backgroundColor: 'rgba(245, 158, 11, 0.2)',
+                tension: 0.1,
+                fill: true
+            }}]
+        }};
+
+        const hourlyData = {{
+            labels: {json.dumps(hourly_labels)},
+            datasets: [{{
+                label: 'Tokens per Hour',
+                data: {json.dumps(hourly_tokens)},
+                borderColor: '#10b981',
+                backgroundColor: 'rgba(16, 185, 129, 0.2)',
                 tension: 0.1,
                 fill: true
             }}]
@@ -1367,13 +1006,14 @@ def chart_token_trend():
         const ctx = document.getElementById('chart').getContext('2d');
         let chart = new Chart(ctx, {{
             type: 'line',
-            data: dailyData,
+            data: weekData,
             options: {{
                 responsive: true,
                 maintainAspectRatio: true,
                 plugins: {{
                     legend: {{
                         position: 'top',
+                        labels: {{ color: '#888' }}
                     }},
                     title: {{
                         display: false
@@ -1381,7 +1021,13 @@ def chart_token_trend():
                 }},
                 scales: {{
                     y: {{
-                        beginAtZero: true
+                        beginAtZero: true,
+                        ticks: {{ color: '#888' }},
+                        grid: {{ color: '#333' }}
+                    }},
+                    x: {{
+                        ticks: {{ color: '#888' }},
+                        grid: {{ color: '#333' }}
                     }}
                 }}
             }}
@@ -1389,7 +1035,13 @@ def chart_token_trend():
 
         function switchView() {{
             const view = document.getElementById('viewSelect').value;
-            chart.data = view === 'daily' ? dailyData : sessionData;
+            const dataMap = {{
+                'week': weekData,
+                'month': monthData,
+                'all': allData,
+                'hourly': hourlyData
+            }};
+            chart.data = dataMap[view] || weekData;
             chart.update();
         }}
     </script>
@@ -1402,8 +1054,1070 @@ def chart_token_trend():
     print(f"✅ Chart generated: {output_path}")
     return output_path
 
+def chart_realtime_telemetry():
+    """Chart real-time telemetry from hook-based tracking."""
+    if not TELEMETRY_FILE.exists():
+        print("⚠️  No telemetry data found")
+        print("   Telemetry hooks track all tool calls automatically")
+        return None
+
+    telemetry = json.loads(TELEMETRY_FILE.read_text())
+    events = telemetry.get("events", [])
+    aggregates = telemetry.get("aggregates", {})
+
+    if not events:
+        print("⚠️  No telemetry events found")
+        return None
+
+    # Create a comprehensive telemetry HTML page
+    totals = aggregates.get("totals", {})
+    by_tool = aggregates.get("by_tool", {})
+    by_backend = aggregates.get("by_backend", {})
+    subagents = aggregates.get("subagents", {})
+
+    # Sort tools by token usage
+    sorted_tools = sorted(by_tool.items(), key=lambda x: x[1].get("tokens", 0), reverse=True)[:15]
+    tool_labels = [t[0][:30] for t in sorted_tools]  # Truncate long names
+    tool_tokens = [t[1].get("tokens", 0) for t in sorted_tools]
+
+    # Backend breakdown
+    backend_labels = list(by_backend.keys())
+    backend_tokens = [by_backend[b].get("tokens", 0) for b in backend_labels]
+
+    # Subagent breakdown
+    subagent_labels = list(subagents.keys())
+    subagent_tokens = [subagents[s].get("tokens", 0) for s in subagent_labels]
+
+    # Recent events timeline (last 50)
+    recent = events[-50:]
+    timeline_data = []
+    for e in recent:
+        timeline_data.append({
+            "ts": e.get("ts", "")[:19],
+            "tool": e.get("tool", "")[:25],
+            "tokens": e.get("tokens_est", 0),
+            "duration": e.get("duration_ms", 0),
+            "status": e.get("status", "")
+        })
+
+    # Calculate trend
+    trend_verdict = "N/A"
+    trend_pct = 0
+    if len(events) >= 10:
+        mid = len(events) // 2
+        first_tokens = sum(e.get("tokens_est", 0) for e in events[:mid])
+        second_tokens = sum(e.get("tokens_est", 0) for e in events[mid:])
+        if first_tokens > 0:
+            trend_pct = ((second_tokens - first_tokens) / first_tokens) * 100
+            if trend_pct < -10:
+                trend_verdict = "IMPROVING ↓"
+            elif trend_pct > 10:
+                trend_verdict = "INCREASING ↑"
+            else:
+                trend_verdict = "STABLE →"
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Real-Time Telemetry</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            padding: 20px;
+            background: #1a1a2e;
+            color: #eee;
+            margin: 0;
+        }}
+        .header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }}
+        h1 {{ color: #4cc9f0; margin: 0; }}
+        .stats {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }}
+        .stat-card {{
+            background: #16213e;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }}
+        .stat-value {{
+            font-size: 32px;
+            font-weight: bold;
+            color: #4cc9f0;
+        }}
+        .stat-value.success {{ color: #4ade80; }}
+        .stat-value.warning {{ color: #fbbf24; }}
+        .stat-value.error {{ color: #f87171; }}
+        .stat-label {{
+            font-size: 12px;
+            color: #888;
+            text-transform: uppercase;
+        }}
+        .charts {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+        }}
+        .chart-card {{
+            background: #16213e;
+            padding: 20px;
+            border-radius: 8px;
+        }}
+        .chart-card h2 {{
+            margin-top: 0;
+            font-size: 16px;
+            color: #888;
+        }}
+        .events-table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+            margin-top: 20px;
+        }}
+        .events-table th, .events-table td {{
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid #333;
+        }}
+        .events-table th {{
+            color: #888;
+            text-transform: uppercase;
+        }}
+        .status-success {{ color: #4ade80; }}
+        .status-error {{ color: #f87171; }}
+        .back-link {{
+            color: #4cc9f0;
+            text-decoration: none;
+        }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📡 Real-Time Telemetry</h1>
+        <a href="dashboard.html" class="back-link">← Back to Dashboard</a>
+    </div>
+
+    <div class="stats">
+        <div class="stat-card">
+            <div class="stat-value">{totals.get('calls', 0):,}</div>
+            <div class="stat-label">Total Calls</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{totals.get('tokens_est', 0):,}</div>
+            <div class="stat-label">Est. Tokens</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value {'error' if totals.get('errors', 0) > 0 else 'success'}">{totals.get('errors', 0)}</div>
+            <div class="stat-label">Errors</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value {'success' if 'IMPROVING' in trend_verdict else 'warning' if 'INCREASING' in trend_verdict else ''}">{trend_verdict}</div>
+            <div class="stat-label">Token Trend ({trend_pct:+.1f}%)</div>
+        </div>
+    </div>
+
+    <div class="charts">
+        <div class="chart-card">
+            <h2>Token Usage by Tool (Top 15)</h2>
+            <canvas id="toolChart"></canvas>
+        </div>
+        <div class="chart-card">
+            <h2>Token Usage by Backend</h2>
+            <canvas id="backendChart"></canvas>
+        </div>
+        <div class="chart-card">
+            <h2>Subagent Token Usage</h2>
+            <canvas id="subagentChart"></canvas>
+        </div>
+    </div>
+
+    <div class="chart-card" style="margin-top: 20px;">
+        <h2>Recent Events (Last 50)</h2>
+        <table class="events-table">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>Tool</th>
+                    <th>Tokens</th>
+                    <th>Duration</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {''.join(f'''<tr>
+                    <td>{e['ts']}</td>
+                    <td>{e['tool']}</td>
+                    <td>{e['tokens']:,}</td>
+                    <td>{e['duration']}ms</td>
+                    <td class="status-{e['status']}">{e['status']}</td>
+                </tr>''' for e in reversed(timeline_data))}
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const toolCtx = document.getElementById('toolChart').getContext('2d');
+        new Chart(toolCtx, {{
+            type: 'bar',
+            data: {{
+                labels: {json.dumps(tool_labels)},
+                datasets: [{{
+                    label: 'Tokens',
+                    data: {json.dumps(tool_tokens)},
+                    backgroundColor: 'rgba(76, 201, 240, 0.6)',
+                    borderColor: 'rgba(76, 201, 240, 1)',
+                    borderWidth: 1
+                }}]
+            }},
+            options: {{
+                indexAxis: 'y',
+                responsive: true,
+                plugins: {{ legend: {{ display: false }} }},
+                scales: {{
+                    x: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }},
+                    y: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }}
+                }}
+            }}
+        }});
+
+        const backendCtx = document.getElementById('backendChart').getContext('2d');
+        new Chart(backendCtx, {{
+            type: 'pie',
+            data: {{
+                labels: {json.dumps(backend_labels)},
+                datasets: [{{
+                    data: {json.dumps(backend_tokens)},
+                    backgroundColor: [
+                        'rgba(76, 201, 240, 0.8)',
+                        'rgba(74, 222, 128, 0.8)',
+                        'rgba(251, 191, 36, 0.8)',
+                        'rgba(248, 113, 113, 0.8)',
+                        'rgba(167, 139, 250, 0.8)'
+                    ]
+                }}]
+            }},
+            options: {{
+                responsive: true,
+                plugins: {{
+                    legend: {{ position: 'right', labels: {{ color: '#888' }} }}
+                }}
+            }}
+        }});
+
+        const subagentCtx = document.getElementById('subagentChart').getContext('2d');
+        new Chart(subagentCtx, {{
+            type: 'bar',
+            data: {{
+                labels: {json.dumps(subagent_labels) if subagent_labels else ['No subagents']},
+                datasets: [{{
+                    label: 'Tokens',
+                    data: {json.dumps(subagent_tokens) if subagent_tokens else [0]},
+                    backgroundColor: 'rgba(167, 139, 250, 0.6)',
+                    borderColor: 'rgba(167, 139, 250, 1)',
+                    borderWidth: 1
+                }}]
+            }},
+            options: {{
+                responsive: true,
+                plugins: {{ legend: {{ display: false }} }},
+                scales: {{
+                    x: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }},
+                    y: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }}
+                }}
+            }}
+        }});
+    </script>
+</body>
+</html>"""
+
+    path = CHARTS_DIR / "telemetry.html"
+    path.write_text(html, encoding='utf-8')
+    print(f"✅ Telemetry chart generated: {path}")
+    return path
+
+
+def chart_latency_by_tool():
+    """Chart average latency (duration) by tool - find slow tools."""
+    if not TELEMETRY_FILE.exists():
+        print("⚠️  No telemetry data found")
+        return None
+
+    telemetry = json.loads(TELEMETRY_FILE.read_text())
+    by_tool = telemetry.get("aggregates", {}).get("by_tool", {})
+
+    if not by_tool:
+        print("⚠️  No tool data found")
+        return None
+
+    # Calculate average latency per tool
+    latency_data = []
+    for tool, data in by_tool.items():
+        count = data.get("count", 0)
+        duration = data.get("duration_ms", 0)
+        if count > 0:
+            avg_latency = duration / count
+            latency_data.append((tool[:25], avg_latency, count))
+
+    # Sort by average latency (slowest first)
+    latency_data.sort(key=lambda x: x[1], reverse=True)
+    top_20 = latency_data[:20]
+
+    labels = [t[0] for t in top_20]
+    values = [round(t[1], 1) for t in top_20]
+    counts = [t[2] for t in top_20]
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Latency by Tool</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {{ font-family: -apple-system, sans-serif; padding: 20px; background: #1a1a2e; color: #eee; }}
+        h1 {{ color: #4cc9f0; }}
+        .back {{ color: #4cc9f0; text-decoration: none; }}
+        .chart-container {{ max-width: 900px; margin: 20px auto; }}
+        .note {{ color: #888; font-size: 14px; margin-top: 20px; }}
+    </style>
+</head>
+<body>
+    <a href="dashboard.html" class="back">← Back to Dashboard</a>
+    <h1>⏱️ Latency by Tool (Slowest First)</h1>
+    <p class="note">Average duration in milliseconds per tool call. Hover for call counts.</p>
+    <div class="chart-container">
+        <canvas id="chart"></canvas>
+    </div>
+    <script>
+        new Chart(document.getElementById('chart'), {{
+            type: 'bar',
+            data: {{
+                labels: {json.dumps(labels)},
+                datasets: [{{
+                    label: 'Avg Latency (ms)',
+                    data: {json.dumps(values)},
+                    backgroundColor: 'rgba(248, 113, 113, 0.6)',
+                    borderColor: 'rgba(248, 113, 113, 1)',
+                    borderWidth: 1
+                }}]
+            }},
+            options: {{
+                indexAxis: 'y',
+                responsive: true,
+                plugins: {{
+                    tooltip: {{
+                        callbacks: {{
+                            afterLabel: function(ctx) {{
+                                const counts = {json.dumps(counts)};
+                                return 'Calls: ' + counts[ctx.dataIndex];
+                            }}
+                        }}
+                    }}
+                }},
+                scales: {{
+                    x: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }}, title: {{ display: true, text: 'Milliseconds', color: '#888' }} }},
+                    y: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }}
+                }}
+            }}
+        }});
+    </script>
+</body>
+</html>"""
+
+    path = CHARTS_DIR / "latency.html"
+    path.write_text(html, encoding='utf-8')
+    print(f"✅ Latency chart generated: {path}")
+    return path
+
+
+def chart_error_timeline():
+    """Chart errors over time to spot error spikes."""
+    if not TELEMETRY_FILE.exists():
+        print("⚠️  No telemetry data found")
+        return None
+
+    telemetry = json.loads(TELEMETRY_FILE.read_text())
+    events = telemetry.get("events", [])
+
+    if not events:
+        print("⚠️  No events found")
+        return None
+
+    # Group events by hour
+    hourly_data = defaultdict(lambda: {"total": 0, "errors": 0})
+
+    for e in events:
+        ts = e.get("ts", "")[:13]  # YYYY-MM-DDTHH
+        if ts:
+            hourly_data[ts]["total"] += 1
+            if e.get("status") == "error":
+                hourly_data[ts]["errors"] += 1
+
+    # Sort by time
+    sorted_hours = sorted(hourly_data.items())[-48:]  # Last 48 hours
+
+    labels = [h[0][5:] for h in sorted_hours]  # MM-DDTHH
+    totals = [h[1]["total"] for h in sorted_hours]
+    errors = [h[1]["errors"] for h in sorted_hours]
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Error Timeline</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {{ font-family: -apple-system, sans-serif; padding: 20px; background: #1a1a2e; color: #eee; }}
+        h1 {{ color: #4cc9f0; }}
+        .back {{ color: #4cc9f0; text-decoration: none; }}
+        .chart-container {{ max-width: 1200px; margin: 20px auto; }}
+    </style>
+</head>
+<body>
+    <a href="dashboard.html" class="back">← Back to Dashboard</a>
+    <h1>🚨 Error Timeline</h1>
+    <div class="chart-container">
+        <canvas id="chart"></canvas>
+    </div>
+    <script>
+        new Chart(document.getElementById('chart'), {{
+            type: 'line',
+            data: {{
+                labels: {json.dumps(labels)},
+                datasets: [
+                    {{
+                        label: 'Total Calls',
+                        data: {json.dumps(totals)},
+                        borderColor: 'rgba(76, 201, 240, 1)',
+                        backgroundColor: 'rgba(76, 201, 240, 0.1)',
+                        fill: true,
+                        tension: 0.3
+                    }},
+                    {{
+                        label: 'Errors',
+                        data: {json.dumps(errors)},
+                        borderColor: 'rgba(248, 113, 113, 1)',
+                        backgroundColor: 'rgba(248, 113, 113, 0.3)',
+                        fill: true,
+                        tension: 0.3
+                    }}
+                ]
+            }},
+            options: {{
+                responsive: true,
+                plugins: {{ legend: {{ labels: {{ color: '#888' }} }} }},
+                scales: {{
+                    x: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }},
+                    y: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }}
+                }}
+            }}
+        }});
+    </script>
+</body>
+</html>"""
+
+    path = CHARTS_DIR / "error_timeline.html"
+    path.write_text(html, encoding='utf-8')
+    print(f"✅ Error timeline generated: {path}")
+    return path
+
+
+def chart_activity_heatmap():
+    """Chart activity by hour of day - see work patterns."""
+    if not TELEMETRY_FILE.exists():
+        print("⚠️  No telemetry data found")
+        return None
+
+    telemetry = json.loads(TELEMETRY_FILE.read_text())
+    events = telemetry.get("events", [])
+
+    if not events:
+        print("⚠️  No events found")
+        return None
+
+    # Count events by hour of day (0-23)
+    hourly_counts = [0] * 24
+
+    for e in events:
+        ts = e.get("ts", "")
+        if len(ts) >= 13:
+            try:
+                hour = int(ts[11:13])
+                hourly_counts[hour] += 1
+            except (ValueError, IndexError):
+                pass
+
+    labels = [f"{h:02d}:00" for h in range(24)]
+    max_count = max(hourly_counts) if hourly_counts else 1
+
+    # Generate colors based on intensity
+    colors = []
+    for count in hourly_counts:
+        intensity = count / max_count if max_count > 0 else 0
+        r = int(76 + (248 - 76) * intensity)
+        g = int(201 - (201 - 113) * intensity)
+        b = int(240 - (240 - 113) * intensity)
+        colors.append(f"rgba({r}, {g}, {b}, 0.8)")
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Activity Heatmap</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {{ font-family: -apple-system, sans-serif; padding: 20px; background: #1a1a2e; color: #eee; }}
+        h1 {{ color: #4cc9f0; }}
+        .back {{ color: #4cc9f0; text-decoration: none; }}
+        .chart-container {{ max-width: 1000px; margin: 20px auto; }}
+        .note {{ color: #888; font-size: 14px; }}
+    </style>
+</head>
+<body>
+    <a href="dashboard.html" class="back">← Back to Dashboard</a>
+    <h1>🕐 Activity by Hour of Day</h1>
+    <p class="note">Tool calls distribution across hours (brighter = more activity)</p>
+    <div class="chart-container">
+        <canvas id="chart"></canvas>
+    </div>
+    <script>
+        new Chart(document.getElementById('chart'), {{
+            type: 'bar',
+            data: {{
+                labels: {json.dumps(labels)},
+                datasets: [{{
+                    label: 'Tool Calls',
+                    data: {json.dumps(hourly_counts)},
+                    backgroundColor: {json.dumps(colors)},
+                    borderColor: 'rgba(255,255,255,0.2)',
+                    borderWidth: 1
+                }}]
+            }},
+            options: {{
+                responsive: true,
+                plugins: {{ legend: {{ display: false }} }},
+                scales: {{
+                    x: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }},
+                    y: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }}, title: {{ display: true, text: 'Calls', color: '#888' }} }}
+                }}
+            }}
+        }});
+    </script>
+</body>
+</html>"""
+
+    path = CHARTS_DIR / "activity_heatmap.html"
+    path.write_text(html, encoding='utf-8')
+    print(f"✅ Activity heatmap generated: {path}")
+    return path
+
+
+def chart_native_vs_mcp():
+    """Compare native Claude tools vs MCP tools."""
+    if not TELEMETRY_FILE.exists():
+        print("⚠️  No telemetry data found")
+        return None
+
+    telemetry = json.loads(TELEMETRY_FILE.read_text())
+    by_backend = telemetry.get("aggregates", {}).get("by_backend", {})
+
+    if not by_backend:
+        print("⚠️  No backend data found")
+        return None
+
+    # Separate native vs MCP
+    native_calls = 0
+    native_tokens = 0
+    mcp_calls = 0
+    mcp_tokens = 0
+    mcp_breakdown = {}
+
+    for backend, data in by_backend.items():
+        calls = data.get("count", 0)
+        tokens = data.get("tokens", 0)
+
+        if backend == "claude-native":
+            native_calls += calls
+            native_tokens += tokens
+        else:
+            mcp_calls += calls
+            mcp_tokens += tokens
+            mcp_breakdown[backend] = {"calls": calls, "tokens": tokens}
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Native vs MCP</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {{ font-family: -apple-system, sans-serif; padding: 20px; background: #1a1a2e; color: #eee; }}
+        h1 {{ color: #4cc9f0; }}
+        .back {{ color: #4cc9f0; text-decoration: none; }}
+        .charts {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 1000px; margin: 20px auto; }}
+        .chart-box {{ background: #16213e; padding: 20px; border-radius: 8px; }}
+        .chart-box h2 {{ color: #888; font-size: 14px; margin-top: 0; }}
+        .stats {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 1000px; margin: 20px auto; }}
+        .stat {{ background: #16213e; padding: 20px; border-radius: 8px; text-align: center; }}
+        .stat-value {{ font-size: 36px; font-weight: bold; }}
+        .stat-value.native {{ color: #4cc9f0; }}
+        .stat-value.mcp {{ color: #a78bfa; }}
+        .stat-label {{ color: #888; font-size: 12px; text-transform: uppercase; }}
+    </style>
+</head>
+<body>
+    <a href="dashboard.html" class="back">← Back to Dashboard</a>
+    <h1>🔌 Native vs MCP Tools</h1>
+
+    <div class="stats">
+        <div class="stat">
+            <div class="stat-value native">{native_calls:,}</div>
+            <div class="stat-label">Native Calls</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value mcp">{mcp_calls:,}</div>
+            <div class="stat-label">MCP Calls</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value native">{native_tokens:,}</div>
+            <div class="stat-label">Native Tokens</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value mcp">{mcp_tokens:,}</div>
+            <div class="stat-label">MCP Tokens</div>
+        </div>
+    </div>
+
+    <div class="charts">
+        <div class="chart-box">
+            <h2>Calls Distribution</h2>
+            <canvas id="callsChart"></canvas>
+        </div>
+        <div class="chart-box">
+            <h2>Token Distribution</h2>
+            <canvas id="tokensChart"></canvas>
+        </div>
+    </div>
+
+    <script>
+        new Chart(document.getElementById('callsChart'), {{
+            type: 'doughnut',
+            data: {{
+                labels: ['Native', 'MCP'],
+                datasets: [{{
+                    data: [{native_calls}, {mcp_calls}],
+                    backgroundColor: ['rgba(76, 201, 240, 0.8)', 'rgba(167, 139, 250, 0.8)']
+                }}]
+            }},
+            options: {{ plugins: {{ legend: {{ labels: {{ color: '#888' }} }} }} }}
+        }});
+
+        new Chart(document.getElementById('tokensChart'), {{
+            type: 'doughnut',
+            data: {{
+                labels: ['Native', 'MCP'],
+                datasets: [{{
+                    data: [{native_tokens}, {mcp_tokens}],
+                    backgroundColor: ['rgba(76, 201, 240, 0.8)', 'rgba(167, 139, 250, 0.8)']
+                }}]
+            }},
+            options: {{ plugins: {{ legend: {{ labels: {{ color: '#888' }} }} }} }}
+        }});
+    </script>
+</body>
+</html>"""
+
+    path = CHARTS_DIR / "native_vs_mcp.html"
+    path.write_text(html, encoding='utf-8')
+    print(f"✅ Native vs MCP chart generated: {path}")
+    return path
+
+
+def chart_token_efficiency():
+    """Chart token efficiency - tokens per call ratio by tool."""
+    if not TELEMETRY_FILE.exists():
+        print("⚠️  No telemetry data found")
+        return None
+
+    telemetry = json.loads(TELEMETRY_FILE.read_text())
+    by_tool = telemetry.get("aggregates", {}).get("by_tool", {})
+
+    if not by_tool:
+        print("⚠️  No tool data found")
+        return None
+
+    # Calculate tokens per call
+    efficiency_data = []
+    for tool, data in by_tool.items():
+        calls = data.get("count", 0)
+        tokens = data.get("tokens", 0)
+        if calls >= 3:  # Only tools with enough samples
+            tpc = tokens / calls
+            efficiency_data.append((tool[:25], tpc, calls, tokens))
+
+    # Sort by tokens per call (most expensive first)
+    efficiency_data.sort(key=lambda x: x[1], reverse=True)
+    top_20 = efficiency_data[:20]
+
+    labels = [t[0] for t in top_20]
+    values = [round(t[1], 0) for t in top_20]
+
+    # Color gradient: green (efficient) to red (expensive)
+    max_val = max(values) if values else 1
+    colors = []
+    for v in values:
+        ratio = v / max_val
+        if ratio < 0.3:
+            colors.append('rgba(74, 222, 128, 0.8)')  # Green
+        elif ratio < 0.6:
+            colors.append('rgba(251, 191, 36, 0.8)')  # Yellow
+        else:
+            colors.append('rgba(248, 113, 113, 0.8)')  # Red
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Token Efficiency</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {{ font-family: -apple-system, sans-serif; padding: 20px; background: #1a1a2e; color: #eee; }}
+        h1 {{ color: #4cc9f0; }}
+        .back {{ color: #4cc9f0; text-decoration: none; }}
+        .chart-container {{ max-width: 900px; margin: 20px auto; }}
+        .note {{ color: #888; font-size: 14px; }}
+        .legend {{ margin-top: 20px; display: flex; gap: 20px; justify-content: center; }}
+        .legend-item {{ display: flex; align-items: center; gap: 5px; }}
+        .legend-color {{ width: 16px; height: 16px; border-radius: 4px; }}
+    </style>
+</head>
+<body>
+    <a href="dashboard.html" class="back">← Back to Dashboard</a>
+    <h1>💰 Token Efficiency (Tokens per Call)</h1>
+    <p class="note">Lower is better. Tools with fewer than 3 calls excluded.</p>
+    <div class="legend">
+        <div class="legend-item"><div class="legend-color" style="background: rgba(74, 222, 128, 0.8)"></div> Efficient</div>
+        <div class="legend-item"><div class="legend-color" style="background: rgba(251, 191, 36, 0.8)"></div> Moderate</div>
+        <div class="legend-item"><div class="legend-color" style="background: rgba(248, 113, 113, 0.8)"></div> Expensive</div>
+    </div>
+    <div class="chart-container">
+        <canvas id="chart"></canvas>
+    </div>
+    <script>
+        new Chart(document.getElementById('chart'), {{
+            type: 'bar',
+            data: {{
+                labels: {json.dumps(labels)},
+                datasets: [{{
+                    label: 'Tokens per Call',
+                    data: {json.dumps(values)},
+                    backgroundColor: {json.dumps(colors)},
+                    borderWidth: 1
+                }}]
+            }},
+            options: {{
+                indexAxis: 'y',
+                responsive: true,
+                plugins: {{ legend: {{ display: false }} }},
+                scales: {{
+                    x: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }}, title: {{ display: true, text: 'Tokens/Call', color: '#888' }} }},
+                    y: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }}
+                }}
+            }}
+        }});
+    </script>
+</body>
+</html>"""
+
+    path = CHARTS_DIR / "token_efficiency.html"
+    path.write_text(html, encoding='utf-8')
+    print(f"✅ Token efficiency chart generated: {path}")
+    return path
+
+
+def chart_session_comparison():
+    """Compare metrics across sessions."""
+    if not TELEMETRY_FILE.exists():
+        print("⚠️  No telemetry data found")
+        return None
+
+    telemetry = json.loads(TELEMETRY_FILE.read_text())
+    events = telemetry.get("events", [])
+
+    if not events:
+        print("⚠️  No events found")
+        return None
+
+    # Group by date (session proxy)
+    daily_data = defaultdict(lambda: {"calls": 0, "tokens": 0, "errors": 0, "duration": 0})
+
+    for e in events:
+        ts = e.get("ts", "")[:10]  # YYYY-MM-DD
+        if ts:
+            daily_data[ts]["calls"] += 1
+            daily_data[ts]["tokens"] += e.get("tokens_est", 0)
+            daily_data[ts]["duration"] += e.get("duration_ms", 0)
+            if e.get("status") == "error":
+                daily_data[ts]["errors"] += 1
+
+    # Sort by date
+    sorted_days = sorted(daily_data.items())[-14:]  # Last 14 days
+
+    labels = [d[0][5:] for d in sorted_days]  # MM-DD
+    calls = [d[1]["calls"] for d in sorted_days]
+    tokens = [d[1]["tokens"] for d in sorted_days]
+    errors = [d[1]["errors"] for d in sorted_days]
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Session Comparison</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {{ font-family: -apple-system, sans-serif; padding: 20px; background: #1a1a2e; color: #eee; }}
+        h1 {{ color: #4cc9f0; }}
+        .back {{ color: #4cc9f0; text-decoration: none; }}
+        .charts {{ display: grid; grid-template-columns: 1fr; gap: 20px; max-width: 1200px; margin: 20px auto; }}
+        .chart-box {{ background: #16213e; padding: 20px; border-radius: 8px; }}
+        .chart-box h2 {{ color: #888; font-size: 14px; margin-top: 0; }}
+    </style>
+</head>
+<body>
+    <a href="dashboard.html" class="back">← Back to Dashboard</a>
+    <h1>📅 Session Comparison (Last 14 Days)</h1>
+
+    <div class="charts">
+        <div class="chart-box">
+            <h2>Daily Activity</h2>
+            <canvas id="activityChart"></canvas>
+        </div>
+        <div class="chart-box">
+            <h2>Daily Token Usage</h2>
+            <canvas id="tokensChart"></canvas>
+        </div>
+    </div>
+
+    <script>
+        new Chart(document.getElementById('activityChart'), {{
+            type: 'bar',
+            data: {{
+                labels: {json.dumps(labels)},
+                datasets: [
+                    {{
+                        label: 'Calls',
+                        data: {json.dumps(calls)},
+                        backgroundColor: 'rgba(76, 201, 240, 0.6)'
+                    }},
+                    {{
+                        label: 'Errors',
+                        data: {json.dumps(errors)},
+                        backgroundColor: 'rgba(248, 113, 113, 0.6)'
+                    }}
+                ]
+            }},
+            options: {{
+                responsive: true,
+                plugins: {{ legend: {{ labels: {{ color: '#888' }} }} }},
+                scales: {{
+                    x: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }},
+                    y: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }}
+                }}
+            }}
+        }});
+
+        new Chart(document.getElementById('tokensChart'), {{
+            type: 'line',
+            data: {{
+                labels: {json.dumps(labels)},
+                datasets: [{{
+                    label: 'Tokens',
+                    data: {json.dumps(tokens)},
+                    borderColor: 'rgba(74, 222, 128, 1)',
+                    backgroundColor: 'rgba(74, 222, 128, 0.2)',
+                    fill: true,
+                    tension: 0.3
+                }}]
+            }},
+            options: {{
+                responsive: true,
+                plugins: {{ legend: {{ labels: {{ color: '#888' }} }} }},
+                scales: {{
+                    x: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }},
+                    y: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }}
+                }}
+            }}
+        }});
+    </script>
+</body>
+</html>"""
+
+    path = CHARTS_DIR / "session_comparison.html"
+    path.write_text(html, encoding='utf-8')
+    print(f"✅ Session comparison chart generated: {path}")
+    return path
+
+
+def chart_blocked_tools():
+    """Chart blocked/errored tools - what's being blocked."""
+    if not TELEMETRY_FILE.exists():
+        print("⚠️  No telemetry data found")
+        return None
+
+    telemetry = json.loads(TELEMETRY_FILE.read_text())
+    events = telemetry.get("events", [])
+    by_tool = telemetry.get("aggregates", {}).get("by_tool", {})
+
+    if not by_tool:
+        print("⚠️  No tool data found")
+        return None
+
+    # Get error counts and recent error messages
+    error_data = []
+    for tool, data in by_tool.items():
+        errors = data.get("errors", 0)
+        if errors > 0:
+            calls = data.get("count", 0)
+            error_rate = (errors / calls * 100) if calls > 0 else 0
+            error_data.append((tool[:25], errors, calls, error_rate))
+
+    error_data.sort(key=lambda x: x[1], reverse=True)
+    top_15 = error_data[:15]
+
+    # Get recent error messages
+    recent_errors = [e for e in events[-100:] if e.get("status") == "error"][-10:]
+
+    labels = [t[0] for t in top_15]
+    error_counts = [t[1] for t in top_15]
+    error_rates = [round(t[3], 1) for t in top_15]
+
+    error_rows = ""
+    for e in reversed(recent_errors):
+        tool = e.get("tool", "")[:20]
+        msg = e.get("error_msg", "")[:50] or "Unknown error"
+        ts = e.get("ts", "")[:19]
+        error_rows += f"<tr><td>{ts}</td><td>{tool}</td><td>{msg}</td></tr>"
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Blocked Tools</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {{ font-family: -apple-system, sans-serif; padding: 20px; background: #1a1a2e; color: #eee; }}
+        h1 {{ color: #4cc9f0; }}
+        .back {{ color: #4cc9f0; text-decoration: none; }}
+        .content {{ max-width: 1200px; margin: 0 auto; }}
+        .charts {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0; }}
+        .chart-box {{ background: #16213e; padding: 20px; border-radius: 8px; }}
+        .chart-box h2 {{ color: #888; font-size: 14px; margin-top: 0; }}
+        table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
+        th, td {{ padding: 10px; text-align: left; border-bottom: 1px solid #333; }}
+        th {{ color: #888; text-transform: uppercase; font-size: 12px; }}
+        .no-errors {{ color: #4ade80; text-align: center; padding: 40px; }}
+    </style>
+</head>
+<body>
+    <a href="dashboard.html" class="back">← Back to Dashboard</a>
+    <h1>🚫 Blocked/Errored Tools</h1>
+
+    <div class="content">
+        {"<p class='no-errors'>✅ No errors recorded!</p>" if not top_15 else f'''
+        <div class="charts">
+            <div class="chart-box">
+                <h2>Error Counts by Tool</h2>
+                <canvas id="countChart"></canvas>
+            </div>
+            <div class="chart-box">
+                <h2>Error Rate by Tool (%)</h2>
+                <canvas id="rateChart"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-box">
+            <h2>Recent Errors</h2>
+            <table>
+                <thead><tr><th>Time</th><th>Tool</th><th>Message</th></tr></thead>
+                <tbody>{error_rows if error_rows else "<tr><td colspan='3'>No recent errors</td></tr>"}</tbody>
+            </table>
+        </div>
+        '''}
+    </div>
+
+    <script>
+        {f'''
+        new Chart(document.getElementById('countChart'), {{
+            type: 'bar',
+            data: {{
+                labels: {json.dumps(labels)},
+                datasets: [{{
+                    label: 'Errors',
+                    data: {json.dumps(error_counts)},
+                    backgroundColor: 'rgba(248, 113, 113, 0.6)',
+                    borderColor: 'rgba(248, 113, 113, 1)',
+                    borderWidth: 1
+                }}]
+            }},
+            options: {{
+                indexAxis: 'y',
+                responsive: true,
+                plugins: {{ legend: {{ display: false }} }},
+                scales: {{
+                    x: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }},
+                    y: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }}
+                }}
+            }}
+        }});
+
+        new Chart(document.getElementById('rateChart'), {{
+            type: 'bar',
+            data: {{
+                labels: {json.dumps(labels)},
+                datasets: [{{
+                    label: 'Error Rate %',
+                    data: {json.dumps(error_rates)},
+                    backgroundColor: 'rgba(251, 191, 36, 0.6)',
+                    borderColor: 'rgba(251, 191, 36, 1)',
+                    borderWidth: 1
+                }}]
+            }},
+            options: {{
+                indexAxis: 'y',
+                responsive: true,
+                plugins: {{ legend: {{ display: false }} }},
+                scales: {{
+                    x: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }}, max: 100 }},
+                    y: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }}
+                }}
+            }}
+        }});
+        ''' if top_15 else ''}
+    </script>
+</body>
+</html>"""
+
+    path = CHARTS_DIR / "blocked_tools.html"
+    path.write_text(html, encoding='utf-8')
+    print(f"✅ Blocked tools chart generated: {path}")
+    return path
+
+
 def generate_dashboard():
     """Generate a dashboard with all charts."""
+    from datetime import timedelta, timezone
+
+    # EST timezone offset (UTC-5)
+    EST = timezone(timedelta(hours=-5))
+    now_est = datetime.now(EST)
 
     html = f"""<!DOCTYPE html>
 <html>
@@ -1414,126 +2128,195 @@ def generate_dashboard():
         body {{
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             padding: 40px;
-            background: #f5f5f5;
+            background: #1a1a2e;
             margin: 0;
+            color: #eee;
         }}
         .container {{
             max-width: 1400px;
             margin: 0 auto;
         }}
         h1 {{
-            color: #333;
+            color: #4cc9f0;
             margin-bottom: 10px;
         }}
         .timestamp {{
-            color: #666;
+            color: #888;
             font-size: 14px;
             margin-bottom: 30px;
         }}
+        .section-title {{
+            color: #4cc9f0;
+            font-size: 16px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin: 30px 0 15px 0;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #333;
+        }}
         .grid {{
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
             gap: 20px;
             margin-top: 20px;
         }}
         .chart-card {{
-            background: white;
+            background: #16213e;
             padding: 20px;
             border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            border: 1px solid #333;
+            transition: border-color 0.2s;
+        }}
+        .chart-card:hover {{
+            border-color: #4cc9f0;
         }}
         .chart-card h2 {{
             margin-top: 0;
             font-size: 18px;
-            color: #333;
+            color: #eee;
+        }}
+        .chart-card p {{
+            color: #888;
+            font-size: 14px;
+            margin: 10px 0;
         }}
         .chart-link {{
             display: inline-block;
             margin-top: 10px;
             padding: 8px 16px;
-            background: #0066cc;
-            color: white;
+            background: #4cc9f0;
+            color: #1a1a2e;
             text-decoration: none;
             border-radius: 4px;
             font-size: 14px;
+            font-weight: 500;
         }}
         .chart-link:hover {{
-            background: #0052a3;
-        }}
-        iframe {{
-            width: 100%;
-            height: 300px;
-            border: none;
+            background: #7dd8f5;
         }}
         .refresh {{
-            background: #28a745;
+            background: #10b981;
             color: white;
             padding: 10px 20px;
             border: none;
             border-radius: 4px;
             cursor: pointer;
             font-size: 16px;
+            margin-left: 15px;
         }}
         .refresh:hover {{
-            background: #218838;
+            background: #059669;
+        }}
+        .commands-box {{
+            margin-top: 40px;
+            padding: 20px;
+            background: #16213e;
+            border-radius: 8px;
+            border: 1px solid #333;
+        }}
+        .commands-box h2 {{
+            color: #4cc9f0;
+            margin-top: 0;
+        }}
+        .commands-box pre {{
+            background: #0f0f1e;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+            color: #10b981;
+            font-size: 13px;
         }}
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🤖 Agent-Swarm Performance Dashboard</h1>
+        <h1>Agent-Swarm Performance Dashboard</h1>
         <div class="timestamp">
-            Last updated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-            <button class="refresh" onclick="location.reload()">🔄 Refresh</button>
+            Last updated: {now_est.strftime("%Y-%m-%d %H:%M:%S")} EST
+            <button class="refresh" onclick="location.reload()">Refresh</button>
         </div>
 
+        <div class="section-title">Real-Time Telemetry</div>
         <div class="grid">
             <div class="chart-card">
-                <h2>📊 Efficiency Trend</h2>
-                <p>Overall efficiency score over time</p>
-                <a href="efficiency_trend.html" class="chart-link">View Full Chart →</a>
+                <h2>📡 Live Telemetry</h2>
+                <p>All tool calls tracked by hooks in real-time</p>
+                <a href="telemetry.html" class="chart-link">View Live Data →</a>
             </div>
 
             <div class="chart-card">
-                <h2>📜 Script Adoption</h2>
-                <p>Script usage vs direct reads trend</p>
-                <a href="script_adoption.html" class="chart-link">View Full Chart →</a>
+                <h2>⏱️ Latency by Tool</h2>
+                <p>Average duration per tool - find slow tools</p>
+                <a href="latency.html" class="chart-link">View Chart →</a>
+            </div>
+
+            <div class="chart-card">
+                <h2>🚨 Error Timeline</h2>
+                <p>Error spikes over time</p>
+                <a href="error_timeline.html" class="chart-link">View Chart →</a>
+            </div>
+
+            <div class="chart-card">
+                <h2>📅 Activity Heatmap</h2>
+                <p>Work patterns by hour and day</p>
+                <a href="activity_heatmap.html" class="chart-link">View Chart →</a>
+            </div>
+
+            <div class="chart-card">
+                <h2>🔌 Native vs MCP</h2>
+                <p>Compare tool ecosystems</p>
+                <a href="native_vs_mcp.html" class="chart-link">View Chart →</a>
+            </div>
+
+            <div class="chart-card">
+                <h2>💡 Token Efficiency</h2>
+                <p>Tokens per call ratio by tool</p>
+                <a href="token_efficiency.html" class="chart-link">View Chart →</a>
+            </div>
+
+            <div class="chart-card">
+                <h2>📊 Session Comparison</h2>
+                <p>Compare metrics across days</p>
+                <a href="session_comparison.html" class="chart-link">View Chart →</a>
+            </div>
+
+            <div class="chart-card">
+                <h2>🚫 Blocked Tools</h2>
+                <p>Failed and blocked tool calls</p>
+                <a href="blocked_tools.html" class="chart-link">View Chart →</a>
+            </div>
+        </div>
+
+        <div class="section-title">Trend Analysis</div>
+        <div class="grid">
+            <div class="chart-card">
+                <h2>📈 Success Rate Trend</h2>
+                <p>Success rate over time (daily/hourly)</p>
+                <a href="efficiency_trend.html" class="chart-link">View Chart →</a>
             </div>
 
             <div class="chart-card">
                 <h2>💰 Token Trend</h2>
-                <p>Estimated tokens per session</p>
-                <a href="token_trend.html" class="chart-link">View Full Chart →</a>
+                <p>Estimated tokens over time (daily/hourly)</p>
+                <a href="token_trend.html" class="chart-link">View Chart →</a>
             </div>
 
             <div class="chart-card">
                 <h2>🔧 Tool Usage</h2>
-                <p>Which tools are used most</p>
-                <a href="tool_usage.html" class="chart-link">View Full Chart →</a>
-            </div>
-
-            <div class="chart-card">
-                <h2>🎯 Token Impact</h2>
-                <p>Actionable optimization metrics</p>
-                <a href="token_impact.html" class="chart-link">View Full Chart →</a>
-            </div>
-
-            <div class="chart-card">
-                <h2>🚫 Block Reasons</h2>
-                <p>What's being blocked and why</p>
-                <a href="blocks.html" class="chart-link">View Full Chart →</a>
+                <p>Top tools by call count</p>
+                <a href="tool_usage.html" class="chart-link">View Chart →</a>
             </div>
 
             <div class="chart-card">
                 <h2>🤖 Subagent Tokens</h2>
                 <p>Token usage by agent type</p>
-                <a href="subagents.html" class="chart-link">View Full Chart →</a>
+                <a href="subagents.html" class="chart-link">View Chart →</a>
             </div>
         </div>
 
-        <div style="margin-top: 40px; padding: 20px; background: white; border-radius: 8px;">
-            <h2>📈 Quick Commands</h2>
-            <pre style="background: #f8f9fa; padding: 15px; border-radius: 4px; overflow-x: auto;">
+        <div class="commands-box">
+            <h2>Quick Commands</h2>
+            <pre>
 # Capture current metrics
 python3 ~/.claude/plugins/agent-swarm/scripts/charts.py snapshot
 
@@ -1541,9 +2324,10 @@ python3 ~/.claude/plugins/agent-swarm/scripts/charts.py snapshot
 python3 ~/.claude/plugins/agent-swarm/scripts/charts.py dashboard
 
 # Individual charts
+python3 ~/.claude/plugins/agent-swarm/scripts/charts.py telemetry
+python3 ~/.claude/plugins/agent-swarm/scripts/charts.py latency
+python3 ~/.claude/plugins/agent-swarm/scripts/charts.py errors
 python3 ~/.claude/plugins/agent-swarm/scripts/charts.py efficiency
-python3 ~/.claude/plugins/agent-swarm/scripts/charts.py script-adoption
-python3 ~/.claude/plugins/agent-swarm/scripts/charts.py tool-usage
             </pre>
         </div>
     </div>
@@ -1577,15 +2361,23 @@ def main():
 
     if len(sys.argv) < 2:
         print("Usage: charts.py <command>")
-        print("\nCommands:")
-        print("  snapshot          - Capture current metrics")
-        print("  efficiency        - Efficiency trend chart")
-        print("  script-adoption   - Script adoption chart")
-        print("  tool-usage        - Tool usage breakdown")
-        print("  blocks            - Block reasons chart")
+        print("\nTelemetry Charts (recommended):")
+        print("  telemetry         - Real-time telemetry overview")
+        print("  latency           - Latency by tool")
+        print("  errors            - Error timeline")
+        print("  heatmap           - Activity heatmap (EST)")
+        print("  native-vs-mcp     - Native vs MCP comparison")
+        print("  token-efficiency  - Token efficiency by tool")
+        print("  session-compare   - Session comparison")
+        print("  blocked-tools     - Blocked/failed tools")
+        print("\nTrend Charts:")
+        print("  efficiency        - Success rate trend (EST)")
+        print("  token-trend       - Token usage trend (EST)")
+        print("  tool-usage        - Tool usage breakdown (EST)")
         print("  subagents         - Subagent token usage")
+        print("\nMeta Commands:")
         print("  dashboard         - Generate all charts")
-        print("  all               - Snapshot + generate all")
+        print("\nAll times displayed in EST.")
         return
 
     cmd = sys.argv[1]
@@ -1614,28 +2406,64 @@ def main():
     elif cmd == "token-trend":
         chart_token_trend()
 
+    elif cmd == "telemetry":
+        chart_realtime_telemetry()
+
+    elif cmd == "latency":
+        chart_latency_by_tool()
+
+    elif cmd == "errors":
+        chart_error_timeline()
+
+    elif cmd == "heatmap":
+        chart_activity_heatmap()
+
+    elif cmd == "native-vs-mcp":
+        chart_native_vs_mcp()
+
+    elif cmd == "token-efficiency":
+        chart_token_efficiency()
+
+    elif cmd == "session-compare":
+        chart_session_comparison()
+
+    elif cmd == "blocked-tools":
+        chart_blocked_tools()
+
     elif cmd == "dashboard":
         # Generate all charts
         print("Generating charts...")
+        # Telemetry charts
+        chart_realtime_telemetry()
+        chart_latency_by_tool()
+        chart_error_timeline()
+        chart_activity_heatmap()
+        chart_native_vs_mcp()
+        chart_token_efficiency()
+        chart_session_comparison()
+        chart_blocked_tools()
+        # Trend charts
         chart_efficiency_trend()
-        chart_script_adoption()
         chart_token_trend()
         chart_tool_usage()
-        chart_token_impact()
-        chart_blocks()
         chart_subagents()
         generate_dashboard()
 
     elif cmd == "all":
-        print("📸 Capturing snapshot...")
-        capture_snapshot()
-        print("\n📊 Generating charts...")
+        print("📊 Generating all charts...")
+        # Telemetry charts
+        chart_realtime_telemetry()
+        chart_latency_by_tool()
+        chart_error_timeline()
+        chart_activity_heatmap()
+        chart_native_vs_mcp()
+        chart_token_efficiency()
+        chart_session_comparison()
+        chart_blocked_tools()
+        # Trend charts
         chart_efficiency_trend()
-        chart_script_adoption()
         chart_token_trend()
         chart_tool_usage()
-        chart_token_impact()
-        chart_blocks()
         chart_subagents()
         generate_dashboard()
 
