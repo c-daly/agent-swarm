@@ -25,8 +25,23 @@ except ImportError:
     def log_debug(msg, **kw): pass
     class ConfigError(Exception): pass
     class StateError(Exception): pass
-def reset_enforcement_counters():
-    """Reset enforcement counters but preserve workflow state for new conversation."""
+def load_iterate_state() -> dict:
+    """Load iterate workflow state (orchestrator's phase)."""
+    iterate_file = Path.home() / ".claude/plugins/agent-swarm/.state/iterate.json"
+    if iterate_file.exists():
+        try:
+            return json.loads(iterate_file.read_text())
+        except (json.JSONDecodeError, IOError):
+            pass
+    return {}
+
+
+def reset_enforcement_counters(agent_id: str | None = None):
+    """Reset enforcement counters but preserve workflow state for new conversation.
+
+    Args:
+        agent_id: If provided, this is a subagent - inherit phase from orchestrator.
+    """
     # Use absolute path to match pre-compacting.py
     state_dir = Path.home() / ".claude/plugins/agent-swarm/.state"
     state_file = state_dir / "session.json"
@@ -54,7 +69,7 @@ def reset_enforcement_counters():
             "files_read": [],
             "read_count": 0,
             "files_edited_this_session": [],
-            "phase": None,
+            "phase": None,  # Will be set below if subagent
             "search_count": 0,
             "edits_this_response": 0,
             "memory_search_suggested": 1,
@@ -67,6 +82,13 @@ def reset_enforcement_counters():
 
         # Restore flags preserved from compaction
         state.update(compaction_flags)
+
+        # If subagent, inherit phase from orchestrator
+        if agent_id:
+            iterate_state = load_iterate_state()
+            phase = iterate_state.get("phase")
+            if phase:
+                state["phase"] = phase
 
         with open(state_file, 'w') as f:
             json.dump(state, f, indent=2)
@@ -124,18 +146,20 @@ def search_episodic_memory(query_terms):
 def main():
     """Session start hook entry point."""
 
-    # Reset enforcement counters for new conversation
-    reset_enforcement_counters()
-
-    # Run inventory to discover capabilities
-    inventory_output = run_inventory()
-
-    # Read session data from stdin
+    # Read session data from stdin first (need agentId for reset)
     try:
         input_data = json.loads(sys.stdin.read())
     except json.JSONDecodeError:
-        # No input data, just print suggestion
         input_data = {}
+
+    # Check if this is a subagent (has agentId)
+    agent_id = input_data.get("agentId")
+
+    # Reset enforcement counters - pass agent_id to inherit phase if subagent
+    reset_enforcement_counters(agent_id)
+
+    # Run inventory to discover capabilities
+    inventory_output = run_inventory()
 
     # Get any initial context from the session
     initial_messages = input_data.get("messages", [])

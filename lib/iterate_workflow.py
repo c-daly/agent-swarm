@@ -111,46 +111,46 @@ class Phase(Enum):
 PHASE_TOOLS = {
     Phase.ORCHESTRATE: {
         # Orchestrate phase: coordinate workers, read queue state, spawn subagents
-        # NO editing, Bash allowed but evaluation commands filtered (see is_tool_allowed)
-        "allowed": {"Read", "Task", "TodoWrite", "TaskOutput", "Glob", "Grep", "Bash"},
-        "blocked": {"Edit", "Write", "NotebookEdit"},
+        # NO editing, native__bash allowed but evaluation commands filtered (see is_tool_allowed)
+        "allowed": {"Read", "Task", "TodoWrite", "TaskOutput", "Glob", "Grep", "native__bash"},
+        "blocked": {"Edit", "Write", "NotebookEdit", "Bash"},
     },
     Phase.INTAKE: {
         # Intake phase: gather requirements, research, no editing
         "allowed": {"Read", "Glob", "Grep", "WebSearch", "WebFetch", "Task"},
-        "blocked": {"Edit", "Write"},
+        "blocked": {"Edit", "Write", "Bash"},
     },
     Phase.DESIGN: {
         # Design phase: write spec, run decomposer
-        "allowed": {"Read", "Glob", "Grep", "Write", "Bash", "Task"},
-        "blocked": set(),
+        "allowed": {"Read", "Glob", "Grep", "Write", "native__bash", "Task"},
+        "blocked": {"Bash"},
     },
     Phase.TEST_WRITING: {
-        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "Bash"},
-        "blocked": set(),
+        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "native__bash"},
+        "blocked": {"Bash"},
     },
     Phase.IMPLEMENT: {
-        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "Bash"},
-        "blocked": set(),
+        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "native__bash"},
+        "blocked": {"Bash"},
     },
     Phase.TEST: {
         # Test phase: run verification only, no editing
-        "allowed": {"Read", "Glob", "Grep", "Bash"},
-        "blocked": {"Edit", "Write"},
+        "allowed": {"Read", "Glob", "Grep", "native__bash"},
+        "blocked": {"Edit", "Write", "Bash"},
     },
     Phase.REVIEW: {
         # Review phase: fix issues from Greptile comments
-        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "Bash"},
-        "blocked": set(),
+        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "native__bash"},
+        "blocked": {"Bash"},
     },
     Phase.DONE: {
-        "allowed": {"Read", "Glob", "Grep", "Bash", "Edit", "Write", "Task"},
-        "blocked": set(),
+        "allowed": {"Read", "Glob", "Grep", "native__bash", "Edit", "Write", "Task"},
+        "blocked": {"Bash"},
     },
 }
 
-# Per-phase Bash command whitelist
-# Each phase only allows specific Bash commands. None means all allowed.
+# Per-phase native__bash command whitelist
+# Each phase only allows specific commands via native__bash. None means all allowed.
 PHASE_BASH_WHITELIST = {
     Phase.INTAKE: {"iterate_workflow.py"},
     Phase.DESIGN: {"iterate_workflow.py"},
@@ -247,39 +247,29 @@ def start(
         - queue provided → load queue → ORCHESTRATE
         - spec provided → decompose to queue → ORCHESTRATE
         - task looks like spec → treat as inline spec → ORCHESTRATE
-        - vague request → INTAKE (gather requirements)
+        - otherwise → ORCHESTRATE (orchestrator creates queue if needed)
     """
     # Use orchestrator for state management if no agent_id specified
     effective_agent_id = agent_id or "orchestrator"
 
-    needs_intake = True
-
     if queue:
         content, _ = _resolve_input(queue, ".queue")
         _load_queue_content(content)
-        needs_intake = False
-        initial_phase = Phase.ORCHESTRATE
     elif spec:
         content, _ = _resolve_input(spec, ".spec")
         _decompose_spec_content(content)
-        needs_intake = False
-        initial_phase = Phase.ORCHESTRATE
     elif _is_spec(task):
         _decompose_spec_content(task)
-        needs_intake = False
-        initial_phase = Phase.ORCHESTRATE
-    else:
-        initial_phase = Phase.INTAKE
+    # Always start in ORCHESTRATE - orchestrator creates queue if needed
 
     state = {
         "active": True,
         "task": task,
-        "phase": initial_phase.value,
+        "phase": Phase.ORCHESTRATE.value,
         "iteration": 0,
         "max_iterations": max_iterations,
         "mode": "iterate-tdd",
         "workflow_invoked": True,
-        "needs_intake": needs_intake,
         "tests_passed": None,
         "lint_passed": None,
         "coverage_ok": None,
@@ -287,8 +277,8 @@ def start(
         "pr_number": None,
     }
     state_manager.set_state("orchestrator", state)
-    _log("info", "Workflow started", task=task[:50], phase=initial_phase.value,
-         agent_id=effective_agent_id, needs_intake=needs_intake)
+    _log("info", "Workflow started", task=task[:50], phase=Phase.ORCHESTRATE.value,
+         agent_id=effective_agent_id)
     return state
 
 
@@ -366,8 +356,42 @@ def verify_active(expected_phase: Optional[Phase] = None) -> None:
 
 
 def set_phase(phase: Phase) -> None:
-    """Manually set phase (for kick-back scenarios)."""
+    """Manually set phase (for kick-back scenarios).
+
+    Validates transitions to prevent skipping phases:
+    - From ORCHESTRATE: INTAKE or DONE for orchestrator; subagents can be assigned any phase
+    - From IMPLEMENT: only TEST allowed (can't skip to DONE/REVIEW)
+    - From TEST: REVIEW, IMPLEMENT, or TEST_WRITING allowed (not DONE directly)
+    - From TEST_WRITING: only IMPLEMENT allowed
+    - From REVIEW: DONE or IMPLEMENT allowed
+    - From INTAKE/DESIGN: flexible (discovery phases)
+    """
     state = state_manager.get_state("orchestrator") or {}
+    current_phase = state.get("phase")
+
+    # Define valid transitions for TDD loop phases
+    # ORCHESTRATE can assign any starting phase (for subagents)
+    # Discovery phases (INTAKE, DESIGN) are flexible
+    valid_transitions = {
+        # TDD loop has strict transitions
+        Phase.IMPLEMENT.value: {Phase.TEST},
+        Phase.TEST.value: {Phase.REVIEW, Phase.IMPLEMENT, Phase.TEST_WRITING},
+        Phase.TEST_WRITING.value: {Phase.IMPLEMENT},
+        Phase.REVIEW.value: {Phase.DONE, Phase.IMPLEMENT},
+        # DONE is terminal
+        Phase.DONE.value: {Phase.DONE},
+    }
+
+    # Validate transition only for TDD loop phases (strict enforcement)
+    if current_phase and current_phase in valid_transitions:
+        allowed = valid_transitions[current_phase]
+        if phase not in allowed:
+            allowed_names = ", ".join(p.value for p in allowed)
+            raise RuntimeError(
+                f"Cannot transition from {current_phase.upper()} to {phase.value}. "
+                f"Valid transitions: {allowed_names}"
+            )
+
     state["phase"] = phase.value
     state_manager.set_state("orchestrator", state)
 
@@ -416,7 +440,7 @@ def advance_phase() -> Optional[Phase]:
             )
 
     if current == Phase.INTAKE:
-        # Intake complete, always go to design
+        # Intake complete, go to design to create spec/queue
         state["phase"] = Phase.DESIGN.value
 
     elif current == Phase.DESIGN:
@@ -424,8 +448,13 @@ def advance_phase() -> Optional[Phase]:
         state["phase"] = Phase.ORCHESTRATE.value
 
     elif current == Phase.ORCHESTRATE:
-        # Orchestrate complete, move to TDD loop
-        state["phase"] = Phase.TEST_WRITING.value
+        # Orchestrator should NEVER advance - it stays here and spawns subagents
+        # Subagents report phase completion, orchestrator coordinates
+        raise RuntimeError(
+            "Cannot advance from ORCHESTRATE. The orchestrator stays in this phase "
+            "and spawns subagents (implementer) for TEST_WRITING, IMPLEMENT, etc. "
+            "Use Task tool to spawn 'agent-swarm:implementer' subagent instead."
+        )
 
     elif current == Phase.TEST_WRITING:
         # Tests written, now implement
@@ -561,9 +590,48 @@ def _notify_workflow_end(reason: str, task: str = "") -> None:
 
 
 def stop(reason: str = "user_stopped") -> None:
-    """Stop the iterate workflow."""
+    """Stop the iterate workflow.
+
+    Enforces exit conditions:
+    - Task queue must be empty (all tasks complete)
+    - No active workers/subagents running
+
+    Raises:
+        RuntimeError: If exit conditions not met.
+    """
     state = state_manager.get_state("orchestrator") or {}
     task = state.get("task", "unknown")
+
+    # Check exit conditions
+    blockers = []
+
+    # 1. Check task queue
+    try:
+        wq = _get_workflow_queue()
+        if not wq.all_done():
+            pending = [t for t in wq.queue.tasks.values()
+                      if t.status.value in ("pending", "running")]
+            blockers.append(f"Task queue not empty: {len(pending)} tasks pending/running")
+    except Exception:
+        pass  # No queue = no blocker
+
+    # 2. Check active workers
+    try:
+        from worker_pool import get_active_workers
+        active = get_active_workers()
+        if active:
+            blockers.append(f"Workers still active: {len(active)} agents running")
+    except ImportError:
+        pass  # worker_pool not available
+    except Exception:
+        pass
+
+    if blockers:
+        raise RuntimeError(
+            "Cannot stop workflow - exit conditions not met:\n"
+            + "\n".join(f"  - {b}" for b in blockers)
+        )
+
     state["active"] = False
     state["exit_reason"] = reason
     state_manager.set_state("orchestrator", state)
@@ -597,8 +665,8 @@ def is_tool_allowed(tool_name: str, command: str | None = None) -> tuple[bool, s
     if tool_name in phase_config["blocked"]:
         return False, f"[BLOCKED] {tool_name} not allowed in {phase.value} phase. Run tests first."
 
-    # Check Bash commands against per-phase whitelist
-    if tool_name == "Bash" and command:
+    # Check native__bash commands against per-phase whitelist
+    if tool_name == "native__bash" and command:
         cmd_lower = command.strip().lower()
         whitelist = PHASE_BASH_WHITELIST.get(phase)
 
