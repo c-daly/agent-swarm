@@ -168,7 +168,13 @@ class TelemetryCollector:
                 "by_tool": {},
                 "by_backend": {},
                 "subagents": {},
-                "totals": {"calls": 0, "errors": 0, "tokens_est": 0, "duration_ms": 0}
+                "totals": {"calls": 0, "errors": 0, "tokens": 0, "duration_ms": 0},
+                "efficiency": {
+                    "full_chars": 0,
+                    "summary_chars": 0,
+                    "calls_summarized": 0,
+                    "chars_saved": 0
+                }
             }
         }
 
@@ -195,8 +201,23 @@ class TelemetryCollector:
             )
         return correlation_id
 
-    def track_response(self, correlation_id: str, error: bool = False, error_msg: str = "") -> None:
-        """Called when a response is received."""
+    def track_response(
+        self,
+        correlation_id: str,
+        error: bool = False,
+        error_msg: str = "",
+        full_size: int = 0,
+        summary_size: int = 0
+    ) -> None:
+        """Called when a response is received.
+
+        Args:
+            correlation_id: Request correlation ID
+            error: Whether the request errored
+            error_msg: Error message if any
+            full_size: Size of full response in chars (for efficiency tracking)
+            summary_size: Size of summary in chars (for efficiency tracking)
+        """
         import time
 
         with self._lock:
@@ -219,7 +240,9 @@ class TelemetryCollector:
                 "status": "error" if error else "success",
                 "tokens_est": tokens_est,
                 "subagent_type": subagent_type,
-                "error_msg": error_msg[:200] if error_msg else ""
+                "error_msg": error_msg[:200] if error_msg else "",
+                "full_size": full_size,
+                "summary_size": summary_size
             }
 
             # Add to events (rolling window)
@@ -269,18 +292,49 @@ class TelemetryCollector:
 
         # Totals
         agg["totals"]["calls"] += 1
-        agg["totals"]["tokens_est"] += event["tokens_est"]
+        agg["totals"]["tokens"] += event["tokens_est"]
         agg["totals"]["duration_ms"] += event["duration_ms"]
         if error:
             agg["totals"]["errors"] += 1
 
+        # Efficiency tracking (for summarized responses)
+        full_size = event.get("full_size", 0)
+        summary_size = event.get("summary_size", 0)
+        if full_size > 0 and summary_size > 0:
+            # Ensure efficiency dict exists (for backwards compatibility)
+            if "efficiency" not in agg:
+                agg["efficiency"] = {
+                    "full_chars": 0,
+                    "summary_chars": 0,
+                    "calls_summarized": 0,
+                    "chars_saved": 0
+                }
+            agg["efficiency"]["full_chars"] += full_size
+            agg["efficiency"]["summary_chars"] += summary_size
+            agg["efficiency"]["calls_summarized"] += 1
+            agg["efficiency"]["chars_saved"] += (full_size - summary_size)
+
     def get_summary(self) -> dict:
         """Get current telemetry summary."""
         with self._lock:
+            agg = self._data["aggregates"]
+
+            # Compute efficiency metrics
+            eff = agg.get("efficiency", {})
+            full_chars = eff.get("full_chars", 0)
+            summary_chars = eff.get("summary_chars", 0)
+
+            efficiency_computed = {
+                **eff,
+                "compression_ratio": round(summary_chars / full_chars, 3) if full_chars > 0 else 0,
+                "savings_pct": round((1 - summary_chars / full_chars) * 100, 1) if full_chars > 0 else 0,
+                "tokens_saved_est": (full_chars - summary_chars) // 4 if full_chars > 0 else 0  # ~4 chars/token
+            }
+
             return {
                 "session_id": self._data["session_id"],
                 "event_count": len(self._data["events"]),
-                "aggregates": self._data["aggregates"],
+                "aggregates": {**agg, "efficiency": efficiency_computed},
                 "recent_events": self._data["events"][-10:]  # Last 10
             }
 
@@ -380,7 +434,7 @@ class MCPRouter:
                 response = client.chat.completions.create(
                     model=model,
                     messages=[{"role": "user", "content": prompt}],
-                    max_tokens=100,
+                    max_tokens=500,
                     temperature=0,
                 )
                 return response.choices[0].message.content.strip()
@@ -401,7 +455,7 @@ class MCPRouter:
             try:
                 response = client.messages.create(
                     model=model,
-                    max_tokens=100,
+                    max_tokens=500,
                     temperature=0,
                     messages=[{"role": "user", "content": prompt}],
                 )
@@ -511,7 +565,7 @@ class MCPRouter:
             args: Tool arguments
 
         Returns:
-            RouterResponse with summary and full response
+            RouterResponse with structured summary and full response
         """
         correlation_id = self._generate_correlation_id(destination, tool_name, args)
 
@@ -551,14 +605,18 @@ class MCPRouter:
                 error = True
                 error_msg = str(full_response.get("error", "Unknown error"))[:200]
 
-            # Generate summary
-            summary = self._summarize(full_response)
+            # Generate structured summary using schema extraction
+            summary = self._extract_summary(tool_name, full_response)
 
             response = RouterResponse(
                 summary=summary,
                 full=full_response,
                 correlation_id=correlation_id
             )
+
+        # Calculate sizes for efficiency tracking
+        full_size = len(json.dumps(response.full)) if response.full else 0
+        summary_size = len(response.summary) if response.summary else 0
 
         # Fire response hooks
         for hook in self.on_response:
@@ -569,7 +627,13 @@ class MCPRouter:
 
         # Complete telemetry tracking
         if self.telemetry and telemetry_id:
-            self.telemetry.track_response(telemetry_id, error=error, error_msg=error_msg)
+            self.telemetry.track_response(
+                telemetry_id,
+                error=error,
+                error_msg=error_msg,
+                full_size=full_size,
+                summary_size=summary_size
+            )
 
         return response
 
@@ -787,6 +851,152 @@ Summary:"""
 
         return f"Response received ({len(json.dumps(response))} chars)"
 
+    # Output schemas for structured extraction
+    TOOL_SCHEMAS: dict[str, dict] = {
+        "grep": {
+            "description": "Search results grouped by file with line numbers",
+            "schema": {
+                "files": "list of matching file paths",
+                "by_file": "dict mapping filepath to list of line numbers where matches occur",
+                "match_count": "total number of matches"
+            }
+        },
+        "glob": {
+            "description": "File listing grouped by directory",
+            "schema": {
+                "by_directory": "dict mapping directory path to list of filenames in that directory",
+                "total": "total number of files found"
+            }
+        },
+        "bash": {
+            "description": "Command execution result. If output contains [stderr] marker, that indicates error output.",
+            "schema": {
+                "exit_code": "0 for success, non-zero if [stderr] present or command failed",
+                "line_count": "number of output lines",
+                "preview": "first 5 lines of output (list of strings)",
+                "error": "content after [stderr] marker if present, null otherwise"
+            }
+        },
+        "read_file": {
+            "description": "File contents",
+            "schema": {
+                "line_count": "number of lines in file",
+                "char_count": "number of characters",
+                "preview": "first 10 lines of content"
+            }
+        },
+        "write_file": {
+            "description": "File write result",
+            "schema": {
+                "success": "true if file was written successfully",
+                "error": "error message if failed, null otherwise"
+            }
+        },
+        "edit_file": {
+            "description": "File edit result",
+            "schema": {
+                "success": "true if edit was applied successfully",
+                "error": "error message if failed, null otherwise"
+            }
+        }
+    }
+
+    GENERIC_SCHEMA = {
+        "description": "Generic tool output",
+        "schema": {
+            "char_count": "total characters in output",
+            "preview": "first 500 characters of output",
+            "truncated": "true if output was truncated"
+        }
+    }
+
+    def _extract_summary(self, tool_name: str, response: dict) -> str:
+        """Generate structured summary using LLM to extract into schema.
+
+        Args:
+            tool_name: Name of the tool that produced the response
+            response: Response dict from backend
+
+        Returns:
+            JSON string with structured summary
+        """
+        if "error" in response:
+            return json.dumps({"error": str(response["error"])[:200]})
+
+        # Get raw content from MCP response
+        content = self._extract_content(response)
+
+        # For bash with stderr, use fallback directly (LLM struggles with [stderr] marker)
+        if tool_name == "bash" and "[stderr]" in content:
+            return self._fallback_extract(tool_name, content)
+
+        # Get schema for this tool (or generic)
+        tool_schema = self.TOOL_SCHEMAS.get(tool_name, self.GENERIC_SCHEMA)
+
+        # Use LLM to extract into schema
+        prompt = f"""Transform this tool output into the following JSON schema.
+Return ONLY valid JSON, no explanation.
+Limit any lists to first 10 items max.
+
+Schema: {json.dumps(tool_schema["schema"])}
+Tool output (truncated to 2000 chars):
+{content[:2000]}
+
+JSON:"""
+
+        result = self._llm_call(prompt)
+
+        # Validate it's JSON, fallback if not
+        if result:
+            try:
+                json.loads(result)
+                return result
+            except json.JSONDecodeError:
+                pass
+
+        # Fallback: basic extraction without LLM
+        return self._fallback_extract(tool_name, content)
+
+    def _extract_content(self, response: dict) -> str:
+        """Extract raw text content from MCP response."""
+        if "result" in response:
+            result = response["result"]
+            if isinstance(result, dict):
+                content_list = result.get("content", [])
+                if content_list and isinstance(content_list[0], dict):
+                    return content_list[0].get("text", "")
+            elif isinstance(result, str):
+                return result
+        return json.dumps(response)
+
+    def _fallback_extract(self, tool_name: str, content: str) -> str:
+        """Fallback extraction when LLM unavailable."""
+        lines = content.split("\n")
+
+        if tool_name in ("write_file", "edit_file"):
+            return json.dumps({"success": "error" not in content.lower()})
+
+        if tool_name == "bash":
+            # [stderr] marker indicates error output was present
+            has_stderr = "[stderr]" in content
+            stderr_content = None
+            if has_stderr:
+                parts = content.split("[stderr]")
+                stderr_content = parts[1].strip() if len(parts) > 1 else "stderr present"
+            return json.dumps({
+                "exit_code": 1 if has_stderr else 0,
+                "line_count": len(lines),
+                "preview": lines[:5],
+                "error": stderr_content
+            })
+
+        # Generic fallback
+        return json.dumps({
+            "char_count": len(content),
+            "preview": content[:500],
+            "truncated": len(content) > 500
+        })
+
 
 def analyze_telemetry_trends(telemetry: TelemetryCollector) -> dict:
     """Analyze telemetry data for trends and effectiveness.
@@ -853,7 +1063,7 @@ def analyze_telemetry_trends(telemetry: TelemetryCollector) -> dict:
     subagents = agg.get("subagents", {})
     if subagents:
         total_subagent_tokens = sum(s.get("tokens", 0) for s in subagents.values())
-        total_tokens = agg.get("totals", {}).get("tokens_est", 1)
+        total_tokens = agg.get("totals", {}).get("tokens", 1)
         subagent_pct = (total_subagent_tokens / total_tokens) * 100 if total_tokens else 0
         analysis["subagent_token_pct"] = round(subagent_pct, 1)
 

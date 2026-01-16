@@ -40,7 +40,9 @@ def main():
         try:
             request = json.loads(line)
             response = server.handle_request(request)
-            print(json.dumps(response), flush=True)
+            # Only send response if there's an ID (not a notification)
+            if request.get("id") is not None:
+                print(json.dumps(response), flush=True)
         except json.JSONDecodeError as e:
             # Return JSON-RPC error for malformed JSON
             error_response = {

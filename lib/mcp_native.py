@@ -325,9 +325,9 @@ def grep_files(
                 if regex.search(content):
                     matching_files.append(str(file))
                     if output_mode == "content":
-                        for line in content.splitlines():
+                        for linenum, line in enumerate(content.splitlines(), 1):
                             if regex.search(line):
-                                output_lines.append(f"{file}:{line}")
+                                output_lines.append(f"{file}:{linenum}:{line}")
             except (PermissionError, OSError):
                 continue  # Skip unreadable files
 
@@ -632,14 +632,15 @@ class MCPNativeServer:
             # Format successful response
             if "content" in result:
                 text = result["content"]
+            elif "output" in result:
+                # Grep content mode: include output with line numbers
+                text = result["output"]
             elif "files" in result:
                 text = json.dumps({"files": result["files"]}, indent=2)
             elif "stdout" in result:
                 text = result["stdout"]
                 if result.get("stderr"):
                     text += f"\n[stderr]\n{result['stderr']}"
-            elif "output" in result:
-                text = result["output"]
             else:
                 text = json.dumps(result, indent=2)
 
