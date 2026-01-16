@@ -468,17 +468,30 @@ class MCPRouter:
             try:
                 proc = self._get_connection(server)
 
-                # Send tool call
+                # Build request
                 request_id = hash((tool_name, json.dumps(args, sort_keys=True))) & 0xFFFFFFFF
-                line = json.dumps({
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "method": "tools/call",
-                    "params": {
-                        "name": tool_name,
-                        "arguments": args
+
+                if tool_name == "__list__":
+                    # Special: get tool list
+                    request = {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "method": "tools/list",
+                        "params": {}
                     }
-                }) + "\n"
+                else:
+                    # Normal tool call
+                    request = {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "method": "tools/call",
+                        "params": {
+                            "name": tool_name,
+                            "arguments": args
+                        }
+                    }
+
+                line = json.dumps(request) + "\n"
                 proc.stdin.write(line)  # type: ignore[union-attr]
                 proc.stdin.flush()  # type: ignore[union-attr]
 
@@ -555,7 +568,38 @@ def start_stdio_server(router: MCPRouter):
 
     Reads JSON-RPC requests from stdin, routes through router,
     writes responses to stdout.
+
+    Implements MCP protocol:
+    - initialize/initialized handshake
+    - tools/list (aggregates from all backends, prefixes tool names)
+    - tools/call (routes based on prefix)
     """
+    def send(msg: dict) -> None:
+        print(json.dumps(msg), flush=True)
+
+    def list_all_tools() -> list[dict]:
+        """Get tools from all backends, prefix names with backend."""
+        all_tools = []
+        for server in router.list_servers():
+            name = server["name"]
+            prefix = server.get("tool_prefix") or name
+
+            # Get tools from this backend
+            try:
+                response = router._forward_to_server(
+                    router._servers[name],
+                    "__list__",  # Special: triggers tools/list
+                    {}
+                )
+                if "result" in response and "tools" in response["result"]:
+                    for tool in response["result"]["tools"]:
+                        # Prefix tool name
+                        tool["name"] = f"{prefix}__{tool['name']}"
+                        all_tools.append(tool)
+            except Exception:
+                pass  # Skip failed backends
+        return all_tools
+
     for line in sys.stdin:
         request_id = None
         try:
@@ -564,49 +608,80 @@ def start_stdio_server(router: MCPRouter):
             params = request.get("params", {})
             request_id = request.get("id")
 
-            # Handle router API
-            if method == "router_register":
+            # MCP handshake
+            if method == "initialize":
+                result = {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {
+                        "name": "mcp-router",
+                        "version": "1.0.0"
+                    }
+                }
+            elif method == "notifications/initialized":
+                continue  # Notification, no response
+
+            # Tool discovery
+            elif method == "tools/list":
+                result = {"tools": list_all_tools()}
+
+            # Tool execution - parse prefix to route
+            elif method == "tools/call":
+                tool_name = params.get("name", "")
+                args = params.get("arguments", {})
+
+                # Parse prefix__toolname
+                if "__" in tool_name:
+                    prefix, actual_tool = tool_name.split("__", 1)
+                    # Find backend by prefix
+                    destination = None
+                    for server in router.list_servers():
+                        if server.get("tool_prefix") == prefix or server["name"] == prefix:
+                            destination = server["name"]
+                            break
+                    if not destination:
+                        result = {"error": f"Unknown backend prefix: {prefix}"}
+                    else:
+                        response = router.route(destination, actual_tool, args)
+                        result = {
+                            "summary": response.summary,
+                            "full": response.full,
+                            "correlation_id": response.correlation_id
+                        }
+                else:
+                    result = {"error": f"Tool name must be prefixed: prefix__tool"}
+
+            # Router management API
+            elif method == "router_register":
                 result = router.register_server(**params)
             elif method == "router_list":
                 result = router.list_servers()
             elif method == "router_unregister":
                 result = router.unregister_server(**params)
-            elif method == "tools/call":
-                # Route to target server
-                destination = params.get("destination", "default")
-                tool_name = params.get("name", "")
-                args = params.get("arguments", {})
-                response = router.route(destination, tool_name, args)
-                result = {
-                    "summary": response.summary,
-                    "full": response.full,
-                    "correlation_id": response.correlation_id
-                }
+
             else:
                 result = {"error": f"Unknown method: {method}"}
 
-            # Write response
-            response_obj = {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "result": result
-            }
-            print(json.dumps(response_obj), flush=True)
+            # Write response (skip for notifications)
+            if request_id is not None:
+                send({
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": result
+                })
 
         except json.JSONDecodeError as e:
-            error_response = {
+            send({
                 "jsonrpc": "2.0",
                 "id": None,
                 "error": {"code": -32700, "message": f"Parse error: {e}"}
-            }
-            print(json.dumps(error_response), flush=True)
+            })
         except Exception as e:
-            error_response = {
+            send({
                 "jsonrpc": "2.0",
                 "id": request_id,
                 "error": {"code": -32603, "message": str(e)}
-            }
-            print(json.dumps(error_response), flush=True)
+            })
 
 
 if __name__ == "__main__":
