@@ -9,10 +9,6 @@ from enum import Enum, auto
 from dataclasses import dataclass
 from typing import FrozenSet, Optional
 
-# Git commands blocked in orchestrate phase (gh allowed for reading PR status)
-GIT_COMMAND_PREFIXES = ("git ", "git\t", "git;")
-
-
 class ToolCategory(Enum):
     """Categories of tools available to agents."""
     FILE_READ = auto()
@@ -213,38 +209,3 @@ def get_phase_info(phase: str) -> Optional[Phase]:
         Phase definition or None if not found
     """
     return ITERATE_PHASES.get(phase)
-
-
-def check_bash_git_blocked(command: str, phase: str) -> tuple[bool, str]:
-    """Check if a Bash command containing git should be blocked.
-
-    In the orchestrate phase, git commands are blocked because
-    the review phase handles git operations. gh commands are allowed
-    for reading PR/review status.
-
-    Args:
-        command: The bash command to check
-        phase: Current workflow phase
-
-    Returns:
-        Tuple of (blocked: bool, reason: str)
-        - If blocked: (True, "reason for blocking")
-        - If allowed: (False, "")
-    """
-    if phase != "orchestrate":
-        return False, ""
-
-    # Normalize command - strip leading whitespace and check
-    cmd = command.lstrip()
-
-    # Check if command starts with git
-    if cmd.startswith(GIT_COMMAND_PREFIXES):
-        return True, "[ORCHESTRATE] Git commands blocked. Review phase handles git. Use gh for read-only PR operations."
-
-    # Check for piped/chained commands containing git
-    # Look for patterns like "... | git", "... && git", "... ; git"
-    for pattern in (" git ", "\tgit ", ";git ", "&git ", "|git "):
-        if pattern in command:
-            return True, "[ORCHESTRATE] Git commands blocked. Review phase handles git. Use gh for read-only PR operations."
-
-    return False, ""

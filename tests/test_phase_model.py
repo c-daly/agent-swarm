@@ -6,9 +6,7 @@ from lib.phase_model import (
     ToolCategory,
     ITERATE_PHASES,
     TOOL_CATEGORIES,
-    GIT_COMMAND_PREFIXES,
     check_tool_allowed,
-    check_bash_git_blocked,
     get_phase_info,
 )
 
@@ -83,106 +81,6 @@ class TestOrchestratePhase:
         """orchestrate phase doesn't require verification."""
         phase = ITERATE_PHASES["orchestrate"]
         assert not phase.requires_verification
-
-
-class TestCheckBashGitBlocked:
-    """Test git command blocking in orchestrate phase (gh allowed)."""
-
-    def test_blocks_git_command(self):
-        """Direct git commands are blocked in orchestrate."""
-        blocked, reason = check_bash_git_blocked("git status", "orchestrate")
-        assert blocked
-        assert "ORCHESTRATE" in reason
-        assert "blocked" in reason.lower()
-
-    def test_allows_gh_command(self):
-        """Direct gh commands are allowed in orchestrate for reading PR status."""
-        blocked, reason = check_bash_git_blocked("gh pr list", "orchestrate")
-        assert not blocked
-        assert reason == ""
-
-    def test_allows_gh_pr_view(self):
-        """gh pr view is allowed for polling review comments."""
-        blocked, reason = check_bash_git_blocked("gh pr view 123", "orchestrate")
-        assert not blocked
-        assert reason == ""
-
-    def test_allows_gh_api(self):
-        """gh api is allowed for reading PR data."""
-        blocked, reason = check_bash_git_blocked("gh api repos/owner/repo/pulls/123/comments", "orchestrate")
-        assert not blocked
-        assert reason == ""
-
-    def test_blocks_git_with_tab(self):
-        """Git commands with tab separator are blocked."""
-        blocked, _ = check_bash_git_blocked("git\tstatus", "orchestrate")
-        assert blocked
-
-    def test_allows_gh_with_tab(self):
-        """gh commands with tab separator are allowed."""
-        blocked, _ = check_bash_git_blocked("gh\tpr list", "orchestrate")
-        assert not blocked
-
-    def test_blocks_git_with_semicolon(self):
-        """Git commands starting with semicolon chain are blocked."""
-        blocked, _ = check_bash_git_blocked("git;echo done", "orchestrate")
-        assert blocked
-
-    def test_blocks_piped_git(self):
-        """Piped git commands are blocked."""
-        blocked, _ = check_bash_git_blocked("echo test | git apply", "orchestrate")
-        assert blocked
-
-    def test_blocks_chained_git(self):
-        """Chained git commands are blocked."""
-        blocked, _ = check_bash_git_blocked("cd repo && git status", "orchestrate")
-        assert blocked
-
-    def test_blocks_semicolon_chained_git(self):
-        """Semicolon-chained git commands are blocked."""
-        blocked, _ = check_bash_git_blocked("cd repo;git status", "orchestrate")
-        assert blocked
-
-    def test_allows_piped_gh(self):
-        """Piped gh commands are allowed."""
-        blocked, _ = check_bash_git_blocked("gh pr view 123 | jq .body", "orchestrate")
-        assert not blocked
-
-    def test_allows_in_other_phases(self):
-        """Git commands are allowed in other phases."""
-        blocked, reason = check_bash_git_blocked("git status", "implement")
-        assert not blocked
-        assert reason == ""
-
-    def test_allows_in_review_phase(self):
-        """Git commands are allowed in review phase."""
-        blocked, _ = check_bash_git_blocked("git status", "review")
-        assert not blocked
-
-    def test_allows_non_git_commands(self):
-        """Non-git commands are allowed in orchestrate."""
-        blocked, reason = check_bash_git_blocked("pytest tests/", "orchestrate")
-        assert not blocked
-        assert reason == ""
-
-    def test_allows_grep_git(self):
-        """Grep for git-related content is allowed."""
-        blocked, _ = check_bash_git_blocked("grep 'git' README.md", "orchestrate")
-        assert not blocked
-
-    def test_handles_leading_whitespace(self):
-        """Commands with leading whitespace are handled."""
-        blocked, _ = check_bash_git_blocked("  git status", "orchestrate")
-        assert blocked
-
-    def test_git_command_prefixes_constant(self):
-        """GIT_COMMAND_PREFIXES constant has expected git values only."""
-        assert "git " in GIT_COMMAND_PREFIXES
-        assert "git\t" in GIT_COMMAND_PREFIXES
-        assert "git;" in GIT_COMMAND_PREFIXES
-        # gh should NOT be in prefixes (allowed for reading PR status)
-        assert "gh " not in GIT_COMMAND_PREFIXES
-        assert "gh\t" not in GIT_COMMAND_PREFIXES
 
 
 class TestTestWritingPhase:
