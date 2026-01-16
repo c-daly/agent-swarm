@@ -158,11 +158,11 @@ def main():
         print(json.dumps({}))
         return
 
-    # Return summary as a system message that gets injected
+    # Return summary as additional context that gets injected
     result = {
         "hookSpecificOutput": {
             "hookEventName": "PostToolUse",
-            "message": f"📋 **MCP Response Summary** ({len(content):,} chars → {len(summary)} chars):\n{summary}"
+            "additionalContext": f"📋 **MCP Response Summary** ({len(content):,} chars → {len(summary)} chars):\n{summary}"
         }
     }
 

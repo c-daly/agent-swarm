@@ -146,12 +146,12 @@ def detect_error(tool_output) -> tuple[bool, str]:
 
 def update_aggregates(telemetry: dict, event: dict, is_error: bool) -> None:
     """Update aggregate statistics."""
-    agg = telemetry.setdefault("aggregates", {
-        "by_tool": {},
-        "by_backend": {},
-        "subagents": {},
-        "totals": {"calls": 0, "errors": 0, "tokens": 0, "duration_ms": 0}
-    })
+    agg = telemetry.setdefault("aggregates", {})
+    # Ensure all required keys exist (handles partial/legacy data)
+    agg.setdefault("by_tool", {})
+    agg.setdefault("by_backend", {})
+    agg.setdefault("subagents", {})
+    agg.setdefault("totals", {"calls": 0, "errors": 0, "tokens": 0, "duration_ms": 0})
 
     tool = event["tool"]
     backend = event["backend"]
