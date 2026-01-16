@@ -128,7 +128,8 @@ def main():
                 item.get("text", str(item)) if isinstance(item, dict) else str(item)
                 for item in content
             )
-        elif not isinstance(content, str):
+        if not content:
+            # No content field or empty - serialize entire output (e.g. Serena's {"result": ...})
             content = json.dumps(tool_output, indent=2)
     else:
         content = str(tool_output)
