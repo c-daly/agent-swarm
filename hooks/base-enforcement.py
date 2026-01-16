@@ -13,8 +13,9 @@ import json
 from pathlib import Path
 
 # Workflow state files to check
-ITERATE_STATE = Path.home() / ".claude" / "state" / "iterate_state.json"
-ORCHESTRATE_STATE = Path.home() / ".claude" / "state" / "orchestrate_state.json"
+STATE_DIR = Path.home() / ".claude" / "plugins" / "agent-swarm" / ".state"
+ITERATE_STATE = STATE_DIR / "iterate.json"
+ORCHESTRATE_STATE = STATE_DIR / "orchestrate.json"
 
 # Tools that require an active workflow
 EDITING_TOOLS = {"Edit", "Write", "NotebookEdit"}
@@ -63,7 +64,7 @@ def block(reason: str) -> dict:
     return {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
-            "permissionDecision": "block",
+            "permissionDecision": "deny",
             "permissionDecisionReason": reason
         }
     }

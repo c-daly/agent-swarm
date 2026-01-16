@@ -18,9 +18,58 @@ STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
 ORCHESTRATOR_STATE_FILE = STATE_DIR / "iterate.json"
 ORCHESTRATOR_LOCK_FILE = STATE_DIR / "iterate.lock"
 
+# Valid phase transitions: from_phase -> set of allowed to_phases
+# None means initial state (no previous phase)
+VALID_TRANSITIONS: dict[Optional[str], set[str]] = {
+    None: {"intake", "orchestrate"},  # Can start in intake or orchestrate
+    "intake": {"design"},
+    "design": {"orchestrate"},
+    "orchestrate": {"intake", "done"},  # Can only go back to intake or end
+    "test_writing": {"implement"},
+    "implement": {"test"},
+    "test": {"review", "test_writing", "implement"},  # kick-back paths
+    "review": {"done", "implement"},
+    "done": set(),  # Terminal state
+}
+
 # Thread-safe storage for in-memory agent states
 _states: dict[str, dict] = {}
 _memory_lock = Lock()
+
+
+class InvalidPhaseTransition(ValueError):
+    """Raised when an invalid phase transition is attempted."""
+    pass
+
+
+def _validate_phase_transition(old_state: Optional[dict], new_state: dict) -> None:
+    """Validate that a phase transition is allowed.
+
+    Args:
+        old_state: Previous state (None if new workflow)
+        new_state: New state being set
+
+    Raises:
+        InvalidPhaseTransition: If transition is not allowed
+    """
+    old_phase = old_state.get("phase") if old_state else None
+    new_phase = new_state.get("phase")
+
+    # No phase in new state - nothing to validate
+    if new_phase is None:
+        return
+
+    # Same phase - always allowed
+    if old_phase == new_phase:
+        return
+
+    # Check transition table
+    allowed = VALID_TRANSITIONS.get(old_phase, set())
+    if new_phase not in allowed:
+        raise InvalidPhaseTransition(
+            f"Invalid phase transition: {old_phase or 'None'} -> {new_phase}. "
+            f"Allowed transitions from {old_phase or 'None'}: {allowed or 'none'}"
+        )
 
 
 def get_state(agent_id: str) -> Optional[dict]:
@@ -47,8 +96,14 @@ def set_state(agent_id: str, state: dict) -> None:
     Args:
         agent_id: Agent identifier. Use "orchestrator" for persisted state.
         state: Full state dict to store.
+
+    Raises:
+        InvalidPhaseTransition: If phase transition is not allowed (orchestrator only).
     """
     if agent_id == "orchestrator":
+        # Validate phase transition before saving
+        current = _load_orchestrator_state()
+        _validate_phase_transition(current, state)
         _save_orchestrator_state(state)
     else:
         with _memory_lock:
@@ -136,7 +191,11 @@ def _save_orchestrator_state(state: dict) -> None:
 
 
 def _atomic_update_orchestrator(updates: dict) -> dict:
-    """Atomically update orchestrator state (read-modify-write under lock)."""
+    """Atomically update orchestrator state (read-modify-write under lock).
+
+    Raises:
+        InvalidPhaseTransition: If phase transition is not allowed.
+    """
     with _file_lock():
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         if ORCHESTRATOR_STATE_FILE.exists():
@@ -146,6 +205,11 @@ def _atomic_update_orchestrator(updates: dict) -> dict:
                 state = {}
         else:
             state = {}
+
+        # If updates include a phase change, validate it
+        if "phase" in updates:
+            new_state = {**state, **updates}
+            _validate_phase_transition(state, new_state)
 
         state.update(updates)
         ORCHESTRATOR_STATE_FILE.write_text(json.dumps(state, indent=2))

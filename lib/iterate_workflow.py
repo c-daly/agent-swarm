@@ -571,9 +571,48 @@ def _notify_workflow_end(reason: str, task: str = "") -> None:
 
 
 def stop(reason: str = "user_stopped") -> None:
-    """Stop the iterate workflow."""
+    """Stop the iterate workflow.
+
+    Enforces exit conditions:
+    - Task queue must be empty (all tasks complete)
+    - No active workers/subagents running
+
+    Raises:
+        RuntimeError: If exit conditions not met.
+    """
     state = state_manager.get_state("orchestrator") or {}
     task = state.get("task", "unknown")
+
+    # Check exit conditions
+    blockers = []
+
+    # 1. Check task queue
+    try:
+        wq = _get_workflow_queue()
+        if not wq.all_done():
+            pending = [t for t in wq.queue.tasks.values()
+                      if t.status.value in ("pending", "running")]
+            blockers.append(f"Task queue not empty: {len(pending)} tasks pending/running")
+    except Exception:
+        pass  # No queue = no blocker
+
+    # 2. Check active workers
+    try:
+        from worker_pool import get_active_workers
+        active = get_active_workers()
+        if active:
+            blockers.append(f"Workers still active: {len(active)} agents running")
+    except ImportError:
+        pass  # worker_pool not available
+    except Exception:
+        pass
+
+    if blockers:
+        raise RuntimeError(
+            "Cannot stop workflow - exit conditions not met:\n"
+            + "\n".join(f"  - {b}" for b in blockers)
+        )
+
     state["active"] = False
     state["exit_reason"] = reason
     state_manager.set_state("orchestrator", state)

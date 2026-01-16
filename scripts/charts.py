@@ -1932,6 +1932,200 @@ def chart_token_efficiency():
     return path
 
 
+def chart_compression_ratio():
+    """Chart summarization compression ratio - shows how much context is saved."""
+    if not TELEMETRY_FILE.exists():
+        print("⚠️  No telemetry data found")
+        return None
+
+    telemetry = json.loads(TELEMETRY_FILE.read_text())
+    efficiency = telemetry.get("aggregates", {}).get("efficiency", {})
+
+    if not efficiency or efficiency.get("calls_summarized", 0) == 0:
+        print("⚠️  No efficiency data found (no summarized calls yet)")
+        return None
+
+    # Extract metrics
+    full_chars = efficiency.get("full_chars", 0)
+    summary_chars = efficiency.get("summary_chars", 0)
+    calls = efficiency.get("calls_summarized", 0)
+    chars_saved = efficiency.get("chars_saved", 0)
+
+    compression_ratio = summary_chars / full_chars if full_chars > 0 else 0
+    savings_pct = (1 - compression_ratio) * 100
+    tokens_saved_est = chars_saved // 4  # ~4 chars per token
+
+    # Gauge-style display
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Compression Efficiency</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {{ font-family: -apple-system, sans-serif; padding: 20px; background: #1a1a2e; color: #eee; }}
+        h1 {{ color: #4cc9f0; }}
+        .back {{ color: #4cc9f0; text-decoration: none; }}
+        .stats-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin: 30px 0; }}
+        .stat-card {{ background: #16213e; border-radius: 12px; padding: 24px; text-align: center; }}
+        .stat-value {{ font-size: 2.5rem; font-weight: bold; color: #4ade80; }}
+        .stat-value.highlight {{ color: #f472b6; }}
+        .stat-label {{ color: #888; margin-top: 8px; font-size: 14px; }}
+        .chart-container {{ max-width: 400px; margin: 30px auto; }}
+        .note {{ color: #888; font-size: 14px; margin-top: 20px; }}
+    </style>
+</head>
+<body>
+    <a href="dashboard.html" class="back">← Back to Dashboard</a>
+    <h1>📦 Compression Efficiency</h1>
+    <p class="note">MCP Router summarization savings - lower ratio = more compression</p>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-value">{savings_pct:.1f}%</div>
+            <div class="stat-label">Context Saved</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value highlight">{tokens_saved_est:,}</div>
+            <div class="stat-label">Tokens Saved (est)</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{calls:,}</div>
+            <div class="stat-label">Calls Summarized</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{compression_ratio:.2f}</div>
+            <div class="stat-label">Compression Ratio</div>
+        </div>
+    </div>
+
+    <div class="chart-container">
+        <canvas id="chart"></canvas>
+    </div>
+
+    <script>
+        new Chart(document.getElementById('chart'), {{
+            type: 'doughnut',
+            data: {{
+                labels: ['Summary (kept)', 'Compressed (saved)'],
+                datasets: [{{
+                    data: [{summary_chars}, {chars_saved}],
+                    backgroundColor: ['rgba(248, 113, 113, 0.8)', 'rgba(74, 222, 128, 0.8)'],
+                    borderWidth: 2,
+                    borderColor: '#1a1a2e'
+                }}]
+            }},
+            options: {{
+                responsive: true,
+                plugins: {{
+                    legend: {{ position: 'bottom', labels: {{ color: '#888' }} }},
+                    title: {{ display: true, text: 'Character Distribution', color: '#888' }}
+                }}
+            }}
+        }});
+    </script>
+</body>
+</html>"""
+
+    path = CHARTS_DIR / "compression_ratio.html"
+    path.write_text(html, encoding='utf-8')
+    print(f"✅ Compression ratio chart generated: {path}")
+    return path
+
+
+def chart_tokens_saved():
+    """Chart cumulative tokens saved over time via summarization."""
+    if not TELEMETRY_FILE.exists():
+        print("⚠️  No telemetry data found")
+        return None
+
+    telemetry = json.loads(TELEMETRY_FILE.read_text())
+    events = telemetry.get("events", [])
+
+    # Filter events with efficiency data
+    efficiency_events = [e for e in events if e.get("full_size", 0) > 0]
+
+    if not efficiency_events:
+        print("⚠️  No efficiency events found")
+        return None
+
+    # Calculate cumulative savings over time
+    cumulative = []
+    running_total = 0
+    for event in efficiency_events:
+        saved = event.get("full_size", 0) - event.get("summary_size", 0)
+        running_total += saved // 4  # Convert to tokens
+        ts = event.get("ts", "")[:19]  # Trim to datetime
+        cumulative.append({"ts": ts, "tokens_saved": running_total})
+
+    # Take last 50 points max for readability
+    if len(cumulative) > 50:
+        step = len(cumulative) // 50
+        cumulative = cumulative[::step]
+
+    labels = [c["ts"][-8:] for c in cumulative]  # Just time portion
+    values = [c["tokens_saved"] for c in cumulative]
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Tokens Saved</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {{ font-family: -apple-system, sans-serif; padding: 20px; background: #1a1a2e; color: #eee; }}
+        h1 {{ color: #4cc9f0; }}
+        .back {{ color: #4cc9f0; text-decoration: none; }}
+        .chart-container {{ max-width: 900px; margin: 20px auto; }}
+        .note {{ color: #888; font-size: 14px; }}
+        .total {{ font-size: 1.5rem; color: #4ade80; margin: 20px 0; }}
+    </style>
+</head>
+<body>
+    <a href="dashboard.html" class="back">← Back to Dashboard</a>
+    <h1>💰 Tokens Saved Over Time</h1>
+    <p class="note">Cumulative token savings from MCP Router summarization</p>
+    <p class="total">Total saved: <strong>{values[-1] if values else 0:,}</strong> tokens (estimated)</p>
+
+    <div class="chart-container">
+        <canvas id="chart"></canvas>
+    </div>
+
+    <script>
+        new Chart(document.getElementById('chart'), {{
+            type: 'line',
+            data: {{
+                labels: {json.dumps(labels)},
+                datasets: [{{
+                    label: 'Cumulative Tokens Saved',
+                    data: {json.dumps(values)},
+                    borderColor: 'rgba(74, 222, 128, 1)',
+                    backgroundColor: 'rgba(74, 222, 128, 0.2)',
+                    fill: true,
+                    tension: 0.3
+                }}]
+            }},
+            options: {{
+                responsive: true,
+                plugins: {{
+                    legend: {{ display: false }}
+                }},
+                scales: {{
+                    x: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }},
+                    y: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }}, title: {{ display: true, text: 'Tokens', color: '#888' }} }}
+                }}
+            }}
+        }});
+    </script>
+</body>
+</html>"""
+
+    path = CHARTS_DIR / "tokens_saved.html"
+    path.write_text(html, encoding='utf-8')
+    print(f"✅ Tokens saved chart generated: {path}")
+    return path
+
+
 def chart_cache_efficiency():
     """Chart cache hit rate over time using actual token data."""
     if not TELEMETRY_FILE.exists():
@@ -2550,6 +2744,21 @@ def generate_dashboard():
             </div>
         </div>
 
+        <div class="section-title">Router Efficiency</div>
+        <div class="grid">
+            <div class="chart-card">
+                <h2>📦 Compression Ratio</h2>
+                <p>Context saved via MCP Router summarization</p>
+                <a href="compression_ratio.html" class="chart-link">View Chart →</a>
+            </div>
+
+            <div class="chart-card">
+                <h2>💰 Tokens Saved</h2>
+                <p>Cumulative token savings over time</p>
+                <a href="tokens_saved.html" class="chart-link">View Chart →</a>
+            </div>
+        </div>
+
         <div class="section-title">Trend Analysis</div>
         <div class="grid">
             <div class="chart-card">
@@ -2633,6 +2842,9 @@ def main():
         print("  token-efficiency  - Token efficiency by tool")
         print("  session-compare   - Session comparison")
         print("  blocked-tools     - Blocked/failed tools")
+        print("\nRouter Efficiency:")
+        print("  compression       - Compression ratio (savings %)")
+        print("  tokens-saved      - Cumulative tokens saved")
         print("\nTrend Charts:")
         print("  efficiency        - Success rate trend (EST)")
         print("  token-trend       - Token usage trend (EST)")
@@ -2696,6 +2908,12 @@ def main():
     elif cmd == "cache":
         chart_cache_efficiency()
 
+    elif cmd == "compression":
+        chart_compression_ratio()
+
+    elif cmd == "tokens-saved":
+        chart_tokens_saved()
+
     elif cmd == "dashboard":
         # Generate all charts
         print("Generating charts...")
@@ -2709,6 +2927,9 @@ def main():
         chart_session_comparison()
         chart_blocked_tools()
         chart_cache_efficiency()
+        # Router efficiency charts
+        chart_compression_ratio()
+        chart_tokens_saved()
         # Trend charts
         chart_efficiency_trend()
         chart_token_trend()
@@ -2728,6 +2949,9 @@ def main():
         chart_session_comparison()
         chart_blocked_tools()
         chart_cache_efficiency()
+        # Router efficiency charts
+        chart_compression_ratio()
+        chart_tokens_saved()
         # Trend charts
         chart_efficiency_trend()
         chart_token_trend()
