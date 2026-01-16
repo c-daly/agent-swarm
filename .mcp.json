@@ -1,6 +1,8 @@
 {
-  "router": {
-    "command": "/home/fearsidhe/.claude/plugins/agent-swarm/bin/mcp-router",
-    "args": []
+  "mcpServers": {
+    "router": {
+      "command": "/home/fearsidhe/.claude/plugins/agent-swarm/bin/mcp-router",
+      "args": []
+    }
   }
 }

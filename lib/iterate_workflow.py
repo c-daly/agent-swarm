@@ -247,39 +247,29 @@ def start(
         - queue provided → load queue → ORCHESTRATE
         - spec provided → decompose to queue → ORCHESTRATE
         - task looks like spec → treat as inline spec → ORCHESTRATE
-        - vague request → INTAKE (gather requirements)
+        - otherwise → ORCHESTRATE (orchestrator creates queue if needed)
     """
     # Use orchestrator for state management if no agent_id specified
     effective_agent_id = agent_id or "orchestrator"
 
-    needs_intake = True
-
     if queue:
         content, _ = _resolve_input(queue, ".queue")
         _load_queue_content(content)
-        needs_intake = False
-        initial_phase = Phase.ORCHESTRATE
     elif spec:
         content, _ = _resolve_input(spec, ".spec")
         _decompose_spec_content(content)
-        needs_intake = False
-        initial_phase = Phase.ORCHESTRATE
     elif _is_spec(task):
         _decompose_spec_content(task)
-        needs_intake = False
-        initial_phase = Phase.ORCHESTRATE
-    else:
-        initial_phase = Phase.INTAKE
+    # Always start in ORCHESTRATE - orchestrator creates queue if needed
 
     state = {
         "active": True,
         "task": task,
-        "phase": initial_phase.value,
+        "phase": Phase.ORCHESTRATE.value,
         "iteration": 0,
         "max_iterations": max_iterations,
         "mode": "iterate-tdd",
         "workflow_invoked": True,
-        "needs_intake": needs_intake,
         "tests_passed": None,
         "lint_passed": None,
         "coverage_ok": None,
@@ -287,8 +277,8 @@ def start(
         "pr_number": None,
     }
     state_manager.set_state("orchestrator", state)
-    _log("info", "Workflow started", task=task[:50], phase=initial_phase.value,
-         agent_id=effective_agent_id, needs_intake=needs_intake)
+    _log("info", "Workflow started", task=task[:50], phase=Phase.ORCHESTRATE.value,
+         agent_id=effective_agent_id)
     return state
 
 
@@ -366,8 +356,23 @@ def verify_active(expected_phase: Optional[Phase] = None) -> None:
 
 
 def set_phase(phase: Phase) -> None:
-    """Manually set phase (for kick-back scenarios)."""
+    """Manually set phase (for kick-back scenarios).
+
+    Validates transitions:
+    - From ORCHESTRATE: only INTAKE allowed (if more info needed)
+    - Other phases: handled by advance_phase() logic
+    """
     state = state_manager.get_state("orchestrator") or {}
+    current_phase = state.get("phase")
+
+    # Block orchestrator from jumping to implementation phases
+    if current_phase == Phase.ORCHESTRATE.value:
+        if phase not in (Phase.INTAKE, Phase.DONE):
+            raise RuntimeError(
+                f"Cannot set phase to {phase.value} from ORCHESTRATE. "
+                "Orchestrator can only go to INTAKE (for more info) or spawn subagents."
+            )
+
     state["phase"] = phase.value
     state_manager.set_state("orchestrator", state)
 
@@ -416,7 +421,7 @@ def advance_phase() -> Optional[Phase]:
             )
 
     if current == Phase.INTAKE:
-        # Intake complete, always go to design
+        # Intake complete, go to design to create spec/queue
         state["phase"] = Phase.DESIGN.value
 
     elif current == Phase.DESIGN:
@@ -424,8 +429,13 @@ def advance_phase() -> Optional[Phase]:
         state["phase"] = Phase.ORCHESTRATE.value
 
     elif current == Phase.ORCHESTRATE:
-        # Orchestrate complete, move to TDD loop
-        state["phase"] = Phase.TEST_WRITING.value
+        # Orchestrator should NEVER advance - it stays here and spawns subagents
+        # Subagents report phase completion, orchestrator coordinates
+        raise RuntimeError(
+            "Cannot advance from ORCHESTRATE. The orchestrator stays in this phase "
+            "and spawns subagents (implementer) for TEST_WRITING, IMPLEMENT, etc. "
+            "Use Task tool to spawn 'agent-swarm:implementer' subagent instead."
+        )
 
     elif current == Phase.TEST_WRITING:
         # Tests written, now implement

@@ -992,14 +992,23 @@ def start_stdio_server(router: MCPRouter):
                         result = {"content": [{"type": "text", "text": f"Error: Unknown backend prefix: {prefix}"}], "isError": True}
                     else:
                         response = router.route(destination, actual_tool, args)
-                        # Pass through backend result directly (MCP protocol compliance)
+                        # Return {summary, full} envelope so Claude can read summary first
                         backend_result = response.full
-                        if isinstance(backend_result, dict) and "result" in backend_result:
-                            result = backend_result["result"]
-                        elif isinstance(backend_result, dict) and "error" in backend_result:
+                        if isinstance(backend_result, dict) and "error" in backend_result:
                             result = {"content": [{"type": "text", "text": f"Error: {backend_result['error']}"}], "isError": True}
                         else:
-                            result = backend_result
+                            # Extract actual content from backend response
+                            if isinstance(backend_result, dict) and "result" in backend_result:
+                                full_content = backend_result["result"]
+                            else:
+                                full_content = backend_result
+
+                            # Return structured envelope with summary and full
+                            envelope = {
+                                "summary": response.summary,
+                                "full": full_content
+                            }
+                            result = {"content": [{"type": "text", "text": json.dumps(envelope)}]}
                 else:
                     result = {"content": [{"type": "text", "text": "Tool name must be prefixed: prefix__tool"}], "isError": True}
 
