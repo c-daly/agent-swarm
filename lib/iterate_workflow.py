@@ -149,7 +149,18 @@ PHASE_TOOLS = {
     },
 }
 
-
+# Per-phase Bash command whitelist
+# Each phase only allows specific Bash commands. None means all allowed.
+PHASE_BASH_WHITELIST = {
+    Phase.INTAKE: {"iterate_workflow.py"},
+    Phase.DESIGN: {"iterate_workflow.py"},
+    Phase.TEST_WRITING: {"iterate_workflow.py", "pytest"},
+    Phase.IMPLEMENT: {"iterate_workflow.py", "pytest", "ruff", "mypy"},
+    Phase.TEST: {"iterate_workflow.py", "pytest", "ruff", "mypy", "coverage"},
+    Phase.REVIEW: {"iterate_workflow.py", "pytest", "ruff", "mypy", "coverage", "git", "gh"},
+    Phase.ORCHESTRATE: {"iterate_workflow.py", "gh"},
+    Phase.DONE: None,  # All commands allowed
+}
 
 
 def _load_config() -> dict:
@@ -586,51 +597,56 @@ def is_tool_allowed(tool_name: str, command: str | None = None) -> tuple[bool, s
     if tool_name in phase_config["blocked"]:
         return False, f"[BLOCKED] {tool_name} not allowed in {phase.value} phase. Run tests first."
 
-    # Check for git/gh commands in Bash (WORKFLOW.5)
+    # Check Bash commands against per-phase whitelist
     if tool_name == "Bash" and command:
         cmd_lower = command.strip().lower()
+        whitelist = PHASE_BASH_WHITELIST.get(phase)
+
+        # If whitelist is None (DONE phase), all commands allowed
+        if whitelist is not None:
+            # Split on shell operators to check each part of chained commands
+            # Replace operators with a common delimiter, then split
+            import re
+            parts = re.split(r'\s*(?:;|&&|\|\||&|\|)\s*', cmd_lower)
+
+            for part in parts:
+                part = part.strip()
+                if not part:
+                    continue
+
+                # Get base command (first word) of this part
+                part_words = part.split()
+                base_cmd = part_words[0] if part_words else ""
+
+                # Check if this part is allowed
+                part_allowed = False
+                for pattern in whitelist:
+                    if pattern == "iterate_workflow.py":
+                        # iterate_workflow.py can appear anywhere in command part
+                        if "iterate_workflow.py" in part:
+                            part_allowed = True
+                            break
+                    else:
+                        # Other patterns match base command
+                        if base_cmd == pattern:
+                            part_allowed = True
+                            break
+
+                if not part_allowed:
+                    return False, f"[BLOCKED] Command '{base_cmd}' not allowed in {phase.value} phase. Allowed: {', '.join(sorted(whitelist))}"
+
+        # Additional check: coverage requirement for commit/push in REVIEW
         is_git_cmd = cmd_lower.startswith("git ") or cmd_lower == "git"
-        is_gh_cmd = cmd_lower.startswith("gh ")
-
-        if is_git_cmd or is_gh_cmd:
-            # Git/gh only allowed in REVIEW phase
-            if phase != Phase.REVIEW:
-                return False, f"[BLOCKED] git/gh commands only allowed in review phase. Current: {phase.value}"
-
-            # In REVIEW phase, check coverage requirement for commit/push (WORKFLOW.1)
-            state = state_manager.get_state("orchestrator") or {}
-            # Use word-boundary matching to avoid false positives like "commitfile.txt"
+        if is_git_cmd and phase == Phase.REVIEW:
             cmd_parts = cmd_lower.split()
             is_commit_or_push = any(part in ["commit", "push"] for part in cmd_parts)
-
             if is_commit_or_push:
+                state = state_manager.get_state("orchestrator") or {}
                 coverage_ok = state.get("coverage_ok")
                 if coverage_ok is None:
                     return False, "[BLOCKED] Run tests and record coverage before commit/push"
                 if not coverage_ok:
                     return False, "[BLOCKED] Coverage threshold not met - cannot commit/push"
-
-        # Check for evaluation commands in ORCHESTRATE phase
-        if phase == Phase.ORCHESTRATE:
-            # Define evaluation command patterns
-            evaluation_patterns = [
-                "pytest",
-                "python -m pytest",
-                "python3 -m pytest",
-                "ruff check",
-                "ruff .",
-                "mypy",
-                "coverage",
-                "black --check",
-            ]
-
-            # Check if command matches any evaluation pattern
-            for pattern in evaluation_patterns:
-                if pattern in cmd_lower:
-                    return False, (
-                        f"[BLOCKED] In ORCHESTRATE phase, spawn a test agent instead of running "
-                        f"tests directly. Use Task tool to delegate evaluation work."
-                    )
 
     # Allow MCP variants of allowed tools
     base_tool = tool_name.split("__")[-1] if "__" in tool_name else tool_name

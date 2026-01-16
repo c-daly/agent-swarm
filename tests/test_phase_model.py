@@ -16,7 +16,9 @@ class TestPhaseDefinitions:
 
     def test_all_phases_exist(self):
         """All expected phases are defined."""
-        expected_phases = {"test_writing", "implement", "test", "coverage", "review"}
+        expected_phases = {
+            "orchestrate", "test_writing", "implement", "test", "coverage", "review"
+        }
         assert set(ITERATE_PHASES.keys()) == expected_phases
 
     def test_phases_are_immutable(self):
@@ -30,6 +32,55 @@ class TestPhaseDefinitions:
         phase = ITERATE_PHASES["implement"]
         assert isinstance(phase.allowed_categories, frozenset)
         assert isinstance(phase.blocked_tools, frozenset)
+
+
+class TestOrchestratePhase:
+    """Test the orchestrate phase restrictions."""
+
+    def test_allows_file_read(self):
+        """File reading is allowed in orchestrate."""
+        allowed, _ = check_tool_allowed("Read", "orchestrate")
+        assert allowed
+
+    def test_allows_file_search(self):
+        """File searching is allowed in orchestrate."""
+        allowed, _ = check_tool_allowed("Glob", "orchestrate")
+        assert allowed
+
+    def test_allows_code_query(self):
+        """Code queries are allowed in orchestrate."""
+        allowed, _ = check_tool_allowed(
+            "mcp__plugin_serena_serena__find_symbol", "orchestrate"
+        )
+        assert allowed
+
+    def test_allows_subagents(self):
+        """Subagents are allowed in orchestrate."""
+        allowed, _ = check_tool_allowed("Task", "orchestrate")
+        assert allowed
+
+    def test_blocks_edit(self):
+        """Edit is blocked in orchestrate."""
+        allowed, reason = check_tool_allowed("Edit", "orchestrate")
+        assert not allowed
+        assert "blocked" in reason.lower()
+
+    def test_blocks_write(self):
+        """Write is blocked in orchestrate."""
+        allowed, reason = check_tool_allowed("Write", "orchestrate")
+        assert not allowed
+        assert "blocked" in reason.lower()
+
+    def test_blocks_notebook_edit(self):
+        """NotebookEdit is blocked in orchestrate."""
+        allowed, reason = check_tool_allowed("NotebookEdit", "orchestrate")
+        assert not allowed
+        assert "blocked" in reason.lower()
+
+    def test_no_verification_required(self):
+        """orchestrate phase doesn't require verification."""
+        phase = ITERATE_PHASES["orchestrate"]
+        assert not phase.requires_verification
 
 
 class TestTestWritingPhase:
@@ -312,4 +363,4 @@ class TestPhaseProgression:
             for name, phase in ITERATE_PHASES.items()
             if not phase.requires_verification
         ]
-        assert set(non_verification_phases) == {"test_writing", "implement"}
+        assert set(non_verification_phases) == {"orchestrate", "test_writing", "implement"}

@@ -9,7 +9,6 @@ from enum import Enum, auto
 from dataclasses import dataclass
 from typing import FrozenSet, Optional
 
-
 class ToolCategory(Enum):
     """Categories of tools available to agents."""
     FILE_READ = auto()
@@ -36,6 +35,18 @@ class Phase:
 
 # Iterate workflow phases with tool restrictions
 ITERATE_PHASES = {
+    "orchestrate": Phase(
+        name="orchestrate",
+        allowed_categories=frozenset({
+            ToolCategory.FILE_READ,
+            ToolCategory.FILE_SEARCH,
+            ToolCategory.CODE_QUERY,
+            ToolCategory.SUBAGENT,
+            ToolCategory.USER_INTERACTION,
+        }),
+        blocked_tools=frozenset({"Edit", "Write", "NotebookEdit"}),
+        requires_verification=False,
+    ),
     "test_writing": Phase(
         name="test_writing",
         allowed_categories=frozenset({
