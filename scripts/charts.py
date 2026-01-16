@@ -2188,22 +2188,26 @@ def chart_cache_efficiency():
 
     <div class="stats">
         <div class="stat">
-            <div class="stat-value">{sum(cache_reads)/1_000_000_000:.2f}B</div>
-            <div class="stat-label">Cache Hits</div>
+            <div class="stat-value">{sum(cache_reads)/1_000_000:.1f}M</div>
+            <div class="stat-label">Cache Hits (tokens)</div>
         </div>
         <div class="stat">
-            <div class="stat-value">{sum(cache_creates)/1_000_000:.0f}M</div>
-            <div class="stat-label">Cache Misses</div>
+            <div class="stat-value">{sum(cache_creates)/1_000_000:.1f}M</div>
+            <div class="stat-label">Cache Misses (tokens)</div>
         </div>
         <div class="stat">
             <div class="stat-value">{round(sum(cache_reads)/(sum(cache_reads)+sum(cache_creates))*100 if sum(cache_reads)+sum(cache_creates) > 0 else 0, 1)}%</div>
             <div class="stat-label">Hit Rate</div>
         </div>
         <div class="stat">
-            <div class="stat-value">{(sum(cache_reads)+sum(cache_creates))/1_000_000_000:.1f}B</div>
-            <div class="stat-label">Total Context</div>
+            <div class="stat-value">${sum(cache_reads) * 0.90 * 8 / 1_000_000:.0f}</div>
+            <div class="stat-label">Est. Savings (API)</div>
         </div>
     </div>
+    <p style="color: #666; text-align: center; font-size: 12px; margin-top: -10px;">
+        Savings estimate: cache hits × 90% discount × $8/M avg input price (blend of Opus $15 + Sonnet $3).
+        Subscription users pay flat rate but benefit from faster responses and lower latency.
+    </p>
 
     <div class="controls">
         <select id="viewSelect" onchange="switchView()">
