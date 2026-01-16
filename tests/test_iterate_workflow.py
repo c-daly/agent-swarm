@@ -853,3 +853,36 @@ class TestBashWhitelist:
         for cmd in [self.PYTEST_CMD, self.RUFF_CMD, self.GIT_CMD, self.GH_CMD]:
             allowed, _ = is_tool_allowed("Bash", command=cmd)
             assert allowed is True, f"DONE should allow: {cmd}"
+
+    def test_chained_commands_all_must_pass(self):
+        """Chained commands must all be in whitelist."""
+        start("Test task")
+        set_phase(Phase.IMPLEMENT)  # allows pytest, ruff, mypy
+        # All allowed - should pass
+        allowed, _ = is_tool_allowed("Bash", command="pytest tests/ && ruff check .")
+        assert allowed is True
+        # Second command not allowed - should block
+        allowed, reason = is_tool_allowed("Bash", command="pytest tests/; git status")
+        assert allowed is False
+        assert "git" in reason
+
+    def test_chained_with_semicolon_blocked(self):
+        """Semicolon-chained disallowed command is blocked."""
+        start("Test task")
+        set_phase(Phase.TEST_WRITING)  # allows pytest only
+        allowed, _ = is_tool_allowed("Bash", command="pytest; ruff check .")
+        assert allowed is False
+
+    def test_chained_with_pipe_blocked(self):
+        """Piped disallowed command is blocked."""
+        start("Test task")
+        set_phase(Phase.INTAKE)  # only iterate_workflow.py
+        allowed, _ = is_tool_allowed("Bash", command="echo test | git apply")
+        assert allowed is False
+
+    def test_chained_with_background_blocked(self):
+        """Background (&) disallowed command is blocked."""
+        start("Test task")
+        set_phase(Phase.INTAKE)
+        allowed, _ = is_tool_allowed("Bash", command="echo test & git status")
+        assert allowed is False

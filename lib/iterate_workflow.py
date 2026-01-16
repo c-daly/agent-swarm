@@ -604,25 +604,36 @@ def is_tool_allowed(tool_name: str, command: str | None = None) -> tuple[bool, s
 
         # If whitelist is None (DONE phase), all commands allowed
         if whitelist is not None:
-            # Get base command (first word)
-            cmd_parts = cmd_lower.split()
-            base_cmd = cmd_parts[0] if cmd_parts else ""
+            # Split on shell operators to check each part of chained commands
+            # Replace operators with a common delimiter, then split
+            import re
+            parts = re.split(r'\s*(?:;|&&|\|\||&|\|)\s*', cmd_lower)
 
-            is_allowed = False
-            for pattern in whitelist:
-                if pattern == "iterate_workflow.py":
-                    # iterate_workflow.py can appear anywhere in command
-                    if "iterate_workflow.py" in cmd_lower:
-                        is_allowed = True
-                        break
-                else:
-                    # Other patterns match base command
-                    if base_cmd == pattern:
-                        is_allowed = True
-                        break
+            for part in parts:
+                part = part.strip()
+                if not part:
+                    continue
 
-            if not is_allowed:
-                return False, f"[BLOCKED] Command not allowed in {phase.value} phase. Allowed: {', '.join(sorted(whitelist))}"
+                # Get base command (first word) of this part
+                part_words = part.split()
+                base_cmd = part_words[0] if part_words else ""
+
+                # Check if this part is allowed
+                part_allowed = False
+                for pattern in whitelist:
+                    if pattern == "iterate_workflow.py":
+                        # iterate_workflow.py can appear anywhere in command part
+                        if "iterate_workflow.py" in part:
+                            part_allowed = True
+                            break
+                    else:
+                        # Other patterns match base command
+                        if base_cmd == pattern:
+                            part_allowed = True
+                            break
+
+                if not part_allowed:
+                    return False, f"[BLOCKED] Command '{base_cmd}' not allowed in {phase.value} phase. Allowed: {', '.join(sorted(whitelist))}"
 
         # Additional check: coverage requirement for commit/push in REVIEW
         is_git_cmd = cmd_lower.startswith("git ") or cmd_lower == "git"
