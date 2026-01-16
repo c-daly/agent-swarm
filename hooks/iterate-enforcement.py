@@ -69,8 +69,9 @@ def main():
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input", {})
 
-    # Extract command for Bash tool (for git/gh blocking)
-    command = tool_input.get("command") if tool_name == "Bash" else None
+    # Extract command for bash tools (for git/gh blocking)
+    # native__bash is the routed version through MCP router
+    command = tool_input.get("command") if tool_name in ("Bash", "native__bash") else None
 
     # Check phase-based restrictions
     allowed, reason = is_tool_allowed(tool_name, command=command)
