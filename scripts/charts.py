@@ -881,6 +881,22 @@ def chart_token_trend():
     hourly_labels = [hour for hour, _ in sorted_hourly]
     hourly_tokens = [tokens for _, tokens in sorted_hourly]
 
+    # By Session - aggregate across all days
+    session_totals = {}
+    for date_str, summary in daily_summaries.items():
+        by_session = summary.get("by_session", {})
+        for sid, sdata in by_session.items():
+            if sid not in session_totals:
+                session_totals[sid] = {"tokens": 0, "calls": 0}
+            session_totals[sid]["tokens"] += sdata.get("tokens", 0)
+            session_totals[sid]["calls"] += sdata.get("calls", 0)
+
+    # Sort sessions by tokens (top 30)
+    sorted_sessions = sorted(session_totals.items(), key=lambda x: x[1]["tokens"], reverse=True)[:30]
+    session_labels = [sid[:8] + "..." for sid, _ in sorted_sessions]
+    session_tokens = [data["tokens"] for _, data in sorted_sessions]
+    session_efficiency = [round(data["tokens"] / max(data["calls"], 1)) for _, data in sorted_sessions]
+
     # Generate HTML with dropdown selector
     html = f"""<!DOCTYPE html>
 <html>
@@ -957,6 +973,7 @@ def chart_token_trend():
                 <option value="month">Last 30 Days</option>
                 <option value="all">All Time</option>
                 <option value="hourly">Hourly (Last 48h)</option>
+                <option value="session">By Session (Top 30)</option>
             </select>
         </div>
 
@@ -1044,6 +1061,21 @@ def chart_token_trend():
             }}]
         }};
 
+        const sessionData = {{
+            labels: {json.dumps(session_labels)},
+            datasets: [{{
+                label: 'Total Tokens',
+                data: {json.dumps(session_tokens)},
+                backgroundColor: 'rgba(76, 201, 240, 0.8)',
+                yAxisID: 'y'
+            }}, {{
+                label: 'Tokens/Call',
+                data: {json.dumps(session_efficiency)},
+                backgroundColor: 'rgba(245, 158, 11, 0.8)',
+                yAxisID: 'y1'
+            }}]
+        }};
+
         const ctx = document.getElementById('chart').getContext('2d');
         let chart = new Chart(ctx, {{
             type: 'line',
@@ -1093,9 +1125,12 @@ def chart_token_trend():
                 'week': weekData,
                 'month': monthData,
                 'all': allData,
-                'hourly': hourlyData
+                'hourly': hourlyData,
+                'session': sessionData
             }};
             chart.data = dataMap[view] || weekData;
+            // Use bar chart for session view, line for others
+            chart.config.type = (view === 'session') ? 'bar' : 'line';
             chart.update();
         }}
     </script>
