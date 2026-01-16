@@ -24,6 +24,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from threading import Lock
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 try:
@@ -82,6 +83,208 @@ class ServerConfig:
             self.registered_at = datetime.now(timezone.utc).isoformat()
 
 
+@dataclass
+class TelemetryEvent:
+    """Single telemetry event."""
+    timestamp: str
+    tool: str
+    backend: str
+    duration_ms: int
+    status: str  # "success" | "error"
+    tokens_est: int = 0
+    subagent_type: str = ""
+    error_msg: str = ""
+
+
+class TelemetryCollector:
+    """Real-time telemetry collection for MCP router.
+
+    Tracks all tool calls, durations, token estimates, and errors.
+    Writes to telemetry.json on every event for real-time dashboard updates.
+    """
+
+    # Token estimates by tool type (conservative estimates)
+    TOKEN_ESTIMATES = {
+        "read_file": 2000,
+        "find_symbol": 1500,
+        "search_for_pattern": 1500,
+        "get_symbols_overview": 1000,
+        "list_dir": 500,
+        "find_file": 500,
+        "replace_content": 800,
+        "replace_symbol_body": 1000,
+        "insert_after_symbol": 800,
+        "insert_before_symbol": 800,
+        "execute_shell_command": 1000,
+    }
+
+    # Subagent token estimates (much larger)
+    SUBAGENT_TOKEN_ESTIMATES = {
+        "Explore": 25000,
+        "Plan": 30000,
+        "Implement": 100000,
+        "general-purpose": 50000,
+        "Bash": 10000,
+        "feature-dev:code-explorer": 40000,
+        "feature-dev:code-reviewer": 30000,
+        "feature-dev:code-architect": 50000,
+    }
+
+    def __init__(
+        self,
+        telemetry_file: Optional[Path] = None,
+        max_events: int = 500
+    ):
+        """Initialize telemetry collector.
+
+        Args:
+            telemetry_file: Path to write telemetry JSON
+            max_events: Maximum events to keep (rolling window)
+        """
+        self._telemetry_file = telemetry_file or Path.home() / ".claude/plugins/agent-swarm/.state/telemetry.json"
+        self._max_events = max_events
+        self._lock = Lock()
+        self._pending_requests: dict[str, tuple[str, str, dict, float]] = {}
+        self._session_id = datetime.now(timezone.utc).isoformat()
+        self._data = self._load_or_init()
+
+    def _load_or_init(self) -> dict:
+        """Load existing telemetry or initialize fresh."""
+        if self._telemetry_file.exists():
+            try:
+                data = json.loads(self._telemetry_file.read_text())
+                # Start fresh session but keep historical aggregates
+                data["session_id"] = self._session_id
+                data["events"] = []  # Fresh events for this session
+                return data
+            except (json.JSONDecodeError, IOError):
+                pass
+
+        return {
+            "session_id": self._session_id,
+            "session_start": self._session_id,
+            "events": [],
+            "aggregates": {
+                "by_tool": {},
+                "by_backend": {},
+                "subagents": {},
+                "totals": {"calls": 0, "errors": 0, "tokens_est": 0, "duration_ms": 0}
+            }
+        }
+
+    def _save(self) -> None:
+        """Save telemetry to file."""
+        self._telemetry_file.parent.mkdir(parents=True, exist_ok=True)
+        self._telemetry_file.write_text(json.dumps(self._data, indent=2))
+
+    def _estimate_tokens(self, tool: str, subagent_type: str = "") -> int:
+        """Estimate tokens for a tool call."""
+        if subagent_type:
+            return self.SUBAGENT_TOKEN_ESTIMATES.get(subagent_type, 50000)
+        base_tool = tool.split("__")[-1] if "__" in tool else tool
+        return self.TOKEN_ESTIMATES.get(base_tool, 500)
+
+    def track_request(self, destination: str, tool_name: str, args: dict) -> str:
+        """Called when a request is made. Returns correlation_id."""
+        import time
+        correlation_id = f"req-{int(time.time() * 1000)}-{hash((destination, tool_name)) & 0xFFFF:04x}"
+
+        with self._lock:
+            self._pending_requests[correlation_id] = (
+                tool_name, destination, args, time.time()
+            )
+        return correlation_id
+
+    def track_response(self, correlation_id: str, error: bool = False, error_msg: str = "") -> None:
+        """Called when a response is received."""
+        import time
+
+        with self._lock:
+            if correlation_id not in self._pending_requests:
+                return
+
+            tool_name, backend, args, start_time = self._pending_requests.pop(correlation_id)
+            duration_ms = int((time.time() - start_time) * 1000)
+
+            # Check for subagent
+            subagent_type = args.get("subagent_type", "") if tool_name == "Task" else ""
+            tokens_est = self._estimate_tokens(tool_name, subagent_type)
+
+            # Create event
+            event = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "tool": tool_name,
+                "backend": backend,
+                "duration_ms": duration_ms,
+                "status": "error" if error else "success",
+                "tokens_est": tokens_est,
+                "subagent_type": subagent_type,
+                "error_msg": error_msg[:200] if error_msg else ""
+            }
+
+            # Add to events (rolling window)
+            self._data["events"].append(event)
+            if len(self._data["events"]) > self._max_events:
+                self._data["events"] = self._data["events"][-self._max_events:]
+
+            # Update aggregates
+            self._update_aggregates(event, error)
+
+            # Save immediately for real-time updates
+            self._save()
+
+    def _update_aggregates(self, event: dict, error: bool) -> None:
+        """Update aggregate statistics."""
+        agg = self._data["aggregates"]
+
+        # By tool
+        tool = event["tool"]
+        if tool not in agg["by_tool"]:
+            agg["by_tool"][tool] = {"count": 0, "tokens": 0, "errors": 0, "duration_ms": 0}
+        agg["by_tool"][tool]["count"] += 1
+        agg["by_tool"][tool]["tokens"] += event["tokens_est"]
+        agg["by_tool"][tool]["duration_ms"] += event["duration_ms"]
+        if error:
+            agg["by_tool"][tool]["errors"] += 1
+
+        # By backend
+        backend = event["backend"]
+        if backend not in agg["by_backend"]:
+            agg["by_backend"][backend] = {"count": 0, "tokens": 0, "errors": 0, "duration_ms": 0}
+        agg["by_backend"][backend]["count"] += 1
+        agg["by_backend"][backend]["tokens"] += event["tokens_est"]
+        agg["by_backend"][backend]["duration_ms"] += event["duration_ms"]
+        if error:
+            agg["by_backend"][backend]["errors"] += 1
+
+        # Subagents
+        if event["subagent_type"]:
+            sa = event["subagent_type"]
+            if sa not in agg["subagents"]:
+                agg["subagents"][sa] = {"count": 0, "tokens": 0, "errors": 0}
+            agg["subagents"][sa]["count"] += 1
+            agg["subagents"][sa]["tokens"] += event["tokens_est"]
+            if error:
+                agg["subagents"][sa]["errors"] += 1
+
+        # Totals
+        agg["totals"]["calls"] += 1
+        agg["totals"]["tokens_est"] += event["tokens_est"]
+        agg["totals"]["duration_ms"] += event["duration_ms"]
+        if error:
+            agg["totals"]["errors"] += 1
+
+    def get_summary(self) -> dict:
+        """Get current telemetry summary."""
+        with self._lock:
+            return {
+                "session_id": self._data["session_id"],
+                "event_count": len(self._data["events"]),
+                "aggregates": self._data["aggregates"],
+                "recent_events": self._data["events"][-10:]  # Last 10
+            }
+
+
 class MCPRouter:
     """Thread-safe MCP request router with backpressure handling.
 
@@ -112,6 +315,7 @@ class MCPRouter:
         max_queue_size: int = 1000,
         summarizer: str = "auto",
         summarizer_model: Optional[str] = None,
+        enable_telemetry: bool = True,
     ):
         """Initialize router with request queue and lock.
 
@@ -120,6 +324,7 @@ class MCPRouter:
             summarizer: Provider for summarization ("auto", "openai", "anthropic", "none").
                         "auto" tries openai first, then anthropic, then falls back.
             summarizer_model: Model to use (defaults based on provider).
+            enable_telemetry: Enable real-time telemetry collection.
         """
         self._queue: deque = deque(maxlen=max_queue_size)
         self._lock = Lock()
@@ -133,6 +338,9 @@ class MCPRouter:
         # Hook points for extensibility (logging, telemetry, testing)
         self.on_request: list[Callable[[str, str, dict], None]] = []
         self.on_response: list[Callable[[RouterResponse], None]] = []
+
+        # Telemetry collector for real-time metrics
+        self.telemetry: Optional[TelemetryCollector] = TelemetryCollector() if enable_telemetry else None
 
     def _init_summarizer(
         self,
@@ -307,6 +515,11 @@ class MCPRouter:
         """
         correlation_id = self._generate_correlation_id(destination, tool_name, args)
 
+        # Start telemetry tracking
+        telemetry_id = None
+        if self.telemetry:
+            telemetry_id = self.telemetry.track_request(destination, tool_name, args)
+
         # Fire request hooks
         for hook in self.on_request:
             try:
@@ -318,15 +531,25 @@ class MCPRouter:
         with self._lock:
             server = self._servers.get(destination)
 
+        error = False
+        error_msg = ""
+
         if not server:
+            error = True
+            error_msg = f"Server '{destination}' not registered"
             response = RouterResponse(
-                summary=f"Error: Server '{destination}' not registered",
-                full={"error": f"Server '{destination}' not registered"},
+                summary=f"Error: {error_msg}",
+                full={"error": error_msg},
                 correlation_id=correlation_id
             )
         else:
             # Forward request
             full_response = self._forward_to_server(server, tool_name, args)
+
+            # Check for error in response
+            if isinstance(full_response, dict) and "error" in full_response:
+                error = True
+                error_msg = str(full_response.get("error", "Unknown error"))[:200]
 
             # Generate summary
             summary = self._summarize(full_response)
@@ -343,6 +566,10 @@ class MCPRouter:
                 hook(response)
             except Exception:
                 pass  # Don't let hooks break response
+
+        # Complete telemetry tracking
+        if self.telemetry and telemetry_id:
+            self.telemetry.track_response(telemetry_id, error=error, error_msg=error_msg)
 
         return response
 
@@ -561,6 +788,93 @@ Summary:"""
         return f"Response received ({len(json.dumps(response))} chars)"
 
 
+def analyze_telemetry_trends(telemetry: TelemetryCollector) -> dict:
+    """Analyze telemetry data for trends and effectiveness.
+
+    Returns analysis of token usage patterns and optimization effectiveness.
+    """
+    summary = telemetry.get_summary()
+    events = summary.get("recent_events", [])
+    agg = summary.get("aggregates", {})
+
+    analysis = {
+        "session_id": summary.get("session_id", ""),
+        "total_events": summary.get("event_count", 0),
+        "totals": agg.get("totals", {}),
+        "trends": {},
+        "recommendations": []
+    }
+
+    if len(events) >= 10:
+        # Compare first half vs second half of events
+        mid = len(events) // 2
+        first_half = events[:mid]
+        second_half = events[mid:]
+
+        first_tokens = sum(e.get("tokens_est", 0) for e in first_half)
+        second_tokens = sum(e.get("tokens_est", 0) for e in second_half)
+
+        if first_tokens > 0:
+            change_pct = ((second_tokens - first_tokens) / first_tokens) * 100
+            analysis["trends"]["token_change_pct"] = round(change_pct, 1)
+            analysis["trends"]["first_half_tokens"] = first_tokens
+            analysis["trends"]["second_half_tokens"] = second_tokens
+
+            if change_pct < -10:
+                analysis["trends"]["verdict"] = "IMPROVING"
+                analysis["recommendations"].append(
+                    "Token usage is decreasing - optimization measures appear effective"
+                )
+            elif change_pct > 10:
+                analysis["trends"]["verdict"] = "INCREASING"
+                analysis["recommendations"].append(
+                    "Token usage is increasing - consider reviewing recent tool usage patterns"
+                )
+            else:
+                analysis["trends"]["verdict"] = "STABLE"
+
+    # Check for high-token tools
+    by_tool = agg.get("by_tool", {})
+    high_token_tools = [
+        (tool, data["tokens"])
+        for tool, data in by_tool.items()
+        if data.get("tokens", 0) > 10000
+    ]
+    if high_token_tools:
+        sorted_tools = sorted(high_token_tools, key=lambda x: x[1], reverse=True)[:3]
+        analysis["top_token_consumers"] = [
+            {"tool": t, "tokens": v} for t, v in sorted_tools
+        ]
+        analysis["recommendations"].append(
+            f"High token usage in: {', '.join(t for t, _ in sorted_tools)}"
+        )
+
+    # Check subagent usage
+    subagents = agg.get("subagents", {})
+    if subagents:
+        total_subagent_tokens = sum(s.get("tokens", 0) for s in subagents.values())
+        total_tokens = agg.get("totals", {}).get("tokens_est", 1)
+        subagent_pct = (total_subagent_tokens / total_tokens) * 100 if total_tokens else 0
+        analysis["subagent_token_pct"] = round(subagent_pct, 1)
+
+        if subagent_pct > 50:
+            analysis["recommendations"].append(
+                f"Subagents account for {subagent_pct:.0f}% of tokens - consider using smaller scoped tasks"
+            )
+
+    # Error rate
+    totals = agg.get("totals", {})
+    if totals.get("calls", 0) > 0:
+        error_rate = (totals.get("errors", 0) / totals["calls"]) * 100
+        analysis["error_rate_pct"] = round(error_rate, 1)
+        if error_rate > 10:
+            analysis["recommendations"].append(
+                f"High error rate ({error_rate:.0f}%) - review failing tools"
+            )
+
+    return analysis
+
+
 # === stdio Server ===
 
 def start_stdio_server(router: MCPRouter):
@@ -579,7 +893,24 @@ def start_stdio_server(router: MCPRouter):
 
     def list_all_tools() -> list[dict]:
         """Get tools from all backends, prefix names with backend."""
-        all_tools = []
+        # Router's own tools
+        all_tools = [
+            {
+                "name": "router__ping",
+                "description": "Test tool that returns a simple message",
+                "inputSchema": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "router__telemetry",
+                "description": "Get real-time telemetry data (tool usage, tokens, errors, timing)",
+                "inputSchema": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "router__telemetry_analysis",
+                "description": "Get analysis of token usage trends and optimization effectiveness",
+                "inputSchema": {"type": "object", "properties": {}},
+            },
+        ]
         for server in router.list_servers():
             name = server["name"]
             prefix = server.get("tool_prefix") or name
@@ -630,8 +961,26 @@ def start_stdio_server(router: MCPRouter):
                 tool_name = params.get("name", "")
                 args = params.get("arguments", {})
 
-                # Parse prefix__toolname
-                if "__" in tool_name:
+                # Handle router's own tools first
+                if tool_name == "router__ping":
+                    result = {"content": [{"type": "text", "text": "pong! Router is working."}]}
+
+                elif tool_name == "router__telemetry":
+                    if router.telemetry:
+                        summary = router.telemetry.get_summary()
+                        result = {"content": [{"type": "text", "text": json.dumps(summary, indent=2)}]}
+                    else:
+                        result = {"content": [{"type": "text", "text": "Telemetry not enabled"}]}
+
+                elif tool_name == "router__telemetry_analysis":
+                    if router.telemetry:
+                        analysis = analyze_telemetry_trends(router.telemetry)
+                        result = {"content": [{"type": "text", "text": json.dumps(analysis, indent=2)}]}
+                    else:
+                        result = {"content": [{"type": "text", "text": "Telemetry not enabled"}]}
+
+                # Parse prefix__toolname for backend routing
+                elif "__" in tool_name:
                     prefix, actual_tool = tool_name.split("__", 1)
                     # Find backend by prefix
                     destination = None
@@ -640,7 +989,7 @@ def start_stdio_server(router: MCPRouter):
                             destination = server["name"]
                             break
                     if not destination:
-                        result = {"error": f"Unknown backend prefix: {prefix}"}
+                        result = {"content": [{"type": "text", "text": f"Error: Unknown backend prefix: {prefix}"}], "isError": True}
                     else:
                         response = router.route(destination, actual_tool, args)
                         # Pass through backend result directly (MCP protocol compliance)
@@ -648,11 +997,11 @@ def start_stdio_server(router: MCPRouter):
                         if isinstance(backend_result, dict) and "result" in backend_result:
                             result = backend_result["result"]
                         elif isinstance(backend_result, dict) and "error" in backend_result:
-                            result = {"error": backend_result["error"]}
+                            result = {"content": [{"type": "text", "text": f"Error: {backend_result['error']}"}], "isError": True}
                         else:
                             result = backend_result
                 else:
-                    result = {"error": f"Tool name must be prefixed: prefix__tool"}
+                    result = {"content": [{"type": "text", "text": "Tool name must be prefixed: prefix__tool"}], "isError": True}
 
             # Router management API
             elif method == "router_register":

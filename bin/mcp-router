@@ -29,4 +29,5 @@ if __name__ == "__main__":
                 tool_prefix=config.get("tool_prefix", ""),
             )
 
-    start_stdio_server(router)
+    debug = "--debug" in sys.argv
+    start_stdio_server(router, debug=debug)
