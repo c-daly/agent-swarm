@@ -2,33 +2,31 @@
 """MCP Router entry point.
 
 Starts the router as an MCP server on stdio.
-Registers known backends on startup.
+Reads backends from config/backends.json.
 """
 
+import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
+ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT / "lib"))
 
 from mcp_router import MCPRouter, start_stdio_server
 
-# Known backends - add more here as needed
-BACKENDS = {
-    "serena": {
-        "command": ["uvx", "--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server"],
-        "tool_prefix": "serena",
-    },
-}
+CONFIG_FILE = ROOT / "config" / "backends.json"
 
 if __name__ == "__main__":
     router = MCPRouter()
 
-    # Register backends
-    for name, config in BACKENDS.items():
-        router.register_server(
-            name=name,
-            command=config["command"],
-            tool_prefix=config.get("tool_prefix", ""),
-        )
+    # Load and register backends
+    if CONFIG_FILE.exists():
+        backends = json.loads(CONFIG_FILE.read_text())
+        for name, config in backends.items():
+            router.register_server(
+                name=name,
+                command=config["command"],
+                tool_prefix=config.get("tool_prefix", ""),
+            )
 
     start_stdio_server(router)

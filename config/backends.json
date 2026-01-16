@@ -1,0 +1,6 @@
+{
+  "serena": {
+    "command": ["uvx", "--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server"],
+    "tool_prefix": "serena"
+  }
+}
