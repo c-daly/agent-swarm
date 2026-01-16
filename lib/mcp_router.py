@@ -88,6 +88,9 @@ class MCPRouter:
     Routes requests to registered target servers, summarizes responses,
     and returns {summary, full} envelope.
 
+    Connections are spawned on first use and kept alive for reuse.
+    Per-backend locks ensure safe concurrent access.
+
     Summarizer options:
         - "openai": Use OpenAI API (requires OPENAI_API_KEY)
         - "anthropic": Use Anthropic API (requires ANTHROPIC_API_KEY)
@@ -121,6 +124,8 @@ class MCPRouter:
         self._queue: deque = deque(maxlen=max_queue_size)
         self._lock = Lock()
         self._servers: dict[str, ServerConfig] = {}
+        self._connections: dict[str, subprocess.Popen] = {}  # Live backend processes
+        self._backend_locks: dict[str, Lock] = {}  # Per-backend locks
 
         # Initialize summarizer (decide provider once at startup)
         self._llm_call: Callable[[str], str] = self._init_summarizer(summarizer, summarizer_model)
@@ -245,10 +250,25 @@ class MCPRouter:
         """
         with self._lock:
             existed = self._servers.pop(name, None) is not None
+            # Kill connection if exists
+            proc = self._connections.pop(name, None)
+            if proc:
+                proc.terminate()
             return {
                 "status": "unregistered" if existed else "not_found",
                 "name": name
             }
+
+    def shutdown(self) -> None:
+        """Shutdown all backend connections."""
+        with self._lock:
+            for _, proc in list(self._connections.items()):
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=5)
+                except Exception:
+                    proc.kill()
+            self._connections.clear()
 
     def list_servers(self) -> list[dict]:
         """List all registered servers.
@@ -344,54 +364,54 @@ class MCPRouter:
         hash_digest = hashlib.sha256(content.encode()).hexdigest()[:12]
         return f"req-{hash_digest}"
 
-    def _forward_to_server(
-        self,
-        server: ServerConfig,
-        tool_name: str,
-        args: dict
-    ) -> dict:
-        """Forward request to target MCP server via subprocess.
+    def _get_backend_lock(self, server_name: str) -> Lock:
+        """Get or create lock for a backend server."""
+        with self._lock:
+            if server_name not in self._backend_locks:
+                self._backend_locks[server_name] = Lock()
+            return self._backend_locks[server_name]
 
-        Implements proper MCP handshake:
-        1. Send initialize request
-        2. Receive initialize response
-        3. Send initialized notification
-        4. Send tool call
-        5. Receive tool response
+    def _get_connection(self, server: ServerConfig) -> subprocess.Popen:
+        """Get existing connection or spawn new one with handshake.
 
         Args:
             server: Target server config
-            tool_name: Tool to invoke
-            args: Tool arguments
 
         Returns:
-            Response dict from target server
+            Live subprocess connection
+
+        Raises:
+            RuntimeError: If connection cannot be established
         """
-        proc = None
+        # Return existing connection if we have one
+        if server.name in self._connections:
+            return self._connections[server.name]
+
+        # Spawn new process
+        proc = subprocess.Popen(
+            server.command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1  # Line buffered
+        )
+
+        def send(msg: dict) -> None:
+            """Send JSON-RPC message to server."""
+            line = json.dumps(msg) + "\n"
+            proc.stdin.write(line)  # type: ignore[union-attr]
+            proc.stdin.flush()  # type: ignore[union-attr]
+
+        def receive() -> dict:
+            """Receive JSON-RPC response from server."""
+            line = proc.stdout.readline()  # type: ignore[union-attr]
+            if not line:
+                raise RuntimeError("Server closed connection")
+            return json.loads(line.strip())
+
+        # MCP handshake
         try:
-            proc = subprocess.Popen(
-                server.command,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1  # Line buffered
-            )
-
-            def send(msg: dict) -> None:
-                """Send JSON-RPC message to server."""
-                line = json.dumps(msg) + "\n"
-                proc.stdin.write(line)
-                proc.stdin.flush()
-
-            def receive() -> dict:
-                """Receive JSON-RPC response from server."""
-                line = proc.stdout.readline()
-                if not line:
-                    raise RuntimeError("Server closed connection")
-                return json.loads(line.strip())
-
-            # Step 1: Send initialize
             send({
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -406,50 +426,77 @@ class MCPRouter:
                 }
             })
 
-            # Step 2: Receive initialize response
             init_response = receive()
             if "error" in init_response:
-                return {"error": f"Initialize failed: {init_response['error']}"}
+                proc.kill()
+                raise RuntimeError(f"Initialize failed: {init_response['error']}")
 
-            # Step 3: Send initialized notification (no id = notification)
             send({
                 "jsonrpc": "2.0",
                 "method": "notifications/initialized"
             })
-
-            # Step 4: Send tool call
-            send({
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {
-                    "name": tool_name,
-                    "arguments": args
-                }
-            })
-
-            # Step 5: Receive tool response
-            tool_response = receive()
-
-            # Clean up
-            proc.stdin.close()
-            proc.terminate()
-            proc.wait(timeout=5)
-
-            return tool_response
-
-        except subprocess.TimeoutExpired:
-            if proc:
-                proc.kill()
-            return {"error": "Request timed out"}
-        except json.JSONDecodeError as e:
-            if proc:
-                proc.kill()
-            return {"error": f"Invalid JSON response: {e}"}
         except Exception as e:
-            if proc:
-                proc.kill()
-            return {"error": str(e)}
+            proc.kill()
+            raise RuntimeError(f"Handshake failed: {e}")
+
+        # Store connection
+        self._connections[server.name] = proc
+        return proc
+
+    def _forward_to_server(
+        self,
+        server: ServerConfig,
+        tool_name: str,
+        args: dict
+    ) -> dict:
+        """Forward request to target MCP server.
+
+        Uses persistent connection (spawns on first use, reuses thereafter).
+        Per-backend lock ensures safe concurrent access.
+
+        Args:
+            server: Target server config
+            tool_name: Tool to invoke
+            args: Tool arguments
+
+        Returns:
+            Response dict from target server
+        """
+        backend_lock = self._get_backend_lock(server.name)
+
+        with backend_lock:
+            try:
+                proc = self._get_connection(server)
+
+                # Send tool call
+                request_id = hash((tool_name, json.dumps(args, sort_keys=True))) & 0xFFFFFFFF
+                line = json.dumps({
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "tools/call",
+                    "params": {
+                        "name": tool_name,
+                        "arguments": args
+                    }
+                }) + "\n"
+                proc.stdin.write(line)  # type: ignore[union-attr]
+                proc.stdin.flush()  # type: ignore[union-attr]
+
+                # Receive response
+                response_line = proc.stdout.readline()  # type: ignore[union-attr]
+                if not response_line:
+                    # Connection died, remove and retry once
+                    self._connections.pop(server.name, None)
+                    return self._forward_to_server(server, tool_name, args)
+
+                return json.loads(response_line.strip())
+
+            except json.JSONDecodeError as e:
+                self._connections.pop(server.name, None)
+                return {"error": f"Invalid JSON response: {e}"}
+            except Exception as e:
+                self._connections.pop(server.name, None)
+                return {"error": str(e)}
 
     # === Summarization ===
 
