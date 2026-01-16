@@ -358,8 +358,7 @@ def run_bash(
     """
     try:
         result = subprocess.run(
-            command,
-            shell=True,
+            ["bash", "-c", command],
             capture_output=True,
             text=True,
             timeout=timeout,
