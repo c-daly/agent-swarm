@@ -643,11 +643,14 @@ def start_stdio_server(router: MCPRouter):
                         result = {"error": f"Unknown backend prefix: {prefix}"}
                     else:
                         response = router.route(destination, actual_tool, args)
-                        result = {
-                            "summary": response.summary,
-                            "full": response.full,
-                            "correlation_id": response.correlation_id
-                        }
+                        # Pass through backend result directly (MCP protocol compliance)
+                        backend_result = response.full
+                        if isinstance(backend_result, dict) and "result" in backend_result:
+                            result = backend_result["result"]
+                        elif isinstance(backend_result, dict) and "error" in backend_result:
+                            result = {"error": backend_result["error"]}
+                        else:
+                            result = backend_result
                 else:
                     result = {"error": f"Tool name must be prefixed: prefix__tool"}
 
