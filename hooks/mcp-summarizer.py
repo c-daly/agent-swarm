@@ -106,13 +106,14 @@ Response to summarize:
 
 def main():
     try:
-        input_data = json.loads(sys.stdin.read())
+        raw_input = sys.stdin.read()
+        input_data = json.loads(raw_input)
     except json.JSONDecodeError:
         print(json.dumps({}))
         return
 
     tool_name = input_data.get("tool_name", "")
-    tool_output = input_data.get("tool_output", {})
+    tool_response = input_data.get("tool_response", "")
 
     # Only process MCP tools
     if not tool_name.startswith(MCP_PREFIX):
@@ -120,19 +121,7 @@ def main():
         return
 
     # Get the response content
-    if isinstance(tool_output, dict):
-        content = tool_output.get("content", "")
-        if isinstance(content, list):
-            # MCP responses often have content as list of text blocks
-            content = "\n".join(
-                item.get("text", str(item)) if isinstance(item, dict) else str(item)
-                for item in content
-            )
-        if not content:
-            # No content field or empty - serialize entire output (e.g. Serena's {"result": ...})
-            content = json.dumps(tool_output, indent=2)
-    else:
-        content = str(tool_output)
+    content = str(tool_response) if tool_response else ""
 
     # Check size threshold
     if len(content) < SIZE_THRESHOLD:
@@ -156,18 +145,19 @@ def main():
             save_cache(cache)
 
     if not summary:
+        # Empty JSON = no action
         print(json.dumps({}))
         return
 
-    # Return summary as additional context that gets injected
-    result = {
+    # Output via additionalContext (shows as system-reminder)
+    summary_text = f"📋 MCP Summary ({len(content):,}→{len(summary)} chars): {summary}"
+    output = {
         "hookSpecificOutput": {
             "hookEventName": "PostToolUse",
-            "additionalContext": f"📋 **MCP Response Summary** ({len(content):,} chars → {len(summary)} chars):\n{summary}"
+            "additionalContext": summary_text
         }
     }
-
-    print(json.dumps(result))
+    print(json.dumps(output))
 
 
 if __name__ == "__main__":
