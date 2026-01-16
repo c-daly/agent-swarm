@@ -88,10 +88,10 @@ class TestPhaseTools:
         assert "Edit" in PHASE_TOOLS[Phase.TEST]["blocked"]
         assert "Write" in PHASE_TOOLS[Phase.TEST]["blocked"]
 
-    def test_test_phase_allows_read_bash(self):
-        """Test phase should allow Read and Bash."""
+    def test_test_phase_allows_read_native_bash(self):
+        """Test phase should allow Read and native__bash."""
         assert "Read" in PHASE_TOOLS[Phase.TEST]["allowed"]
-        assert "Bash" in PHASE_TOOLS[Phase.TEST]["allowed"]
+        assert "native__bash" in PHASE_TOOLS[Phase.TEST]["allowed"]
 
     def test_implement_phase_allows_editing(self):
         """Implement phase should allow editing tools."""
@@ -725,9 +725,9 @@ class TestOrchestratePhase:
         assert "Edit" in PHASE_TOOLS[Phase.ORCHESTRATE]["blocked"]
         assert "Write" in PHASE_TOOLS[Phase.ORCHESTRATE]["blocked"]
 
-    def test_orchestrate_phase_allows_bash(self):
-        """ORCHESTRATE phase should allow Bash (but evaluation commands are filtered)."""
-        assert "Bash" in PHASE_TOOLS[Phase.ORCHESTRATE]["allowed"]
+    def test_orchestrate_phase_allows_native_bash(self):
+        """ORCHESTRATE phase should allow native__bash (but evaluation commands are filtered)."""
+        assert "native__bash" in PHASE_TOOLS[Phase.ORCHESTRATE]["allowed"]
 
     def test_orchestrate_phase_allows_read(self):
         """ORCHESTRATE phase should allow Read."""
@@ -845,48 +845,48 @@ class TestBashWhitelist:
     def test_intake_allows_iterate_workflow(self):
         """INTAKE allows iterate_workflow.py commands."""
         start("Test task")  # Vague -> INTAKE
-        allowed, _ = is_tool_allowed("Bash", command=self.ITERATE_CMD)
+        allowed, _ = is_tool_allowed("native__bash", command=self.ITERATE_CMD)
         assert allowed is True
 
     def test_intake_blocks_pytest(self):
         """INTAKE blocks pytest."""
         start("Test task")
-        allowed, reason = is_tool_allowed("Bash", command=self.PYTEST_CMD)
+        allowed, reason = is_tool_allowed("native__bash", command=self.PYTEST_CMD)
         assert allowed is False
         assert "BLOCKED" in reason
 
     def test_intake_blocks_git(self):
         """INTAKE blocks git."""
         start("Test task")
-        allowed, _ = is_tool_allowed("Bash", command=self.GIT_CMD)
+        allowed, _ = is_tool_allowed("native__bash", command=self.GIT_CMD)
         assert allowed is False
 
     def test_design_allows_iterate_workflow(self):
         """DESIGN allows iterate_workflow.py commands."""
         start("Test task")
         set_phase(Phase.DESIGN)
-        allowed, _ = is_tool_allowed("Bash", command=self.ITERATE_CMD)
+        allowed, _ = is_tool_allowed("native__bash", command=self.ITERATE_CMD)
         assert allowed is True
 
     def test_design_blocks_pytest(self):
         """DESIGN blocks pytest."""
         start("Test task")
         set_phase(Phase.DESIGN)
-        allowed, _ = is_tool_allowed("Bash", command=self.PYTEST_CMD)
+        allowed, _ = is_tool_allowed("native__bash", command=self.PYTEST_CMD)
         assert allowed is False
 
     def test_test_writing_allows_pytest(self):
         """TEST_WRITING allows pytest."""
         start("Test task")
         set_phase(Phase.TEST_WRITING)
-        allowed, _ = is_tool_allowed("Bash", command=self.PYTEST_CMD)
+        allowed, _ = is_tool_allowed("native__bash", command=self.PYTEST_CMD)
         assert allowed is True
 
     def test_test_writing_blocks_ruff(self):
         """TEST_WRITING blocks ruff."""
         start("Test task")
         set_phase(Phase.TEST_WRITING)
-        allowed, _ = is_tool_allowed("Bash", command=self.RUFF_CMD)
+        allowed, _ = is_tool_allowed("native__bash", command=self.RUFF_CMD)
         assert allowed is False
 
     def test_implement_allows_pytest_ruff_mypy(self):
@@ -894,35 +894,35 @@ class TestBashWhitelist:
         start("Test task")
         set_phase(Phase.IMPLEMENT)
         for cmd in [self.PYTEST_CMD, self.RUFF_CMD, self.MYPY_CMD]:
-            allowed, _ = is_tool_allowed("Bash", command=cmd)
+            allowed, _ = is_tool_allowed("native__bash", command=cmd)
             assert allowed is True, f"IMPLEMENT should allow: {cmd}"
 
     def test_implement_blocks_coverage(self):
         """IMPLEMENT blocks coverage."""
         start("Test task")
         set_phase(Phase.IMPLEMENT)
-        allowed, _ = is_tool_allowed("Bash", command=self.COVERAGE_CMD)
+        allowed, _ = is_tool_allowed("native__bash", command=self.COVERAGE_CMD)
         assert allowed is False
 
     def test_implement_blocks_git(self):
         """IMPLEMENT blocks git."""
         start("Test task")
         set_phase(Phase.IMPLEMENT)
-        allowed, _ = is_tool_allowed("Bash", command=self.GIT_CMD)
+        allowed, _ = is_tool_allowed("native__bash", command=self.GIT_CMD)
         assert allowed is False
 
     def test_test_phase_allows_coverage(self):
         """TEST phase allows coverage."""
         start("Test task")
         set_phase(Phase.TEST)
-        allowed, _ = is_tool_allowed("Bash", command=self.COVERAGE_CMD)
+        allowed, _ = is_tool_allowed("native__bash", command=self.COVERAGE_CMD)
         assert allowed is True
 
     def test_test_phase_blocks_git(self):
         """TEST phase blocks git."""
         start("Test task")
         set_phase(Phase.TEST)
-        allowed, _ = is_tool_allowed("Bash", command=self.GIT_CMD)
+        allowed, _ = is_tool_allowed("native__bash", command=self.GIT_CMD)
         assert allowed is False
 
     def test_review_allows_git_gh(self):
@@ -931,25 +931,25 @@ class TestBashWhitelist:
         set_phase(Phase.REVIEW)
         set_test_results(tests_passed=True, lint_passed=True, coverage_ok=True)
         for cmd in [self.GIT_CMD, self.GH_CMD]:
-            allowed, _ = is_tool_allowed("Bash", command=cmd)
+            allowed, _ = is_tool_allowed("native__bash", command=cmd)
             assert allowed is True, f"REVIEW should allow: {cmd}"
 
     def test_orchestrate_allows_gh(self):
         """ORCHESTRATE allows gh for PR polling."""
         start("## Task\n- [ ] Item 1\n- [ ] Item 2")  # Spec -> ORCHESTRATE
-        allowed, _ = is_tool_allowed("Bash", command=self.GH_CMD)
+        allowed, _ = is_tool_allowed("native__bash", command=self.GH_CMD)
         assert allowed is True
 
     def test_orchestrate_blocks_pytest(self):
         """ORCHESTRATE blocks pytest (spawn test agent instead)."""
         start("## Task\n- [ ] Item 1\n- [ ] Item 2")
-        allowed, _ = is_tool_allowed("Bash", command=self.PYTEST_CMD)
+        allowed, _ = is_tool_allowed("native__bash", command=self.PYTEST_CMD)
         assert allowed is False
 
     def test_orchestrate_blocks_git(self):
         """ORCHESTRATE blocks git."""
         start("## Task\n- [ ] Item 1\n- [ ] Item 2")
-        allowed, _ = is_tool_allowed("Bash", command=self.GIT_CMD)
+        allowed, _ = is_tool_allowed("native__bash", command=self.GIT_CMD)
         assert allowed is False
 
     def test_done_allows_all(self):
@@ -957,7 +957,7 @@ class TestBashWhitelist:
         start("Test task")
         set_phase(Phase.DONE)
         for cmd in [self.PYTEST_CMD, self.RUFF_CMD, self.GIT_CMD, self.GH_CMD]:
-            allowed, _ = is_tool_allowed("Bash", command=cmd)
+            allowed, _ = is_tool_allowed("native__bash", command=cmd)
             assert allowed is True, f"DONE should allow: {cmd}"
 
     def test_chained_commands_all_must_pass(self):
@@ -965,10 +965,10 @@ class TestBashWhitelist:
         start("Test task")
         set_phase(Phase.IMPLEMENT)  # allows pytest, ruff, mypy
         # All allowed - should pass
-        allowed, _ = is_tool_allowed("Bash", command="pytest tests/ && ruff check .")
+        allowed, _ = is_tool_allowed("native__bash", command="pytest tests/ && ruff check .")
         assert allowed is True
         # Second command not allowed - should block
-        allowed, reason = is_tool_allowed("Bash", command="pytest tests/; git status")
+        allowed, reason = is_tool_allowed("native__bash", command="pytest tests/; git status")
         assert allowed is False
         assert "git" in reason
 
@@ -976,19 +976,19 @@ class TestBashWhitelist:
         """Semicolon-chained disallowed command is blocked."""
         start("Test task")
         set_phase(Phase.TEST_WRITING)  # allows pytest only
-        allowed, _ = is_tool_allowed("Bash", command="pytest; ruff check .")
+        allowed, _ = is_tool_allowed("native__bash", command="pytest; ruff check .")
         assert allowed is False
 
     def test_chained_with_pipe_blocked(self):
         """Piped disallowed command is blocked."""
         start("Test task")
         set_phase(Phase.INTAKE)  # only iterate_workflow.py
-        allowed, _ = is_tool_allowed("Bash", command="echo test | git apply")
+        allowed, _ = is_tool_allowed("native__bash", command="echo test | git apply")
         assert allowed is False
 
     def test_chained_with_background_blocked(self):
         """Background (&) disallowed command is blocked."""
         start("Test task")
         set_phase(Phase.INTAKE)
-        allowed, _ = is_tool_allowed("Bash", command="echo test & git status")
+        allowed, _ = is_tool_allowed("native__bash", command="echo test & git status")
         assert allowed is False

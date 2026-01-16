@@ -111,46 +111,46 @@ class Phase(Enum):
 PHASE_TOOLS = {
     Phase.ORCHESTRATE: {
         # Orchestrate phase: coordinate workers, read queue state, spawn subagents
-        # NO editing, Bash allowed but evaluation commands filtered (see is_tool_allowed)
-        "allowed": {"Read", "Task", "TodoWrite", "TaskOutput", "Glob", "Grep", "Bash"},
-        "blocked": {"Edit", "Write", "NotebookEdit"},
+        # NO editing, native__bash allowed but evaluation commands filtered (see is_tool_allowed)
+        "allowed": {"Read", "Task", "TodoWrite", "TaskOutput", "Glob", "Grep", "native__bash"},
+        "blocked": {"Edit", "Write", "NotebookEdit", "Bash"},
     },
     Phase.INTAKE: {
         # Intake phase: gather requirements, research, no editing
         "allowed": {"Read", "Glob", "Grep", "WebSearch", "WebFetch", "Task"},
-        "blocked": {"Edit", "Write"},
+        "blocked": {"Edit", "Write", "Bash"},
     },
     Phase.DESIGN: {
         # Design phase: write spec, run decomposer
-        "allowed": {"Read", "Glob", "Grep", "Write", "Bash", "Task"},
-        "blocked": set(),
+        "allowed": {"Read", "Glob", "Grep", "Write", "native__bash", "Task"},
+        "blocked": {"Bash"},
     },
     Phase.TEST_WRITING: {
-        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "Bash"},
-        "blocked": set(),
+        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "native__bash"},
+        "blocked": {"Bash"},
     },
     Phase.IMPLEMENT: {
-        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "Bash"},
-        "blocked": set(),
+        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "native__bash"},
+        "blocked": {"Bash"},
     },
     Phase.TEST: {
         # Test phase: run verification only, no editing
-        "allowed": {"Read", "Glob", "Grep", "Bash"},
-        "blocked": {"Edit", "Write"},
+        "allowed": {"Read", "Glob", "Grep", "native__bash"},
+        "blocked": {"Edit", "Write", "Bash"},
     },
     Phase.REVIEW: {
         # Review phase: fix issues from Greptile comments
-        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "Bash"},
-        "blocked": set(),
+        "allowed": {"Read", "Glob", "Grep", "Edit", "Write", "native__bash"},
+        "blocked": {"Bash"},
     },
     Phase.DONE: {
-        "allowed": {"Read", "Glob", "Grep", "Bash", "Edit", "Write", "Task"},
-        "blocked": set(),
+        "allowed": {"Read", "Glob", "Grep", "native__bash", "Edit", "Write", "Task"},
+        "blocked": {"Bash"},
     },
 }
 
-# Per-phase Bash command whitelist
-# Each phase only allows specific Bash commands. None means all allowed.
+# Per-phase native__bash command whitelist
+# Each phase only allows specific commands via native__bash. None means all allowed.
 PHASE_BASH_WHITELIST = {
     Phase.INTAKE: {"iterate_workflow.py"},
     Phase.DESIGN: {"iterate_workflow.py"},
@@ -665,8 +665,8 @@ def is_tool_allowed(tool_name: str, command: str | None = None) -> tuple[bool, s
     if tool_name in phase_config["blocked"]:
         return False, f"[BLOCKED] {tool_name} not allowed in {phase.value} phase. Run tests first."
 
-    # Check Bash commands against per-phase whitelist
-    if tool_name == "Bash" and command:
+    # Check native__bash commands against per-phase whitelist
+    if tool_name == "native__bash" and command:
         cmd_lower = command.strip().lower()
         whitelist = PHASE_BASH_WHITELIST.get(phase)
 
