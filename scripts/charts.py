@@ -62,6 +62,88 @@ def save_snapshot(metrics_data):
     HISTORY_FILE.write_text(json.dumps(history, indent=2), encoding='utf-8')
     print(f"✅ Snapshot saved ({len(history['snapshots'])} total)")
 
+
+def get_chart_dropdown_css():
+    """Return CSS for chart dropdowns."""
+    return """
+        .controls {
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .controls label {
+            font-weight: 600;
+            color: #888;
+        }
+        .controls select {
+            padding: 8px 12px;
+            border: 1px solid #333;
+            border-radius: 4px;
+            font-size: 14px;
+            background: #0f0f1e;
+            color: #eee;
+            cursor: pointer;
+        }
+        .controls select:hover {
+            border-color: #4cc9f0;
+        }
+"""
+
+
+def get_chart_dropdown_html(options, default_value=None):
+    """Generate dropdown HTML for chart timeframe selection.
+    
+    Args:
+        options: List of tuples (value, label) for dropdown options
+        default_value: Which option to select by default
+    """
+    option_html = []
+    for value, label in options:
+        selected = ' selected' if value == default_value else ''
+        option_html.append(f'<option value="{value}"{selected}>{label}</option>')
+    
+    return f'''
+        <div class="controls">
+            <label for="viewSelect">View:</label>
+            <select id="viewSelect" onchange="switchView()">
+                {"".join(option_html)}
+            </select>
+        </div>
+'''
+
+
+# Standard dropdown options for different chart types
+TIMEFRAME_OPTIONS_STANDARD = [
+    ('7d', 'Last 7 Days'),
+    ('30d', 'Last 30 Days'),
+    ('all', 'All Time'),
+]
+
+TIMEFRAME_OPTIONS_WITH_SESSION = [
+    ('7d', 'Last 7 Days'),
+    ('30d', 'Last 30 Days'),
+    ('all', 'All Time'),
+    ('session', 'By Session'),
+]
+
+TIMEFRAME_OPTIONS_WITH_HOURLY = [
+    ('7d', 'Last 7 Days'),
+    ('30d', 'Last 30 Days'),
+    ('all', 'All Time'),
+    ('hourly', 'Hourly (Last 48h)'),
+]
+
+TIMEFRAME_OPTIONS_FULL = [
+    ('7d', 'Last 7 Days'),
+    ('30d', 'Last 30 Days'),
+    ('all', 'All Time'),
+    ('hourly', 'Hourly (Last 48h)'),
+    ('session', 'By Session'),
+]
+
+
 def generate_html_chart(title, chart_type, data, labels, output_file, options=None):
     """Generate standalone HTML with Chart.js."""
     from datetime import timedelta, timezone
@@ -1435,34 +1517,97 @@ def chart_realtime_telemetry():
 
 
 def chart_latency_by_tool():
-    """Chart average latency (duration) by tool - find slow tools."""
+    """Chart average latency (duration) by tool - find slow tools with time filtering."""
+    from datetime import datetime, timedelta, timezone
+    
     if not TELEMETRY_FILE.exists():
         print("⚠️  No telemetry data found")
         return None
 
     telemetry = json.loads(TELEMETRY_FILE.read_text())
-    by_tool = telemetry.get("aggregates", {}).get("by_tool", {})
+    events = telemetry.get("events", [])
+    by_tool_all = telemetry.get("aggregates", {}).get("by_tool", {})
 
-    if not by_tool:
+    if not by_tool_all and not events:
         print("⚠️  No tool data found")
         return None
 
-    # Calculate average latency per tool
-    latency_data = []
-    for tool, data in by_tool.items():
+    # Helper to calculate latency from events for a time range
+    def calc_latency_from_events(events_list, cutoff_hours=None):
+        """Calculate average latency per tool from events."""
+        now = datetime.now(timezone.utc)
+        tool_stats = defaultdict(lambda: {"duration": 0, "count": 0})
+        
+        for e in events_list:
+            ts_str = e.get("ts", "")
+            if cutoff_hours and ts_str:
+                try:
+                    ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    if (now - ts).total_seconds() > cutoff_hours * 3600:
+                        continue
+                except:
+                    pass
+            
+            tool = e.get("tool", "unknown")
+            duration = e.get("duration_ms", 0)
+            if duration > 0:
+                tool_stats[tool]["duration"] += duration
+                tool_stats[tool]["count"] += 1
+        
+        result = []
+        for tool, data in tool_stats.items():
+            if data["count"] > 0:
+                avg = data["duration"] / data["count"]
+                result.append((tool[:25], round(avg, 1), data["count"]))
+        result.sort(key=lambda x: x[1], reverse=True)
+        return result[:20]
+
+    # Calculate for different time ranges
+    data_7d = calc_latency_from_events(events, 24 * 7)
+    data_30d = calc_latency_from_events(events, 24 * 30)
+    data_all_events = calc_latency_from_events(events, None)
+    
+    # All-time from aggregates (more complete)
+    latency_all = []
+    for tool, data in by_tool_all.items():
         count = data.get("count", 0)
         duration = data.get("duration_ms", 0)
         if count > 0:
-            avg_latency = duration / count
-            latency_data.append((tool[:25], avg_latency, count))
+            latency_all.append((tool[:25], round(duration / count, 1), count))
+    latency_all.sort(key=lambda x: x[1], reverse=True)
+    data_all = latency_all[:20] if latency_all else data_all_events
 
-    # Sort by average latency (slowest first)
-    latency_data.sort(key=lambda x: x[1], reverse=True)
-    top_20 = latency_data[:20]
+    # By session - aggregate latency per session
+    session_latency = defaultdict(lambda: {"duration": 0, "count": 0})
+    for e in events:
+        sid = e.get("session_id", "unknown")[:8]
+        duration = e.get("duration_ms", 0)
+        if duration > 0:
+            session_latency[sid]["duration"] += duration
+            session_latency[sid]["count"] += 1
+    
+    session_data = []
+    for sid, data in session_latency.items():
+        if data["count"] > 0:
+            avg = data["duration"] / data["count"]
+            session_data.append((sid + "...", round(avg, 1), data["count"]))
+    session_data.sort(key=lambda x: x[1], reverse=True)
+    data_session = session_data[:20]
 
-    labels = [t[0] for t in top_20]
-    values = [round(t[1], 1) for t in top_20]
-    counts = [t[2] for t in top_20]
+    # Convert to JSON-safe format
+    def to_chart_data(data):
+        if not data:
+            return {"labels": ["No data"], "values": [0], "counts": [0]}
+        return {
+            "labels": [d[0] for d in data],
+            "values": [d[1] for d in data],
+            "counts": [d[2] for d in data]
+        }
+
+    week_data = to_chart_data(data_7d)
+    month_data = to_chart_data(data_30d)
+    all_data = to_chart_data(data_all)
+    session_chart_data = to_chart_data(data_session)
 
     html = f"""<!DOCTYPE html>
 <html>
@@ -1475,48 +1620,84 @@ def chart_latency_by_tool():
         h1 {{ color: #4cc9f0; }}
         .back {{ color: #4cc9f0; text-decoration: none; }}
         .chart-container {{ max-width: 900px; margin: 20px auto; }}
-        .note {{ color: #888; font-size: 14px; margin-top: 20px; }}
+        .note {{ color: #888; font-size: 14px; margin-top: 10px; }}
+        {get_chart_dropdown_css()}
     </style>
 </head>
 <body>
     <a href="dashboard.html" class="back">← Back to Dashboard</a>
     <h1>⏱️ Latency by Tool (Slowest First)</h1>
-    <p class="note">Average duration in milliseconds per tool call. Hover for call counts.</p>
+    
+    <div class="controls">
+        <label for="viewSelect">View:</label>
+        <select id="viewSelect" onchange="switchView()">
+            <option value="week">Last 7 Days</option>
+            <option value="month">Last 30 Days</option>
+            <option value="all" selected>All Time</option>
+            <option value="session">By Session</option>
+        </select>
+    </div>
+    
+    <p class="note">Average duration in milliseconds. Hover for call counts.</p>
     <div class="chart-container">
         <canvas id="chart"></canvas>
     </div>
     <script>
-        new Chart(document.getElementById('chart'), {{
-            type: 'bar',
-            data: {{
-                labels: {json.dumps(labels)},
-                datasets: [{{
-                    label: 'Avg Latency (ms)',
-                    data: {json.dumps(values)},
-                    backgroundColor: 'rgba(248, 113, 113, 0.6)',
-                    borderColor: 'rgba(248, 113, 113, 1)',
-                    borderWidth: 1
-                }}]
-            }},
-            options: {{
-                indexAxis: 'y',
-                responsive: true,
-                plugins: {{
-                    tooltip: {{
-                        callbacks: {{
-                            afterLabel: function(ctx) {{
-                                const counts = {json.dumps(counts)};
-                                return 'Calls: ' + counts[ctx.dataIndex];
+        const weekData = {json.dumps(week_data)};
+        const monthData = {json.dumps(month_data)};
+        const allData = {json.dumps(all_data)};
+        const sessionData = {json.dumps(session_chart_data)};
+        
+        let chart = null;
+        
+        function createChart(data, title) {{
+            const ctx = document.getElementById('chart').getContext('2d');
+            if (chart) chart.destroy();
+            
+            chart = new Chart(ctx, {{
+                type: 'bar',
+                data: {{
+                    labels: data.labels,
+                    datasets: [{{
+                        label: title,
+                        data: data.values,
+                        backgroundColor: 'rgba(248, 113, 113, 0.6)',
+                        borderColor: 'rgba(248, 113, 113, 1)',
+                        borderWidth: 1
+                    }}]
+                }},
+                options: {{
+                    indexAxis: 'y',
+                    responsive: true,
+                    plugins: {{
+                        tooltip: {{
+                            callbacks: {{
+                                afterLabel: function(ctx) {{
+                                    return 'Calls: ' + data.counts[ctx.dataIndex];
+                                }}
                             }}
                         }}
+                    }},
+                    scales: {{
+                        x: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }}, title: {{ display: true, text: 'Milliseconds', color: '#888' }} }},
+                        y: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }}
                     }}
-                }},
-                scales: {{
-                    x: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }}, title: {{ display: true, text: 'Milliseconds', color: '#888' }} }},
-                    y: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }}
                 }}
+            }});
+        }}
+        
+        function switchView() {{
+            const view = document.getElementById('viewSelect').value;
+            switch(view) {{
+                case 'week': createChart(weekData, 'Avg Latency (7d)'); break;
+                case 'month': createChart(monthData, 'Avg Latency (30d)'); break;
+                case 'all': createChart(allData, 'Avg Latency (All Time)'); break;
+                case 'session': createChart(sessionData, 'Avg Latency (By Session)'); break;
             }}
-        }});
+        }}
+        
+        // Initial render
+        switchView();
     </script>
 </body>
 </html>"""
@@ -1535,27 +1716,62 @@ def chart_error_timeline():
 
     telemetry = json.loads(TELEMETRY_FILE.read_text())
     events = telemetry.get("events", [])
+    daily_summaries = telemetry.get("daily_summaries", {})
 
-    if not events:
+    if not events and not daily_summaries:
         print("⚠️  No events found")
         return None
 
-    # Group events by hour
+    # Group events by hour for current session
     hourly_data = defaultdict(lambda: {"total": 0, "errors": 0})
+    session_data = defaultdict(lambda: {"total": 0, "errors": 0})
 
     for e in events:
         ts = e.get("ts", "")[:13]  # YYYY-MM-DDTHH
+        session_id = e.get("session_id", "unknown")
         if ts:
             hourly_data[ts]["total"] += 1
+            session_data[session_id]["total"] += 1
             if e.get("status") == "error":
                 hourly_data[ts]["errors"] += 1
+                session_data[session_id]["errors"] += 1
 
-    # Sort by time
-    sorted_hours = sorted(hourly_data.items())[-48:]  # Last 48 hours
+    # Add historical data from daily_summaries
+    for date_str, summary in daily_summaries.items():
+        # Create a midday entry for each day
+        ts_key = f"{date_str}T12"
+        if ts_key not in hourly_data:
+            hourly_data[ts_key]["total"] = summary.get("total_calls", 0)
+            hourly_data[ts_key]["errors"] = summary.get("errors", 0)
 
+    # Sort all data by time
+    all_sorted = sorted(hourly_data.items())
+
+    # Prepare data for different time ranges
+    def get_range_data(hours):
+        if hours == 0:  # All time
+            return all_sorted
+        return all_sorted[-hours:] if len(all_sorted) >= hours else all_sorted
+
+    # Prepare session data
+    session_labels = list(session_data.keys())
+    session_totals = [session_data[s]["total"] for s in session_labels]
+    session_errors = [session_data[s]["errors"] for s in session_labels]
+    # Truncate long session IDs for display
+    session_display = [s[:8] + "..." if len(s) > 11 else s for s in session_labels]
+
+    # Default view: last 48 hours
+    sorted_hours = get_range_data(48)
     labels = [h[0][5:] for h in sorted_hours]  # MM-DDTHH
     totals = [h[1]["total"] for h in sorted_hours]
     errors = [h[1]["errors"] for h in sorted_hours]
+
+    # Prepare all data ranges for JS
+    data_7d = get_range_data(168)  # 7 days * 24 hours
+    data_30d = get_range_data(720)  # 30 days * 24 hours
+    data_all = all_sorted
+
+    dropdown_css = get_chart_dropdown_css()
 
     html = f"""<!DOCTYPE html>
 <html>
@@ -1568,23 +1784,62 @@ def chart_error_timeline():
         h1 {{ color: #4cc9f0; }}
         .back {{ color: #4cc9f0; text-decoration: none; }}
         .chart-container {{ max-width: 1200px; margin: 20px auto; }}
+        {dropdown_css}
     </style>
 </head>
 <body>
     <a href="dashboard.html" class="back">← Back to Dashboard</a>
     <h1>🚨 Error Timeline</h1>
+    <div class="controls">
+        <label for="timeRange">Time Range:</label>
+        <select id="timeRange" onchange="switchView(this.value)">
+            <option value="48h">Last 48 Hours</option>
+            <option value="7d">Last 7 Days</option>
+            <option value="30d">Last 30 Days</option>
+            <option value="all">All Time</option>
+            <option value="session">By Session</option>
+        </select>
+    </div>
     <div class="chart-container">
         <canvas id="chart"></canvas>
     </div>
     <script>
-        new Chart(document.getElementById('chart'), {{
+        const chartData = {{
+            '48h': {{
+                labels: {json.dumps(labels)},
+                totals: {json.dumps(totals)},
+                errors: {json.dumps(errors)}
+            }},
+            '7d': {{
+                labels: {json.dumps([h[0][5:] for h in data_7d])},
+                totals: {json.dumps([h[1]["total"] for h in data_7d])},
+                errors: {json.dumps([h[1]["errors"] for h in data_7d])}
+            }},
+            '30d': {{
+                labels: {json.dumps([h[0][5:] for h in data_30d])},
+                totals: {json.dumps([h[1]["total"] for h in data_30d])},
+                errors: {json.dumps([h[1]["errors"] for h in data_30d])}
+            }},
+            'all': {{
+                labels: {json.dumps([h[0][5:] for h in data_all])},
+                totals: {json.dumps([h[1]["total"] for h in data_all])},
+                errors: {json.dumps([h[1]["errors"] for h in data_all])}
+            }},
+            'session': {{
+                labels: {json.dumps(session_display)},
+                totals: {json.dumps(session_totals)},
+                errors: {json.dumps(session_errors)}
+            }}
+        }};
+
+        let chart = new Chart(document.getElementById('chart'), {{
             type: 'line',
             data: {{
-                labels: {json.dumps(labels)},
+                labels: chartData['48h'].labels,
                 datasets: [
                     {{
                         label: 'Total Calls',
-                        data: {json.dumps(totals)},
+                        data: chartData['48h'].totals,
                         borderColor: 'rgba(76, 201, 240, 1)',
                         backgroundColor: 'rgba(76, 201, 240, 0.1)',
                         fill: true,
@@ -1592,7 +1847,7 @@ def chart_error_timeline():
                     }},
                     {{
                         label: 'Errors',
-                        data: {json.dumps(errors)},
+                        data: chartData['48h'].errors,
                         borderColor: 'rgba(248, 113, 113, 1)',
                         backgroundColor: 'rgba(248, 113, 113, 0.3)',
                         fill: true,
@@ -1609,6 +1864,21 @@ def chart_error_timeline():
                 }}
             }}
         }});
+
+        function switchView(range) {{
+            const data = chartData[range];
+            const isSession = range === 'session';
+            
+            chart.config.type = isSession ? 'bar' : 'line';
+            chart.data.labels = data.labels;
+            chart.data.datasets[0].data = data.totals;
+            chart.data.datasets[1].data = data.errors;
+            chart.data.datasets[0].fill = !isSession;
+            chart.data.datasets[1].fill = !isSession;
+            chart.data.datasets[0].tension = isSession ? 0 : 0.3;
+            chart.data.datasets[1].tension = isSession ? 0 : 0.3;
+            chart.update();
+        }}
     </script>
 </body>
 </html>"""
@@ -1627,34 +1897,58 @@ def chart_activity_heatmap():
 
     telemetry = json.loads(TELEMETRY_FILE.read_text())
     events = telemetry.get("events", [])
+    daily_summaries = telemetry.get("daily_summaries", {})
 
-    if not events:
+    if not events and not daily_summaries:
         print("⚠️  No events found")
         return None
 
-    # Count events by hour of day (0-23)
-    hourly_counts = [0] * 24
-
+    # Parse events with timestamps for filtering
+    parsed_events = []
     for e in events:
         ts = e.get("ts", "")
         if len(ts) >= 13:
             try:
                 hour = int(ts[11:13])
-                hourly_counts[hour] += 1
+                date_str = ts[:10]
+                parsed_events.append({"hour": hour, "date": date_str})
             except (ValueError, IndexError):
                 pass
 
-    labels = [f"{h:02d}:00" for h in range(24)]
-    max_count = max(hourly_counts) if hourly_counts else 1
+    def count_by_hour(events_list):
+        """Count events by hour of day (0-23)."""
+        hourly_counts = [0] * 24
+        for e in events_list:
+            hourly_counts[e["hour"]] += 1
+        return hourly_counts
 
-    # Generate colors based on intensity
-    colors = []
-    for count in hourly_counts:
-        intensity = count / max_count if max_count > 0 else 0
-        r = int(76 + (248 - 76) * intensity)
-        g = int(201 - (201 - 113) * intensity)
-        b = int(240 - (240 - 113) * intensity)
-        colors.append(f"rgba({r}, {g}, {b}, 0.8)")
+    def filter_by_days(events_list, days):
+        """Filter events to last N days."""
+        if days == 0:  # All time
+            return events_list
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        return [e for e in events_list if e["date"] >= cutoff]
+
+    # Calculate for different time ranges
+    data_7d = count_by_hour(filter_by_days(parsed_events, 7))
+    data_30d = count_by_hour(filter_by_days(parsed_events, 30))
+    data_all = count_by_hour(parsed_events)
+
+    labels = [f"{h:02d}:00" for h in range(24)]
+
+    def generate_colors(hourly_counts):
+        """Generate colors based on intensity."""
+        max_count = max(hourly_counts) if hourly_counts else 1
+        colors = []
+        for count in hourly_counts:
+            intensity = count / max_count if max_count > 0 else 0
+            r = int(76 + (248 - 76) * intensity)
+            g = int(201 - (201 - 113) * intensity)
+            b = int(240 - (240 - 113) * intensity)
+            colors.append(f"rgba({r}, {g}, {b}, 0.8)")
+        return colors
+
+    dropdown_css = get_chart_dropdown_css()
 
     html = f"""<!DOCTYPE html>
 <html>
@@ -1668,24 +1962,50 @@ def chart_activity_heatmap():
         .back {{ color: #4cc9f0; text-decoration: none; }}
         .chart-container {{ max-width: 1000px; margin: 20px auto; }}
         .note {{ color: #888; font-size: 14px; }}
+        {dropdown_css}
     </style>
 </head>
 <body>
     <a href="dashboard.html" class="back">← Back to Dashboard</a>
     <h1>🕐 Activity by Hour of Day</h1>
     <p class="note">Tool calls distribution across hours (brighter = more activity)</p>
+    <div class="controls">
+        <label for="timeRange">Time Range:</label>
+        <select id="timeRange" onchange="switchView(this.value)">
+            <option value="7d">Last 7 Days</option>
+            <option value="30d" selected>Last 30 Days</option>
+            <option value="all">All Time</option>
+        </select>
+    </div>
     <div class="chart-container">
         <canvas id="chart"></canvas>
     </div>
     <script>
-        new Chart(document.getElementById('chart'), {{
+        const chartData = {{
+            '7d': {json.dumps(data_7d)},
+            '30d': {json.dumps(data_30d)},
+            'all': {json.dumps(data_all)}
+        }};
+
+        function generateColors(data) {{
+            const maxCount = Math.max(...data) || 1;
+            return data.map(count => {{
+                const intensity = count / maxCount;
+                const r = Math.round(76 + (248 - 76) * intensity);
+                const g = Math.round(201 - (201 - 113) * intensity);
+                const b = Math.round(240 - (240 - 113) * intensity);
+                return `rgba(${{r}}, ${{g}}, ${{b}}, 0.8)`;
+            }});
+        }}
+
+        let chart = new Chart(document.getElementById('chart'), {{
             type: 'bar',
             data: {{
                 labels: {json.dumps(labels)},
                 datasets: [{{
                     label: 'Tool Calls',
-                    data: {json.dumps(hourly_counts)},
-                    backgroundColor: {json.dumps(colors)},
+                    data: chartData['30d'],
+                    backgroundColor: generateColors(chartData['30d']),
                     borderColor: 'rgba(255,255,255,0.2)',
                     borderWidth: 1
                 }}]
@@ -1699,6 +2019,13 @@ def chart_activity_heatmap():
                 }}
             }}
         }});
+
+        function switchView(range) {{
+            const data = chartData[range];
+            chart.data.datasets[0].data = data;
+            chart.data.datasets[0].backgroundColor = generateColors(data);
+            chart.update();
+        }}
     </script>
 </body>
 </html>"""
@@ -1710,36 +2037,82 @@ def chart_activity_heatmap():
 
 
 def chart_native_vs_mcp():
-    """Compare native Claude tools vs MCP tools."""
+    """Compare native Claude tools vs MCP tools with time filtering."""
+    from datetime import datetime, timedelta, timezone
+
     if not TELEMETRY_FILE.exists():
         print("⚠️  No telemetry data found")
         return None
 
     telemetry = json.loads(TELEMETRY_FILE.read_text())
+    events = telemetry.get("events", [])
     by_backend = telemetry.get("aggregates", {}).get("by_backend", {})
 
-    if not by_backend:
+    if not by_backend and not events:
         print("⚠️  No backend data found")
         return None
 
-    # Separate native vs MCP
-    native_calls = 0
-    native_tokens = 0
-    mcp_calls = 0
-    mcp_tokens = 0
-    mcp_breakdown = {}
+    def calc_backend_stats(events_list, cutoff_hours=None):
+        """Calculate backend stats from events for a time range."""
+        now = datetime.now(timezone.utc)
+        native = {"calls": 0, "tokens": 0}
+        mcp = {"calls": 0, "tokens": 0}
 
+        for e in events_list:
+            ts_str = e.get("ts", "")
+            if cutoff_hours and ts_str:
+                try:
+                    ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    if (now - ts).total_seconds() > cutoff_hours * 3600:
+                        continue
+                except:
+                    pass
+
+            backend = e.get("backend", "unknown")
+            tokens = e.get("tokens_est", 0)
+
+            if backend == "claude-native":
+                native["calls"] += 1
+                native["tokens"] += tokens
+            else:
+                mcp["calls"] += 1
+                mcp["tokens"] += tokens
+
+        return native, mcp
+
+    # Calculate for different time ranges
+    native_7d, mcp_7d = calc_backend_stats(events, 24 * 7)
+    native_30d, mcp_30d = calc_backend_stats(events, 24 * 30)
+    native_events, mcp_events = calc_backend_stats(events, None)
+
+    # All-time from aggregates (more complete)
+    native_all = {"calls": 0, "tokens": 0}
+    mcp_all = {"calls": 0, "tokens": 0}
     for backend, data in by_backend.items():
         calls = data.get("count", 0)
         tokens = data.get("tokens", 0)
-
         if backend == "claude-native":
-            native_calls += calls
-            native_tokens += tokens
+            native_all["calls"] += calls
+            native_all["tokens"] += tokens
         else:
-            mcp_calls += calls
-            mcp_tokens += tokens
-            mcp_breakdown[backend] = {"calls": calls, "tokens": tokens}
+            mcp_all["calls"] += calls
+            mcp_all["tokens"] += tokens
+
+    # Use aggregates for all-time if available, else events
+    if native_all["calls"] == 0 and mcp_all["calls"] == 0:
+        native_all, mcp_all = native_events, mcp_events
+
+    def to_json(native, mcp):
+        return {
+            "native_calls": native["calls"],
+            "native_tokens": native["tokens"],
+            "mcp_calls": mcp["calls"],
+            "mcp_tokens": mcp["tokens"]
+        }
+
+    data_7d = to_json(native_7d, mcp_7d)
+    data_30d = to_json(native_30d, mcp_30d)
+    data_all = to_json(native_all, mcp_all)
 
     html = f"""<!DOCTYPE html>
 <html>
@@ -1760,27 +2133,37 @@ def chart_native_vs_mcp():
         .stat-value.native {{ color: #4cc9f0; }}
         .stat-value.mcp {{ color: #a78bfa; }}
         .stat-label {{ color: #888; font-size: 12px; text-transform: uppercase; }}
+        {get_chart_dropdown_css()}
     </style>
 </head>
 <body>
     <a href="dashboard.html" class="back">← Back to Dashboard</a>
     <h1>🔌 Native vs MCP Tools</h1>
 
+    <div class="controls">
+        <label for="viewSelect">Time Range:</label>
+        <select id="viewSelect" onchange="switchView()">
+            <option value="week">Last 7 Days</option>
+            <option value="month">Last 30 Days</option>
+            <option value="all" selected>All Time</option>
+        </select>
+    </div>
+
     <div class="stats">
         <div class="stat">
-            <div class="stat-value native">{native_calls:,}</div>
+            <div class="stat-value native" id="nativeCalls">-</div>
             <div class="stat-label">Native Calls</div>
         </div>
         <div class="stat">
-            <div class="stat-value mcp">{mcp_calls:,}</div>
+            <div class="stat-value mcp" id="mcpCalls">-</div>
             <div class="stat-label">MCP Calls</div>
         </div>
         <div class="stat">
-            <div class="stat-value native">{native_tokens:,}</div>
+            <div class="stat-value native" id="nativeTokens">-</div>
             <div class="stat-label">Native Tokens</div>
         </div>
         <div class="stat">
-            <div class="stat-value mcp">{mcp_tokens:,}</div>
+            <div class="stat-value mcp" id="mcpTokens">-</div>
             <div class="stat-label">MCP Tokens</div>
         </div>
     </div>
@@ -1797,29 +2180,61 @@ def chart_native_vs_mcp():
     </div>
 
     <script>
-        new Chart(document.getElementById('callsChart'), {{
-            type: 'doughnut',
-            data: {{
-                labels: ['Native', 'MCP'],
-                datasets: [{{
-                    data: [{native_calls}, {mcp_calls}],
-                    backgroundColor: ['rgba(76, 201, 240, 0.8)', 'rgba(167, 139, 250, 0.8)']
-                }}]
-            }},
-            options: {{ plugins: {{ legend: {{ labels: {{ color: '#888' }} }} }} }}
-        }});
+        const weekData = {json.dumps(data_7d)};
+        const monthData = {json.dumps(data_30d)};
+        const allData = {json.dumps(data_all)};
 
-        new Chart(document.getElementById('tokensChart'), {{
-            type: 'doughnut',
-            data: {{
-                labels: ['Native', 'MCP'],
-                datasets: [{{
-                    data: [{native_tokens}, {mcp_tokens}],
-                    backgroundColor: ['rgba(76, 201, 240, 0.8)', 'rgba(167, 139, 250, 0.8)']
-                }}]
-            }},
-            options: {{ plugins: {{ legend: {{ labels: {{ color: '#888' }} }} }} }}
-        }});
+        let callsChart = null;
+        let tokensChart = null;
+
+        function formatNumber(n) {{
+            return n.toLocaleString();
+        }}
+
+        function updateView(data) {{
+            document.getElementById('nativeCalls').textContent = formatNumber(data.native_calls);
+            document.getElementById('mcpCalls').textContent = formatNumber(data.mcp_calls);
+            document.getElementById('nativeTokens').textContent = formatNumber(data.native_tokens);
+            document.getElementById('mcpTokens').textContent = formatNumber(data.mcp_tokens);
+
+            if (callsChart) callsChart.destroy();
+            if (tokensChart) tokensChart.destroy();
+
+            callsChart = new Chart(document.getElementById('callsChart'), {{
+                type: 'doughnut',
+                data: {{
+                    labels: ['Native', 'MCP'],
+                    datasets: [{{
+                        data: [data.native_calls, data.mcp_calls],
+                        backgroundColor: ['rgba(76, 201, 240, 0.8)', 'rgba(167, 139, 250, 0.8)']
+                    }}]
+                }},
+                options: {{ plugins: {{ legend: {{ labels: {{ color: '#888' }} }} }} }}
+            }});
+
+            tokensChart = new Chart(document.getElementById('tokensChart'), {{
+                type: 'doughnut',
+                data: {{
+                    labels: ['Native', 'MCP'],
+                    datasets: [{{
+                        data: [data.native_tokens, data.mcp_tokens],
+                        backgroundColor: ['rgba(76, 201, 240, 0.8)', 'rgba(167, 139, 250, 0.8)']
+                    }}]
+                }},
+                options: {{ plugins: {{ legend: {{ labels: {{ color: '#888' }} }} }} }}
+            }});
+        }}
+
+        function switchView() {{
+            const view = document.getElementById('viewSelect').value;
+            switch(view) {{
+                case 'week': updateView(weekData); break;
+                case 'month': updateView(monthData); break;
+                case 'all': updateView(allData); break;
+            }}
+        }}
+
+        switchView();
     </script>
 </body>
 </html>"""
@@ -1831,45 +2246,64 @@ def chart_native_vs_mcp():
 
 
 def chart_token_efficiency():
-    """Chart token efficiency - tokens per call ratio by tool."""
+    """Chart token efficiency - tokens per call ratio by tool with time filtering."""
+    from datetime import datetime, timezone
+
     if not TELEMETRY_FILE.exists():
         print("⚠️  No telemetry data found")
         return None
 
     telemetry = json.loads(TELEMETRY_FILE.read_text())
+    events = telemetry.get("events", [])
     by_tool = telemetry.get("aggregates", {}).get("by_tool", {})
 
-    if not by_tool:
+    if not by_tool and not events:
         print("⚠️  No tool data found")
         return None
 
-    # Calculate tokens per call
-    efficiency_data = []
+    def calc_efficiency_from_events(events_list, cutoff_hours=None):
+        """Calculate tokens per call from events for a time range."""
+        now = datetime.now(timezone.utc)
+        tool_stats = defaultdict(lambda: {"calls": 0, "tokens": 0})
+
+        for e in events_list:
+            ts_str = e.get("ts", "")
+            if cutoff_hours and ts_str:
+                try:
+                    ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    if (now - ts).total_seconds() > cutoff_hours * 3600:
+                        continue
+                except:
+                    pass
+
+            tool = e.get("tool", "unknown")
+            tokens = e.get("tokens_est", 0)
+            tool_stats[tool]["calls"] += 1
+            tool_stats[tool]["tokens"] += tokens
+
+        result = []
+        for tool, data in tool_stats.items():
+            if data["calls"] >= 2:  # Reduced threshold for time-filtered data
+                tpc = data["tokens"] / data["calls"]
+                result.append({"tool": tool[:25], "tpc": round(tpc, 0), "calls": data["calls"]})
+        result.sort(key=lambda x: x["tpc"], reverse=True)
+        return result[:20]
+
+    # Calculate for different time ranges
+    data_7d = calc_efficiency_from_events(events, 24 * 7)
+    data_30d = calc_efficiency_from_events(events, 24 * 30)
+    data_events = calc_efficiency_from_events(events, None)
+
+    # All-time from aggregates
+    data_all = []
     for tool, data in by_tool.items():
         calls = data.get("count", 0)
         tokens = data.get("tokens", 0)
-        if calls >= 3:  # Only tools with enough samples
+        if calls >= 3:
             tpc = tokens / calls
-            efficiency_data.append((tool[:25], tpc, calls, tokens))
-
-    # Sort by tokens per call (most expensive first)
-    efficiency_data.sort(key=lambda x: x[1], reverse=True)
-    top_20 = efficiency_data[:20]
-
-    labels = [t[0] for t in top_20]
-    values = [round(t[1], 0) for t in top_20]
-
-    # Color gradient: green (efficient) to red (expensive)
-    max_val = max(values) if values else 1
-    colors = []
-    for v in values:
-        ratio = v / max_val
-        if ratio < 0.3:
-            colors.append('rgba(74, 222, 128, 0.8)')  # Green
-        elif ratio < 0.6:
-            colors.append('rgba(251, 191, 36, 0.8)')  # Yellow
-        else:
-            colors.append('rgba(248, 113, 113, 0.8)')  # Red
+            data_all.append({"tool": tool[:25], "tpc": round(tpc, 0), "calls": calls})
+    data_all.sort(key=lambda x: x["tpc"], reverse=True)
+    data_all = data_all[:20] if data_all else data_events
 
     html = f"""<!DOCTYPE html>
 <html>
@@ -1886,11 +2320,22 @@ def chart_token_efficiency():
         .legend {{ margin-top: 20px; display: flex; gap: 20px; justify-content: center; }}
         .legend-item {{ display: flex; align-items: center; gap: 5px; }}
         .legend-color {{ width: 16px; height: 16px; border-radius: 4px; }}
+        {get_chart_dropdown_css()}
     </style>
 </head>
 <body>
     <a href="dashboard.html" class="back">← Back to Dashboard</a>
     <h1>💰 Token Efficiency (Tokens per Call)</h1>
+
+    <div class="controls">
+        <label for="viewSelect">Time Range:</label>
+        <select id="viewSelect" onchange="switchView()">
+            <option value="week">Last 7 Days</option>
+            <option value="month">Last 30 Days</option>
+            <option value="all" selected>All Time</option>
+        </select>
+    </div>
+
     <p class="note">Lower is better. Tools with fewer than 3 calls excluded.</p>
     <div class="legend">
         <div class="legend-item"><div class="legend-color" style="background: rgba(74, 222, 128, 0.8)"></div> Efficient</div>
@@ -1901,27 +2346,70 @@ def chart_token_efficiency():
         <canvas id="chart"></canvas>
     </div>
     <script>
-        new Chart(document.getElementById('chart'), {{
-            type: 'bar',
-            data: {{
-                labels: {json.dumps(labels)},
-                datasets: [{{
-                    label: 'Tokens per Call',
-                    data: {json.dumps(values)},
-                    backgroundColor: {json.dumps(colors)},
-                    borderWidth: 1
-                }}]
-            }},
-            options: {{
-                indexAxis: 'y',
-                responsive: true,
-                plugins: {{ legend: {{ display: false }} }},
-                scales: {{
-                    x: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }}, title: {{ display: true, text: 'Tokens/Call', color: '#888' }} }},
-                    y: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }}
+        const weekData = {json.dumps(data_7d)};
+        const monthData = {json.dumps(data_30d)};
+        const allData = {json.dumps(data_all)};
+
+        let chart = null;
+
+        function getColors(values) {{
+            const max = Math.max(...values) || 1;
+            return values.map(v => {{
+                const ratio = v / max;
+                if (ratio < 0.3) return 'rgba(74, 222, 128, 0.8)';
+                if (ratio < 0.6) return 'rgba(251, 191, 36, 0.8)';
+                return 'rgba(248, 113, 113, 0.8)';
+            }});
+        }}
+
+        function createChart(data) {{
+            if (chart) chart.destroy();
+            const labels = data.map(d => d.tool);
+            const values = data.map(d => d.tpc);
+            const colors = getColors(values);
+
+            chart = new Chart(document.getElementById('chart'), {{
+                type: 'bar',
+                data: {{
+                    labels: labels,
+                    datasets: [{{
+                        label: 'Tokens per Call',
+                        data: values,
+                        backgroundColor: colors,
+                        borderWidth: 1
+                    }}]
+                }},
+                options: {{
+                    indexAxis: 'y',
+                    responsive: true,
+                    plugins: {{
+                        legend: {{ display: false }},
+                        tooltip: {{
+                            callbacks: {{
+                                afterLabel: function(ctx) {{
+                                    return 'Calls: ' + data[ctx.dataIndex].calls;
+                                }}
+                            }}
+                        }}
+                    }},
+                    scales: {{
+                        x: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }}, title: {{ display: true, text: 'Tokens/Call', color: '#888' }} }},
+                        y: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }}
+                    }}
                 }}
+            }});
+        }}
+
+        function switchView() {{
+            const view = document.getElementById('viewSelect').value;
+            switch(view) {{
+                case 'week': createChart(weekData); break;
+                case 'month': createChart(monthData); break;
+                case 'all': createChart(allData); break;
             }}
-        }});
+        }}
+
+        switchView();
     </script>
 </body>
 </html>"""
@@ -1933,29 +2421,82 @@ def chart_token_efficiency():
 
 
 def chart_compression_ratio():
-    """Chart summarization compression ratio - shows how much context is saved."""
+    """Chart summarization compression ratio with time filtering."""
+    from datetime import datetime, timezone
+
     if not TELEMETRY_FILE.exists():
         print("⚠️  No telemetry data found")
         return None
 
     telemetry = json.loads(TELEMETRY_FILE.read_text())
+    events = telemetry.get("events", [])
     efficiency = telemetry.get("aggregates", {}).get("efficiency", {})
 
-    if not efficiency or efficiency.get("calls_summarized", 0) == 0:
+    # Filter events with efficiency data
+    efficiency_events = [e for e in events if e.get("full_size", 0) > 0]
+
+    if not efficiency and not efficiency_events:
         print("⚠️  No efficiency data found (no summarized calls yet)")
         return None
 
-    # Extract metrics
-    full_chars = efficiency.get("full_chars", 0)
-    summary_chars = efficiency.get("summary_chars", 0)
-    calls = efficiency.get("calls_summarized", 0)
-    chars_saved = efficiency.get("chars_saved", 0)
+    def calc_compression_from_events(events_list, cutoff_hours=None):
+        """Calculate compression stats from events for a time range."""
+        now = datetime.now(timezone.utc)
+        full_chars = 0
+        summary_chars = 0
+        calls = 0
 
-    compression_ratio = summary_chars / full_chars if full_chars > 0 else 0
-    savings_pct = (1 - compression_ratio) * 100
-    tokens_saved_est = chars_saved // 4  # ~4 chars per token
+        for e in events_list:
+            ts_str = e.get("ts", "")
+            if cutoff_hours and ts_str:
+                try:
+                    ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    if (now - ts).total_seconds() > cutoff_hours * 3600:
+                        continue
+                except:
+                    pass
 
-    # Gauge-style display
+            full_chars += e.get("full_size", 0)
+            summary_chars += e.get("summary_size", 0)
+            calls += 1
+
+        chars_saved = full_chars - summary_chars
+        compression_ratio = summary_chars / full_chars if full_chars > 0 else 0
+        savings_pct = (1 - compression_ratio) * 100
+        tokens_saved_est = chars_saved // 4
+
+        return {
+            "savings_pct": round(savings_pct, 1),
+            "tokens_saved": tokens_saved_est,
+            "calls": calls,
+            "ratio": round(compression_ratio, 2),
+            "summary_chars": summary_chars,
+            "chars_saved": chars_saved
+        }
+
+    # Calculate for different time ranges
+    data_7d = calc_compression_from_events(efficiency_events, 24 * 7)
+    data_30d = calc_compression_from_events(efficiency_events, 24 * 30)
+    data_events = calc_compression_from_events(efficiency_events, None)
+
+    # All-time from aggregates (more accurate)
+    if efficiency and efficiency.get("calls_summarized", 0) > 0:
+        full_chars = efficiency.get("full_chars", 0)
+        summary_chars = efficiency.get("summary_chars", 0)
+        chars_saved = efficiency.get("chars_saved", 0)
+        calls = efficiency.get("calls_summarized", 0)
+        compression_ratio = summary_chars / full_chars if full_chars > 0 else 0
+        data_all = {
+            "savings_pct": round((1 - compression_ratio) * 100, 1),
+            "tokens_saved": chars_saved // 4,
+            "calls": calls,
+            "ratio": round(compression_ratio, 2),
+            "summary_chars": summary_chars,
+            "chars_saved": chars_saved
+        }
+    else:
+        data_all = data_events
+
     html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -1973,28 +2514,39 @@ def chart_compression_ratio():
         .stat-label {{ color: #888; margin-top: 8px; font-size: 14px; }}
         .chart-container {{ max-width: 400px; margin: 30px auto; }}
         .note {{ color: #888; font-size: 14px; margin-top: 20px; }}
+        {get_chart_dropdown_css()}
     </style>
 </head>
 <body>
     <a href="dashboard.html" class="back">← Back to Dashboard</a>
     <h1>📦 Compression Efficiency</h1>
+
+    <div class="controls">
+        <label for="viewSelect">Time Range:</label>
+        <select id="viewSelect" onchange="switchView()">
+            <option value="week">Last 7 Days</option>
+            <option value="month">Last 30 Days</option>
+            <option value="all" selected>All Time</option>
+        </select>
+    </div>
+
     <p class="note">MCP Router summarization savings - lower ratio = more compression</p>
 
     <div class="stats-grid">
         <div class="stat-card">
-            <div class="stat-value">{savings_pct:.1f}%</div>
+            <div class="stat-value" id="savingsPct">-</div>
             <div class="stat-label">Context Saved</div>
         </div>
         <div class="stat-card">
-            <div class="stat-value highlight">{tokens_saved_est:,}</div>
+            <div class="stat-value highlight" id="tokensSaved">-</div>
             <div class="stat-label">Tokens Saved (est)</div>
         </div>
         <div class="stat-card">
-            <div class="stat-value">{calls:,}</div>
+            <div class="stat-value" id="callsCount">-</div>
             <div class="stat-label">Calls Summarized</div>
         </div>
         <div class="stat-card">
-            <div class="stat-value">{compression_ratio:.2f}</div>
+            <div class="stat-value" id="ratioValue">-</div>
             <div class="stat-label">Compression Ratio</div>
         </div>
     </div>
@@ -2004,25 +2556,51 @@ def chart_compression_ratio():
     </div>
 
     <script>
-        new Chart(document.getElementById('chart'), {{
-            type: 'doughnut',
-            data: {{
-                labels: ['Summary (kept)', 'Compressed (saved)'],
-                datasets: [{{
-                    data: [{summary_chars}, {chars_saved}],
-                    backgroundColor: ['rgba(248, 113, 113, 0.8)', 'rgba(74, 222, 128, 0.8)'],
-                    borderWidth: 2,
-                    borderColor: '#1a1a2e'
-                }}]
-            }},
-            options: {{
-                responsive: true,
-                plugins: {{
-                    legend: {{ position: 'bottom', labels: {{ color: '#888' }} }},
-                    title: {{ display: true, text: 'Character Distribution', color: '#888' }}
+        const weekData = {json.dumps(data_7d)};
+        const monthData = {json.dumps(data_30d)};
+        const allData = {json.dumps(data_all)};
+
+        let chart = null;
+
+        function updateView(data) {{
+            document.getElementById('savingsPct').textContent = data.savings_pct + '%';
+            document.getElementById('tokensSaved').textContent = data.tokens_saved.toLocaleString();
+            document.getElementById('callsCount').textContent = data.calls.toLocaleString();
+            document.getElementById('ratioValue').textContent = data.ratio.toFixed(2);
+
+            if (chart) chart.destroy();
+
+            chart = new Chart(document.getElementById('chart'), {{
+                type: 'doughnut',
+                data: {{
+                    labels: ['Summary (kept)', 'Compressed (saved)'],
+                    datasets: [{{
+                        data: [data.summary_chars, data.chars_saved],
+                        backgroundColor: ['rgba(248, 113, 113, 0.8)', 'rgba(74, 222, 128, 0.8)'],
+                        borderWidth: 2,
+                        borderColor: '#1a1a2e'
+                    }}]
+                }},
+                options: {{
+                    responsive: true,
+                    plugins: {{
+                        legend: {{ position: 'bottom', labels: {{ color: '#888' }} }},
+                        title: {{ display: true, text: 'Character Distribution', color: '#888' }}
+                    }}
                 }}
+            }});
+        }}
+
+        function switchView() {{
+            const view = document.getElementById('viewSelect').value;
+            switch(view) {{
+                case 'week': updateView(weekData); break;
+                case 'month': updateView(monthData); break;
+                case 'all': updateView(allData); break;
             }}
-        }});
+        }}
+
+        switchView();
     </script>
 </body>
 </html>"""
@@ -2034,7 +2612,9 @@ def chart_compression_ratio():
 
 
 def chart_tokens_saved():
-    """Chart cumulative tokens saved over time via summarization."""
+    """Chart cumulative tokens saved over time via summarization with time filtering."""
+    from datetime import datetime, timezone
+
     if not TELEMETRY_FILE.exists():
         print("⚠️  No telemetry data found")
         return None
@@ -2049,22 +2629,42 @@ def chart_tokens_saved():
         print("⚠️  No efficiency events found")
         return None
 
-    # Calculate cumulative savings over time
-    cumulative = []
-    running_total = 0
-    for event in efficiency_events:
-        saved = event.get("full_size", 0) - event.get("summary_size", 0)
-        running_total += saved // 4  # Convert to tokens
-        ts = event.get("ts", "")[:19]  # Trim to datetime
-        cumulative.append({"ts": ts, "tokens_saved": running_total})
+    def calc_savings(events_list, cutoff_hours=None):
+        """Calculate cumulative savings for a time range."""
+        now = datetime.now(timezone.utc)
+        cumulative = []
+        running_total = 0
 
-    # Take last 50 points max for readability
-    if len(cumulative) > 50:
-        step = len(cumulative) // 50
-        cumulative = cumulative[::step]
+        for event in events_list:
+            ts_str = event.get("ts", "")
+            if cutoff_hours and ts_str:
+                try:
+                    ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    if (now - ts).total_seconds() > cutoff_hours * 3600:
+                        continue
+                except:
+                    pass
 
-    labels = [c["ts"][-8:] for c in cumulative]  # Just time portion
-    values = [c["tokens_saved"] for c in cumulative]
+            saved = event.get("full_size", 0) - event.get("summary_size", 0)
+            running_total += saved // 4  # Convert to tokens
+            ts = event.get("ts", "")[:19]
+            cumulative.append({"ts": ts, "tokens_saved": running_total})
+
+        # Take last 50 points max for readability
+        if len(cumulative) > 50:
+            step = len(cumulative) // 50
+            cumulative = cumulative[::step]
+
+        return {
+            "labels": [c["ts"][-8:] for c in cumulative] if cumulative else [],
+            "values": [c["tokens_saved"] for c in cumulative] if cumulative else [],
+            "total": cumulative[-1]["tokens_saved"] if cumulative else 0
+        }
+
+    # Calculate for different time ranges
+    data_7d = calc_savings(efficiency_events, 24 * 7)
+    data_30d = calc_savings(efficiency_events, 24 * 30)
+    data_all = calc_savings(efficiency_events, None)
 
     html = f"""<!DOCTYPE html>
 <html>
@@ -2079,43 +2679,75 @@ def chart_tokens_saved():
         .chart-container {{ max-width: 900px; margin: 20px auto; }}
         .note {{ color: #888; font-size: 14px; }}
         .total {{ font-size: 1.5rem; color: #4ade80; margin: 20px 0; }}
+        {get_chart_dropdown_css()}
     </style>
 </head>
 <body>
     <a href="dashboard.html" class="back">← Back to Dashboard</a>
     <h1>💰 Tokens Saved Over Time</h1>
+
+    <div class="controls">
+        <label for="viewSelect">Time Range:</label>
+        <select id="viewSelect" onchange="switchView()">
+            <option value="week">Last 7 Days</option>
+            <option value="month">Last 30 Days</option>
+            <option value="all" selected>All Time</option>
+        </select>
+    </div>
+
     <p class="note">Cumulative token savings from MCP Router summarization</p>
-    <p class="total">Total saved: <strong>{values[-1] if values else 0:,}</strong> tokens (estimated)</p>
+    <p class="total">Total saved: <strong id="totalSaved">-</strong> tokens (estimated)</p>
 
     <div class="chart-container">
         <canvas id="chart"></canvas>
     </div>
 
     <script>
-        new Chart(document.getElementById('chart'), {{
-            type: 'line',
-            data: {{
-                labels: {json.dumps(labels)},
-                datasets: [{{
-                    label: 'Cumulative Tokens Saved',
-                    data: {json.dumps(values)},
-                    borderColor: 'rgba(74, 222, 128, 1)',
-                    backgroundColor: 'rgba(74, 222, 128, 0.2)',
-                    fill: true,
-                    tension: 0.3
-                }}]
-            }},
-            options: {{
-                responsive: true,
-                plugins: {{
-                    legend: {{ display: false }}
+        const weekData = {json.dumps(data_7d)};
+        const monthData = {json.dumps(data_30d)};
+        const allData = {json.dumps(data_all)};
+
+        let chart = null;
+
+        function createChart(data) {{
+            document.getElementById('totalSaved').textContent = data.total.toLocaleString();
+
+            if (chart) chart.destroy();
+
+            chart = new Chart(document.getElementById('chart'), {{
+                type: 'line',
+                data: {{
+                    labels: data.labels,
+                    datasets: [{{
+                        label: 'Cumulative Tokens Saved',
+                        data: data.values,
+                        borderColor: 'rgba(74, 222, 128, 1)',
+                        backgroundColor: 'rgba(74, 222, 128, 0.2)',
+                        fill: true,
+                        tension: 0.3
+                    }}]
                 }},
-                scales: {{
-                    x: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }},
-                    y: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }}, title: {{ display: true, text: 'Tokens', color: '#888' }} }}
+                options: {{
+                    responsive: true,
+                    plugins: {{ legend: {{ display: false }} }},
+                    scales: {{
+                        x: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }},
+                        y: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }}, title: {{ display: true, text: 'Tokens', color: '#888' }} }}
+                    }}
                 }}
+            }});
+        }}
+
+        function switchView() {{
+            const view = document.getElementById('viewSelect').value;
+            switch(view) {{
+                case 'week': createChart(weekData); break;
+                case 'month': createChart(monthData); break;
+                case 'all': createChart(allData); break;
             }}
-        }});
+        }}
+
+        switchView();
     </script>
 </body>
 </html>"""
@@ -2422,7 +3054,9 @@ def chart_session_comparison():
 
 
 def chart_blocked_tools():
-    """Chart blocked/errored tools - what's being blocked."""
+    """Chart blocked/errored tools with time filtering."""
+    from datetime import datetime, timezone
+
     if not TELEMETRY_FILE.exists():
         print("⚠️  No telemetry data found")
         return None
@@ -2431,35 +3065,55 @@ def chart_blocked_tools():
     events = telemetry.get("events", [])
     by_tool = telemetry.get("aggregates", {}).get("by_tool", {})
 
-    if not by_tool:
+    if not by_tool and not events:
         print("⚠️  No tool data found")
         return None
 
-    # Get error counts and recent error messages
-    error_data = []
+    def calc_errors_from_events(events_list, cutoff_hours=None):
+        """Calculate error stats from events for a time range."""
+        now = datetime.now(timezone.utc)
+        tool_stats = defaultdict(lambda: {"calls": 0, "errors": 0})
+        recent = []
+
+        for e in events_list:
+            ts_str = e.get("ts", "")
+            if cutoff_hours and ts_str:
+                try:
+                    ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    if (now - ts).total_seconds() > cutoff_hours * 3600:
+                        continue
+                except:
+                    pass
+
+            tool = e.get("tool", "unknown")
+            tool_stats[tool]["calls"] += 1
+            if e.get("status") == "error":
+                tool_stats[tool]["errors"] += 1
+                recent.append({"ts": ts_str[:19], "tool": tool[:20], "msg": (e.get("error_msg", "") or "Unknown")[:50]})
+
+        result = []
+        for tool, data in tool_stats.items():
+            if data["errors"] > 0:
+                rate = (data["errors"] / data["calls"] * 100) if data["calls"] > 0 else 0
+                result.append({"tool": tool[:25], "errors": data["errors"], "calls": data["calls"], "rate": round(rate, 1)})
+        result.sort(key=lambda x: x["errors"], reverse=True)
+        return {"data": result[:15], "recent": recent[-10:]}
+
+    # Calculate for different time ranges
+    data_7d = calc_errors_from_events(events, 24 * 7)
+    data_30d = calc_errors_from_events(events, 24 * 30)
+    data_events = calc_errors_from_events(events, None)
+
+    # All-time from aggregates
+    all_data = []
     for tool, data in by_tool.items():
         errors = data.get("errors", 0)
         if errors > 0:
             calls = data.get("count", 0)
-            error_rate = (errors / calls * 100) if calls > 0 else 0
-            error_data.append((tool[:25], errors, calls, error_rate))
-
-    error_data.sort(key=lambda x: x[1], reverse=True)
-    top_15 = error_data[:15]
-
-    # Get recent error messages
-    recent_errors = [e for e in events[-100:] if e.get("status") == "error"][-10:]
-
-    labels = [t[0] for t in top_15]
-    error_counts = [t[1] for t in top_15]
-    error_rates = [round(t[3], 1) for t in top_15]
-
-    error_rows = ""
-    for e in reversed(recent_errors):
-        tool = e.get("tool", "")[:20]
-        msg = e.get("error_msg", "")[:50] or "Unknown error"
-        ts = e.get("ts", "")[:19]
-        error_rows += f"<tr><td>{ts}</td><td>{tool}</td><td>{msg}</td></tr>"
+            rate = (errors / calls * 100) if calls > 0 else 0
+            all_data.append({"tool": tool[:25], "errors": errors, "calls": calls, "rate": round(rate, 1)})
+    all_data.sort(key=lambda x: x["errors"], reverse=True)
+    data_all = {"data": all_data[:15] if all_data else data_events["data"], "recent": data_events["recent"]}
 
     html = f"""<!DOCTYPE html>
 <html>
@@ -2479,14 +3133,23 @@ def chart_blocked_tools():
         th, td {{ padding: 10px; text-align: left; border-bottom: 1px solid #333; }}
         th {{ color: #888; text-transform: uppercase; font-size: 12px; }}
         .no-errors {{ color: #4ade80; text-align: center; padding: 40px; }}
+        {get_chart_dropdown_css()}
     </style>
 </head>
 <body>
     <a href="dashboard.html" class="back">← Back to Dashboard</a>
     <h1>🚫 Blocked/Errored Tools</h1>
 
+    <div class="controls">
+        <label for="viewSelect">Time Range:</label>
+        <select id="viewSelect" onchange="switchView()">
+            <option value="week">Last 7 Days</option>
+            <option value="month">Last 30 Days</option>
+            <option value="all" selected>All Time</option>
+        </select>
+    </div>
+
     <div class="content">
-        {"<p class='no-errors'>✅ No errors recorded!</p>" if not top_15 else f'''
         <div class="charts">
             <div class="chart-box">
                 <h2>Error Counts by Tool</h2>
@@ -2502,60 +3165,105 @@ def chart_blocked_tools():
             <h2>Recent Errors</h2>
             <table>
                 <thead><tr><th>Time</th><th>Tool</th><th>Message</th></tr></thead>
-                <tbody>{error_rows if error_rows else "<tr><td colspan='3'>No recent errors</td></tr>"}</tbody>
+                <tbody id="errorTable"></tbody>
             </table>
         </div>
-        '''}
     </div>
 
     <script>
-        {f'''
-        new Chart(document.getElementById('countChart'), {{
-            type: 'bar',
-            data: {{
-                labels: {json.dumps(labels)},
-                datasets: [{{
-                    label: 'Errors',
-                    data: {json.dumps(error_counts)},
-                    backgroundColor: 'rgba(248, 113, 113, 0.6)',
-                    borderColor: 'rgba(248, 113, 113, 1)',
-                    borderWidth: 1
-                }}]
-            }},
-            options: {{
-                indexAxis: 'y',
-                responsive: true,
-                plugins: {{ legend: {{ display: false }} }},
-                scales: {{
-                    x: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }},
-                    y: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }}
-                }}
-            }}
-        }});
+        const weekData = {json.dumps(data_7d)};
+        const monthData = {json.dumps(data_30d)};
+        const allData = {json.dumps(data_all)};
 
-        new Chart(document.getElementById('rateChart'), {{
-            type: 'bar',
-            data: {{
-                labels: {json.dumps(labels)},
-                datasets: [{{
-                    label: 'Error Rate %',
-                    data: {json.dumps(error_rates)},
-                    backgroundColor: 'rgba(251, 191, 36, 0.6)',
-                    borderColor: 'rgba(251, 191, 36, 1)',
-                    borderWidth: 1
-                }}]
-            }},
-            options: {{
-                indexAxis: 'y',
-                responsive: true,
-                plugins: {{ legend: {{ display: false }} }},
-                scales: {{
-                    x: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }}, max: 100 }},
-                    y: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }}
-                }}
+        let countChart = null;
+        let rateChart = null;
+
+        function updateView(viewData) {{
+            const data = viewData.data;
+            const recent = viewData.recent;
+
+            // Update error table
+            const tbody = document.getElementById('errorTable');
+            if (recent.length === 0) {{
+                tbody.innerHTML = '<tr><td colspan="3" style="color: #4ade80; text-align: center;">✅ No recent errors</td></tr>';
+            }} else {{
+                tbody.innerHTML = recent.reverse().map(e =>
+                    `<tr><td>${{e.ts}}</td><td>${{e.tool}}</td><td>${{e.msg}}</td></tr>`
+                ).join('');
             }}
-        }});
-        ''' if top_15 else ''}
+
+            if (data.length === 0) {{
+                if (countChart) countChart.destroy();
+                if (rateChart) rateChart.destroy();
+                document.getElementById('countChart').parentElement.innerHTML = '<p style="color: #4ade80; text-align: center; padding: 40px;">✅ No errors recorded!</p>';
+                document.getElementById('rateChart').parentElement.innerHTML = '<p style="color: #4ade80; text-align: center; padding: 40px;">✅ No errors recorded!</p>';
+                return;
+            }}
+
+            const labels = data.map(d => d.tool);
+            const errors = data.map(d => d.errors);
+            const rates = data.map(d => d.rate);
+
+            if (countChart) countChart.destroy();
+            if (rateChart) rateChart.destroy();
+
+            countChart = new Chart(document.getElementById('countChart'), {{
+                type: 'bar',
+                data: {{
+                    labels: labels,
+                    datasets: [{{
+                        label: 'Errors',
+                        data: errors,
+                        backgroundColor: 'rgba(248, 113, 113, 0.6)',
+                        borderColor: 'rgba(248, 113, 113, 1)',
+                        borderWidth: 1
+                    }}]
+                }},
+                options: {{
+                    indexAxis: 'y',
+                    responsive: true,
+                    plugins: {{ legend: {{ display: false }} }},
+                    scales: {{
+                        x: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }},
+                        y: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }}
+                    }}
+                }}
+            }});
+
+            rateChart = new Chart(document.getElementById('rateChart'), {{
+                type: 'bar',
+                data: {{
+                    labels: labels,
+                    datasets: [{{
+                        label: 'Error Rate %',
+                        data: rates,
+                        backgroundColor: 'rgba(251, 191, 36, 0.6)',
+                        borderColor: 'rgba(251, 191, 36, 1)',
+                        borderWidth: 1
+                    }}]
+                }},
+                options: {{
+                    indexAxis: 'y',
+                    responsive: true,
+                    plugins: {{ legend: {{ display: false }} }},
+                    scales: {{
+                        x: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }}, max: 100 }},
+                        y: {{ ticks: {{ color: '#888' }}, grid: {{ color: '#333' }} }}
+                    }}
+                }}
+            }});
+        }}
+
+        function switchView() {{
+            const view = document.getElementById('viewSelect').value;
+            switch(view) {{
+                case 'week': updateView(weekData); break;
+                case 'month': updateView(monthData); break;
+                case 'all': updateView(allData); break;
+            }}
+        }}
+
+        switchView();
     </script>
 </body>
 </html>"""
