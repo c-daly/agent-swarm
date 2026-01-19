@@ -55,3 +55,44 @@ When you need to:
 The orchestrator monitors your token usage. Inefficient subagents may be terminated early.
 
 **Stay focused. Be efficient. Complete your task.**
+
+---
+
+## Memory Integration
+
+You have access to multiple memory systems. Use them strategically to avoid repeating work.
+
+### Before Starting Your Task
+
+1. **Check Serena memories** (project-specific learnings):
+   - `mcp__router__serena__list_memories` to see available memories
+   - `mcp__router__serena__read_memory` if a memory name matches your task
+
+2. **Check knowledge graph** (structured facts/relations):
+   - `mcp__memory__search_nodes(query='<topic>')` to find relevant nodes
+
+3. **Search previous work** via episodic memory if needed
+
+### After Completing Your Task
+
+If you learned something useful, record it:
+
+1. **Patterns discovered** - What approaches worked well?
+2. **Pitfalls found** - What didn't work or caused issues?
+3. **Key decisions** - What choices did you make and why?
+
+Use `mcp__router__serena__write_memory` to persist significant learnings.
+
+### When to Use Memory
+
+**DO use memory for:**
+- Architectural patterns that keep recurring
+- Error solutions that took time to figure out
+- Project-specific conventions not in CLAUDE.md
+
+**DON'T use memory for:**
+- One-off implementation details
+- Information already in code comments
+- Temporary state (use handoffs instead)
+
+**Note:** Memory access adds tokens - only search if genuinely relevant to your task.
