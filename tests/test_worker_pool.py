@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for worker_pool.py - worker pool management for parallel subagents.
 
-After state_manager migration, worker_pool uses in-memory state via state_manager
+Uses workflow_client for in-memory state via MCP router
 instead of JSON file. Tests use autouse fixture to isolate state.
 """
 
@@ -14,7 +14,7 @@ import pytest
 lib_dir = Path(__file__).parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
-import state_manager
+import workflow_client
 from worker_pool import (
     start,
     stop,
@@ -30,12 +30,12 @@ from worker_pool import (
 
 @pytest.fixture(autouse=True)
 def clean_state_manager():
-    """Clean state_manager state before and after each test."""
+    """Clean workflow state before and after each test."""
     # Clear worker_pool state before test
-    state_manager.delete_state("worker_pool")
+    workflow_client.workflow_stop("worker_pool")
     yield
     # Clear after test
-    state_manager.delete_state("worker_pool")
+    workflow_client.workflow_stop("worker_pool")
 
 
 class TestOrchestrateStart:

@@ -330,11 +330,11 @@ def save_state(state: dict) -> None:
 
 
 def save_queue(queue: "TaskQueue") -> None:
-    """Save queue state to in-memory state_manager under 'queue' key.
+    """Save queue state to workflow_client under 'queue' key.
 
     Note: Queue is ephemeral - resets on process restart.
     """
-    from lib.state_manager import set_state, get_state
+    from lib.workflow_client import workflow_set_state, workflow_get_state
 
     # Get existing session state (for compatibility with other keys)
     state = load_state()
@@ -375,8 +375,8 @@ def save_queue(queue: "TaskQueue") -> None:
         "failed": queue.failed,
     }
 
-    # Save to state_manager (in-memory, ephemeral)
-    set_state("queue", queue_data)
+    # Save to workflow_client (in-memory via MCP, ephemeral)
+    workflow_set_state("queue", queue_data)
 
     # Also save to session.json for backwards compatibility
     state["queue"] = queue_data
@@ -384,18 +384,18 @@ def save_queue(queue: "TaskQueue") -> None:
 
 
 def load_queue() -> "TaskQueue":
-    """Load queue from in-memory state_manager.
+    """Load queue from workflow_client via MCP.
 
     Returns empty TaskQueue if no queue state exists.
     Handles missing/malformed data gracefully.
     Note: Queue is ephemeral - resets on process restart.
     """
-    from lib.state_manager import get_state
+    from lib.workflow_client import workflow_get_state
 
     queue = TaskQueue()
 
-    # Try state_manager first (primary source)
-    queue_data = get_state("queue")
+    # Try workflow_client first (primary source)
+    queue_data = workflow_get_state("queue")
     
     # Fall back to session.json for backwards compatibility
     if not queue_data:

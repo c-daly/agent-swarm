@@ -1,6 +1,6 @@
 """Tests for review gate module.
 
-After state_manager migration, review_gate uses in-memory state via state_manager
+Uses workflow_client for in-memory state via MCP router
 instead of session.json file. Tests use autouse fixture to isolate state.
 """
 
@@ -12,7 +12,7 @@ from pathlib import Path
 lib_dir = Path(__file__).parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
-import state_manager
+import workflow_client
 from lib.review_gate import (
     ReviewState,
     load_review_state,
@@ -25,12 +25,12 @@ from lib.review_gate import (
 
 @pytest.fixture(autouse=True)
 def clean_state_manager():
-    """Clean state_manager state before and after each test."""
+    """Clean workflow state before and after each test."""
     # Clear review_gate state before test
-    state_manager.delete_state("review_gate")
+    workflow_client.workflow_stop("review_gate")
     yield
     # Clear after test
-    state_manager.delete_state("review_gate")
+    workflow_client.workflow_stop("review_gate")
 
 
 
@@ -184,7 +184,7 @@ def test_full_workflow():
 
 def test_load_empty_state():
     """Test loading when no state has been saved."""
-    # state_manager is cleared by autouse fixture, so state should be empty
+    # workflow state is cleared by autouse fixture, so state should be empty
     state = load_review_state()
     assert isinstance(state, ReviewState)
     assert state.last_pushed_sha is None
@@ -192,20 +192,20 @@ def test_load_empty_state():
 
 
 def test_state_isolation():
-    """Test that review_gate state is isolated from other state_manager keys."""
+    """Test that review_gate state is isolated from other workflow keys."""
     # Set review_gate state
     state = ReviewState(last_pushed_sha="abc123")
     save_review_state(state)
 
-    # Set unrelated state_manager key
-    state_manager.set_state("other_key", {"foo": "bar"})
+    # Set unrelated workflow key
+    workflow_client.workflow_set_state("other_key", {"foo": "bar"})
 
     # Review gate state should be unaffected
     loaded = load_review_state()
     assert loaded.last_pushed_sha == "abc123"
 
     # Other key should be unaffected
-    other = state_manager.get_state("other_key")
+    other = workflow_client.workflow_get_state("other_key")
     assert other == {"foo": "bar"}
 
 

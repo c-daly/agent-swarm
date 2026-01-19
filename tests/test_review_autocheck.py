@@ -29,16 +29,16 @@ from iterate_workflow import (
     get_pending_review_tasks,
     _reset_logger,
 )
-import state_manager  # noqa: E402
+import workflow_client  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
 def clean_state():
     """Clean state before and after each test."""
-    state_manager.delete_state("orchestrator")
+    workflow_client.workflow_stop("iterate")
     _reset_logger()
     yield
-    state_manager.delete_state("orchestrator")
+    workflow_client.workflow_stop("iterate")
     _reset_logger()
 
 
@@ -204,13 +204,13 @@ class TestPRNumberTracking:
     def test_pr_number_persists_across_loads(self):
         """PR number should persist after state reload."""
         from iterate_workflow import set_pr_number, get_pr_number
-        import state_manager
+        import workflow_client
 
         start("test task")
         set_pr_number(123)
 
         # Force reload
-        state = state_manager.get_state("orchestrator")
+        state = workflow_client.workflow_get_state("iterate")
         assert state.get("pr_number") == 123
 
     def test_advance_to_review_uses_stored_pr(self):

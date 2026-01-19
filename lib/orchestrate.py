@@ -37,7 +37,7 @@ scripts_dir = lib_dir.parent / "scripts"
 sys.path.insert(0, str(lib_dir))
 sys.path.insert(0, str(scripts_dir))
 
-import state_manager
+import workflow_client
 from iterate_state import (
     TaskQueue,
     TaskStatus,
@@ -84,8 +84,8 @@ def _now_iso() -> str:
 
 
 def _load_state() -> OrchestrateState:
-    """Load orchestrate state from in-memory state manager."""
-    data = state_manager.get_state("orchestrate")
+    """Load orchestrate state from workflow server."""
+    data = workflow_client.workflow_get_state("orchestrate")
     if not data:
         return OrchestrateState()
     try:
@@ -104,7 +104,7 @@ def _load_state() -> OrchestrateState:
 
 
 def _save_state(state: OrchestrateState) -> None:
-    """Save orchestrate state to in-memory state manager."""
+    """Save orchestrate state to workflow server."""
     data = {
         "active": state.active,
         "config": {
@@ -119,7 +119,7 @@ def _save_state(state: OrchestrateState) -> None:
         "review_pending": state.review_pending,
         "exit_reason": state.exit_reason,
     }
-    state_manager.set_state("orchestrate", data)
+    workflow_client.workflow_set_state("orchestrate", data)
 
 
 def start_orchestrate(config: OrchestrateConfig) -> OrchestrateState:

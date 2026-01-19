@@ -14,5 +14,9 @@
   "native": {
     "command": ["python3", "/home/fearsidhe/.claude/plugins/agent-swarm/bin/mcp-native"],
     "tool_prefix": "native"
+  },
+  "workflow": {
+    "command": ["python3", "/home/fearsidhe/.claude/plugins/agent-swarm/lib/workflow_server.py"],
+    "tool_prefix": "workflow"
   }
 }

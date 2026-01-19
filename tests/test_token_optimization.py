@@ -93,12 +93,12 @@ def context_hierarchy(tmp_path):
 # =============================================================================
 
 
-@pytest.mark.skip(reason="unified_state module deprecated - use state_manager instead")
+@pytest.mark.skip(reason="unified_state module deprecated - use workflow_client instead")
 class TestStateConsolidation:
     """Tests for unified state management - DEPRECATED.
     
     These tests are for the deprecated lib/unified_state.py module.
-    State management is now handled by lib/state_manager.py.
+    State management is now handled by workflow_client via MCP router.
     """
     pass
 
@@ -404,12 +404,12 @@ class TestTokenOptimizationIntegration:
         """Full workflow should use all optimizations together."""
         # This test verifies the optimizations work together
 
-        # 1. Start workflow with state_manager
+        # 1. Start workflow with workflow_client
         import sys
         sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
-        import state_manager
+        import workflow_client
 
-        state_manager.set_state(
+        workflow_client.workflow_set_state(
             "iterate",
             {"active": True, "task": "integration test", "phase": "implement"}
         )
@@ -455,13 +455,13 @@ class TestTokenOptimizationIntegration:
                 # Simulate workflow operations
                 import sys
                 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
-                import state_manager
+                import workflow_client
 
-                # Single save/load should be 1 read + 1 write
-                state_manager.set_state("iterate", {"active": True})
-                state_manager.get_state("iterate")
+                # Single save/load via MCP - no file I/O
+                workflow_client.workflow_set_state("iterate", {"active": True})
+                workflow_client.workflow_get_state("iterate")
 
-        # With state_manager, transient state is in-memory, no file writes
+        # With workflow_client, state is in MCP server memory, no file writes
         # (vs. old approach of reading 4 separate files)
-        assert io_count["reads"] <= 2  # At most workflow.json + migration check
-        assert io_count["writes"] == 0  # No file writes for in-memory state_manager
+        assert io_count["reads"] <= 2  # At most migration check files
+        assert io_count["writes"] == 0  # No file writes for MCP-based state

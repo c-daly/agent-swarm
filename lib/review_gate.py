@@ -3,7 +3,7 @@
 This module tracks push SHAs and review SHAs to ensure reviews are only acted
 upon when they correspond to the current pushed state.
 
-After state_manager migration, uses in-memory state via state_manager
+Uses workflow_client for in-memory state via MCP router
 instead of session.json file.
 """
 
@@ -12,12 +12,12 @@ from dataclasses import dataclass, asdict, replace
 from pathlib import Path
 from typing import Optional
 
-# Ensure lib is in path for state_manager import
+# Ensure lib is in path for workflow_client import
 lib_dir = Path(__file__).parent
 if str(lib_dir) not in sys.path:
     sys.path.insert(0, str(lib_dir))
 
-import state_manager
+import workflow_client
 
 
 @dataclass(frozen=True)
@@ -29,8 +29,8 @@ class ReviewState:
 
 
 def load_review_state() -> ReviewState:
-    """Load review state from in-memory state manager."""
-    data = state_manager.get_state("review_gate")
+    """Load review state from workflow server."""
+    data = workflow_client.workflow_get_state("review_gate")
     if not data:
         return ReviewState()
 
@@ -42,8 +42,8 @@ def load_review_state() -> ReviewState:
 
 
 def save_review_state(state: ReviewState) -> None:
-    """Save review state to in-memory state manager."""
-    state_manager.set_state("review_gate", asdict(state))
+    """Save review state to workflow server."""
+    workflow_client.workflow_set_state("review_gate", asdict(state))
 
 
 def on_push(sha: str) -> None:
