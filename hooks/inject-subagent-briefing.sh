@@ -15,7 +15,7 @@ if [ -z "$ORIGINAL_PROMPT" ]; then
 fi
 
 # Get plugin root and working directory
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/plugins/agent-swarm}"
+PLUGIN_ROOT="/home/fearsidhe/.claude/plugins/agent-swarm"
 WORKING_DIR=$(echo "$INPUT" | jq -r '.cwd // "."')
 AGENT_TYPE=$(echo "$INPUT" | jq -r '.tool_input.subagent_type // "general-purpose"')
 

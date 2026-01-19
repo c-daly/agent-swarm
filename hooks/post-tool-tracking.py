@@ -24,8 +24,12 @@ except ImportError:
     class ConfigError(Exception): pass
     class StateError(Exception): pass
 # Configuration
-METRICS_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/subagent_metrics.json"
-STATE_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/session.json"
+# DISABLED: No longer writing subagent metrics to file
+# METRICS_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/subagent_metrics.json"
+METRICS_FILE = None
+# DISABLED: No longer writing session state to file
+# STATE_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/session.json"
+STATE_FILE = None
 
 def load_json(path: Path) -> dict:
     """Load JSON file safely."""
@@ -38,6 +42,8 @@ def load_json(path: Path) -> dict:
 
 def save_json(path: Path, data: dict) -> None:
     """Save JSON file."""
+    if path is None:
+        return  # State file writes disabled
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2))
 

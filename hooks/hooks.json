@@ -7,18 +7,26 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/telemetry-pretool.py",
+            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/telemetry-pretool.py",
             "timeout": 2
           },
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/base-enforcement.py",
+            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/base-enforcement.py",
             "timeout": 3
           },
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/iterate-enforcement.py",
+            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/iterate-enforcement.py",
             "timeout": 3
+<<<<<<< Updated upstream
+=======
+          },
+          {
+            "type": "command",
+            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/state-protection.py",
+            "timeout": 3
+>>>>>>> Stashed changes
           }
         ]
       },
@@ -27,7 +35,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/inject-subagent-briefing.sh",
+            "command": "bash /home/fearsidhe/.claude/plugins/agent-swarm/hooks/inject-subagent-briefing.sh",
             "timeout": 5
           }
         ]
@@ -39,12 +47,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/telemetry-posttool.py",
+            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/telemetry-posttool.py",
             "timeout": 2
           },
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-tracking.py",
+            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/post-tool-tracking.py",
             "timeout": 3
           }
         ]
@@ -54,7 +62,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/mcp-summarizer.py",
+            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/mcp-summarizer.py",
             "timeout": 10
           }
         ]
@@ -64,12 +72,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/post-task-tracking.py",
+            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/post-task-tracking.py",
             "timeout": 3
           },
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/work_seeker.py",
+            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/work_seeker.py",
             "timeout": 3
           }
         ]
@@ -81,7 +89,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/pre-compacting.py",
+            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/pre-compacting.py",
             "timeout": 5
           }
         ]
@@ -93,7 +101,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/subagent-enforcement.py",
+            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/subagent-enforcement.py",
             "timeout": 3
           }
         ]
@@ -105,7 +113,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/subagent-complete.py",
+            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/subagent-complete.py",
             "timeout": 3
           }
         ]
@@ -116,7 +124,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/session-start.py",
+            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/session-start.py",
             "timeout": 10
           }
         ]
@@ -127,7 +135,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/session-end.py",
+            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/session-end.py",
             "timeout": 30
           }
         ]
