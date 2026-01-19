@@ -627,9 +627,46 @@ def set_review_status(clean: bool) -> None:
     _log("info", "Review status recorded", clean=clean)
 
 
+def _cleanup_stale_outputs() -> None:
+    """Clean up stale agent output files when workflow ends.
+
+    Removes:
+    - Agent output symlinks in /tmp/claude/*/tasks/
+    """
+    from pathlib import Path
+
+    tmp_claude = Path("/tmp/claude")
+    if not tmp_claude.exists():
+        return
+
+    cleaned = 0
+    for project_dir in tmp_claude.iterdir():
+        if not project_dir.is_dir():
+            continue
+        tasks_dir = project_dir / "tasks"
+        if not tasks_dir.exists():
+            continue
+        try:
+            for output_file in tasks_dir.glob("*.output"):
+                try:
+                    output_file.unlink()
+                    cleaned += 1
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    if cleaned > 0:
+        _log("info", "Cleaned stale agent outputs", count=cleaned)
+
+
 def _notify_workflow_end(reason: str, task: str = "") -> None:
     """Output loud notification when workflow ends - impossible to miss."""
     import sys
+
+    # Clean up stale agent outputs
+    _cleanup_stale_outputs()
+
     banner = f"""
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║  ⚠️  WORKFLOW TERMINATED: {reason:<50} ║

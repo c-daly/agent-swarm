@@ -22,7 +22,9 @@ except ImportError:
     class ConfigError(Exception): pass
     class StateError(Exception): pass
 STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
-SUBAGENT_METRICS = STATE_DIR / "subagent_metrics.json"
+# DISABLED: No longer writing subagent metrics
+# SUBAGENT_METRICS = STATE_DIR / "subagent_metrics.json"
+SUBAGENT_METRICS = None
 
 def load_metrics():
     """Load existing subagent metrics."""
@@ -140,7 +142,8 @@ def main():
     tool_output_raw = input_data.get("tool_response", {})
 
     # DEBUG: Log full structure to understand format
-    debug_file = STATE_DIR / "post_task_debug.log"
+    # DISABLED: Debug logging no longer written to file
+    debug_file = None  # STATE_DIR / "post_task_debug.log"
     try:
         with open(debug_file, "a") as f:
             f.write(f"\n[{datetime.now().isoformat()}] FULL INPUT DUMP\n")
@@ -167,7 +170,8 @@ def main():
     # Track Task tool completions
     if tool_name == "Task":
         # DEBUG: Log to see if hook is running
-        debug_file = STATE_DIR / "post_task_debug.log"
+        # DISABLED: Debug logging no longer written to file
+        debug_file = None  # STATE_DIR / "post_task_debug.log"
         try:
             with open(debug_file, "a") as f:
                 f.write(f"[{datetime.now().isoformat()}] Task tool detected\n")

@@ -42,12 +42,20 @@ def main():
     phase = state.get("phase") or state.get("iterate_phase") or "none"
 
     # Log the subagent completion
-    log_subagent_stop(agent_type, session_id, phase)
+    # DISABLED: No longer logging subagent stops to file
+
+    # log_subagent_stop(agent_type, session_id, phase)
     
     # Decrement active agent count
-    state["active_agents"] = max(0, state.get("active_agents", 0) - 1)
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, indent=2))
+    # DISABLED: Not tracking active agents in file
+
+    # state["active_agents"] = max(0, state.get("active_agents", 0) - 1)
+    # DISABLED: Not creating state directory for session file
+
+    # STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    # DISABLED: No longer writing session state to file
+
+    # STATE_FILE.write_text(json.dumps(state, indent=2))
 
     result = {
         "hookSpecificOutput": {

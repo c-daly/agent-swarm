@@ -46,6 +46,8 @@ def get_response_hash(content: str) -> str:
 
 def log_debug(msg: str) -> None:
     """Log debug message to file."""
+    # DISABLED: Debug logging no longer written to file
+    return  # Skip file logging
     log_file = Path.home() / ".claude/plugins/agent-swarm/.state/summarizer.log"
     with open(log_file, "a") as f:
         from datetime import datetime

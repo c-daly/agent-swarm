@@ -72,10 +72,18 @@ def main():
     mode = iterate_state.get("mode", "")
 
     # Log and track
-    log_subagent_start(agent_id, agent_type, session_id, phase)
-    session_state["active_agents"] = session_state.get("active_agents", 0) + 1
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(session_state, indent=2))
+    # DISABLED: No longer logging subagent starts to file
+
+    # log_subagent_start(agent_id, agent_type, session_id, phase)
+    # DISABLED: Not tracking active agents in file
+
+    # session_state["active_agents"] = session_state.get("active_agents", 0) + 1
+    # DISABLED: Not creating state directory for session file
+
+    # STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    # DISABLED: No longer writing session state to file
+
+    # STATE_FILE.write_text(json.dumps(session_state, indent=2))
 
     # Build context to inject based on mode and phase
     additional_context = []

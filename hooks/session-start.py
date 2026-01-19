@@ -44,7 +44,9 @@ def reset_enforcement_counters(agent_id: str | None = None):
     """
     # Use absolute path to match pre-compacting.py
     state_dir = Path.home() / ".claude/plugins/agent-swarm/.state"
-    state_file = state_dir / "session.json"
+    # DISABLED: Session state file no longer used
+    # state_file = state_dir / "session.json"
+    state_file = None
     compaction_state_file = state_dir / "compaction_state.json"
 
     try:
@@ -90,7 +92,10 @@ def reset_enforcement_counters(agent_id: str | None = None):
             if phase:
                 state["phase"] = phase
 
-        with open(state_file, 'w') as f:
+        # DISABLED: No longer writing session state to file
+
+
+        # with open(state_file, 'w') as f:
             json.dump(state, f, indent=2)
 
         return True
