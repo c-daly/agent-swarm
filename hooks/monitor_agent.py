@@ -290,13 +290,12 @@ def detect_batch_need(tool_name: str, tool_input: dict, state: dict, recent_mess
     for pattern, description in batch_indicators:
         match = re.search(pattern, recent_text)
         if match:
-            # Extract number if present
+            # Extract number if present (only if group contains digits)
             num = None
-            try:
-                if match.lastindex and match.lastindex >= 1:
-                    num = int(match.group(1))
-            except (ValueError, IndexError) as e:
-                log_warning(f"Caught exception: {e}")
+            if match.lastindex and match.lastindex >= 1:
+                group_val = match.group(1)
+                if group_val and group_val.isdigit():
+                    num = int(group_val)
             
             # If explicit number > 5, or qualitative indicator ("all", "every", etc.)
             if num and num > 5:

@@ -69,6 +69,10 @@ def main():
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input", {})
 
+    # Normalize MCP router prefix (mcp__router__native__bash -> native__bash)
+    if tool_name.startswith("mcp__router__"):
+        tool_name = tool_name[len("mcp__router__"):]
+
     # Extract command for bash tools (for git/gh blocking)
     # native__bash is the routed version through MCP router
     command = tool_input.get("command") if tool_name in ("Bash", "native__bash") else None

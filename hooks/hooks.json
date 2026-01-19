@@ -19,6 +19,11 @@
             "type": "command",
             "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/iterate-enforcement.py",
             "timeout": 3
+          },
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/state-protection.py",
+            "timeout": 3
           }
         ]
       },
