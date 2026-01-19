@@ -23,13 +23,13 @@ STATE_CONFIG = STATE_DIR / "config.json"
 ITERATE_STATE = STATE_DIR / "iterate.json"
 ORCHESTRATE_STATE = STATE_DIR / "orchestrate.json"
 
-# Tools that require an active workflow (includes router variants)
+# Tools that require an active workflow (normalized names - no mcp__router__ prefix)
 EDITING_TOOLS = {
     "Edit", "Write", "NotebookEdit",
-    "mcp__router__native__write_file",
-    "mcp__router__native__edit_file",
-    "mcp__router__serena__create_text_file",
-    "mcp__router__serena__replace_content",
+    "native__write_file",
+    "native__edit_file",
+    "serena__create_text_file",
+    "serena__replace_content",
     "mcp__plugin_serena_serena__create_text_file",
     "mcp__plugin_serena_serena__replace_content",
 }
@@ -87,21 +87,24 @@ def is_state_path(file_path: str) -> bool:
 
 
 def get_file_path_from_input(tool_name: str, tool_input: dict) -> str | None:
-    """Extract file path from tool input based on tool type."""
+    """Extract file path from tool input based on tool type.
+    
+    Note: tool_name should already be normalized (mcp__router__ prefix stripped).
+    """
     # Native Claude tools
     if tool_name in ("Edit", "Write"):
         return tool_input.get("file_path")
     if tool_name == "NotebookEdit":
         return tool_input.get("notebook_path")
     
-    # Router native tools
-    if tool_name in ("mcp__router__native__write_file", "mcp__router__native__edit_file"):
+    # Router native tools (normalized names)
+    if tool_name in ("native__write_file", "native__edit_file"):
         return tool_input.get("file_path")
     
-    # Serena tools (use relative_path)
+    # Serena tools (use relative_path) - normalized names
     if tool_name in (
-        "mcp__router__serena__create_text_file",
-        "mcp__router__serena__replace_content",
+        "serena__create_text_file",
+        "serena__replace_content",
         "mcp__plugin_serena_serena__create_text_file",
         "mcp__plugin_serena_serena__replace_content",
     ):
@@ -147,6 +150,10 @@ def main():
 
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input", {})
+
+    # Normalize MCP router prefix (mcp__router__native__bash -> native__bash)
+    if tool_name.startswith("mcp__router__"):
+        tool_name = tool_name[len("mcp__router__"):]
 
     # Only check editing tools
     if tool_name not in EDITING_TOOLS:

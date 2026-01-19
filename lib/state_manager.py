@@ -24,10 +24,11 @@ VALID_TRANSITIONS: dict[Optional[str], set[str]] = {
     None: {"intake", "orchestrate"},  # Can start in intake or orchestrate
     "intake": {"design"},
     "design": {"orchestrate"},
-    "orchestrate": {"intake", "done"},  # Can only go back to intake or end
+    # Orchestrate stays put and spawns subagents; can only go back to intake or finish
+    "orchestrate": {"intake", "done"},
     "test_writing": {"implement"},
     "implement": {"test"},
-    "test": {"review", "test_writing", "implement"},  # kick-back paths
+    "test": {"review", "test_writing", "implement", "done"},  # kick-back paths + done for max_iterations
     "review": {"done", "implement"},
     "done": set(),  # Terminal state
 }
@@ -52,7 +53,11 @@ def _validate_phase_transition(old_state: Optional[dict], new_state: dict) -> No
     Raises:
         InvalidPhaseTransition: If transition is not allowed
     """
-    old_phase = old_state.get("phase") if old_state else None
+    # If old state is inactive (stopped workflow), treat as fresh start
+    if old_state and not old_state.get("active", True):
+        old_phase = None
+    else:
+        old_phase = old_state.get("phase") if old_state else None
     new_phase = new_state.get("phase")
 
     # No phase in new state - nothing to validate
@@ -90,24 +95,26 @@ def get_state(agent_id: str) -> Optional[dict]:
         return copy.deepcopy(state) if state else None
 
 
-def set_state(agent_id: str, state: dict) -> None:
+def set_state(agent_id: str, state: dict, _skip_validation: bool = False) -> None:
     """Set state for an agent.
 
     Args:
         agent_id: Agent identifier. Use "orchestrator" for persisted state.
         state: Full state dict to store.
+        _skip_validation: Skip phase transition validation (for testing only).
 
     Raises:
         InvalidPhaseTransition: If phase transition is not allowed (orchestrator only).
     """
     if agent_id == "orchestrator":
-        # Validate phase transition before saving
-        current = _load_orchestrator_state()
-        _validate_phase_transition(current, state)
+        # Validate phase transition before saving (unless skipped for testing)
+        if not _skip_validation:
+            current = _load_orchestrator_state()
+            _validate_phase_transition(current, state)
         _save_orchestrator_state(state)
     else:
         with _memory_lock:
-            _states[agent_id] = copy.deepcopy(state)  # Store a deep copy
+            _states[agent_id] = copy.deepcopy(state)  # Store a deep copy  # Store a deep copy
 
 
 def update_state(agent_id: str, updates: dict) -> dict:
