@@ -273,21 +273,20 @@ def main():
     if tokens_breakdown:
         event["tokens_breakdown"] = tokens_breakdown
 
-    # Load or initialize telemetry
+    # Load or initialize telemetry (preserve existing keys like historical_timeline)
     telemetry = load_json(TELEMETRY_FILE)
     if "events" not in telemetry:
-        telemetry = {
-            "session_id": datetime.now(timezone.utc).isoformat(),
-            "session_start": datetime.now(timezone.utc).isoformat(),
-            "events": [],
-            "daily_summaries": {},
-            "aggregates": {
-                "by_tool": {},
-                "by_backend": {},
-                "subagents": {},
-                "totals": {"calls": 0, "errors": 0, "tokens": 0, "duration_ms": 0}
-            }
-        }
+        # Initialize missing keys but preserve existing ones
+        telemetry.setdefault("session_id", datetime.now(timezone.utc).isoformat())
+        telemetry.setdefault("session_start", datetime.now(timezone.utc).isoformat())
+        telemetry.setdefault("events", [])
+        telemetry.setdefault("daily_summaries", {})
+        telemetry.setdefault("aggregates", {
+            "by_tool": {},
+            "by_backend": {},
+            "subagents": {},
+            "totals": {"calls": 0, "errors": 0, "tokens": 0, "duration_ms": 0}
+        })
 
     # Add event (rolling window)
     telemetry["events"].append(event)

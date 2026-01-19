@@ -25,6 +25,27 @@ LOG_FILE = STATE_DIR / "iterate.log"
 # Import state manager for centralized state handling
 import state_manager
 
+# Map MCP tool base names to their native Claude equivalents
+# Used by is_tool_allowed() to normalize tool names for PHASE_TOOLS lookup
+MCP_TO_NATIVE = {
+    # Native router tools
+    "read_file": "Read",
+    "write_file": "Write",
+    "edit_file": "Edit",
+    "glob": "Glob",
+    "grep": "Grep",
+    "bash": "Bash",
+    # Serena equivalents
+    "list_dir": "Glob",
+    "find_file": "Glob",
+    "search_for_pattern": "Grep",
+    "create_text_file": "Write",
+    "replace_content": "Edit",
+    "get_symbols_overview": "Read",
+    "find_symbol": "Read",
+    "read_memory": "Read",
+}
+
 # Module-level logger instance
 _logger: Optional[logging.Logger] = None
 
@@ -117,7 +138,8 @@ PHASE_TOOLS = {
     },
     Phase.INTAKE: {
         # Intake phase: gather requirements, research, no editing
-        "allowed": {"Read", "Glob", "Grep", "WebSearch", "WebFetch", "Task"},
+        # bash allowed with whitelist (iterate_workflow.py only) via mcp router
+        "allowed": {"Read", "Glob", "Grep", "WebSearch", "WebFetch", "Task", "bash"},
         "blocked": {"Edit", "Write", "Bash"},
     },
     Phase.DESIGN: {
@@ -260,12 +282,21 @@ def start(
         _decompose_spec_content(content)
     elif _is_spec(task):
         _decompose_spec_content(task)
-    # Always start in ORCHESTRATE - orchestrator creates queue if needed
+    # Determine starting phase based on input type
+    if queue or spec or _is_spec(task):
+        # Structured input: ready for orchestration
+        starting_phase = Phase.ORCHESTRATE.value
+        needs_intake = False
+    else:
+        # Vague task: needs intake/discovery first
+        starting_phase = Phase.INTAKE.value
+        needs_intake = True
 
     state = {
         "active": True,
         "task": task,
-        "phase": Phase.ORCHESTRATE.value,
+        "phase": starting_phase,
+        "needs_intake": needs_intake,
         "iteration": 0,
         "max_iterations": max_iterations,
         "mode": "iterate-tdd",
@@ -439,6 +470,9 @@ def advance_phase() -> Optional[Phase]:
                 "Call set_review_status() before advancing."
             )
 
+    # Print phase completion summary (OUTPUT.2)
+    _print_phase_summary(current.value, state)
+
     if current == Phase.INTAKE:
         # Intake complete, go to design to create spec/queue
         state["phase"] = Phase.DESIGN.value
@@ -523,6 +557,25 @@ def advance_phase() -> Optional[Phase]:
         state["review_status"] = None
 
     state_manager.set_state("orchestrator", state)
+    
+    # Determine kickback reason for OUTPUT.5
+    new_phase = state["phase"]
+    kickback_reason = ""
+    if new_phase == Phase.TEST_WRITING.value and current == Phase.TEST:
+        kickback_reason = "Coverage below threshold - need more tests"
+    elif new_phase == Phase.IMPLEMENT.value and current == Phase.TEST:
+        if not state.get("tests_passed", True):
+            kickback_reason = "Tests failed - fix implementation"
+        elif not state.get("lint_passed", True):
+            kickback_reason = "Lint errors - fix code style"
+    elif new_phase == Phase.IMPLEMENT.value and current == Phase.REVIEW:
+        kickback_reason = "Review issues found - address feedback"
+    elif new_phase == Phase.DONE.value and state.get("exit_reason") == "max_iterations":
+        kickback_reason = f"Max iterations ({state.get('max_iterations', 5)}) reached"
+    
+    # Print phase transition banner (OUTPUT.1, OUTPUT.5)
+    _print_phase_transition(current.value, new_phase, kickback_reason)
+    
     _log("info", "Phase transition", from_phase=current.value, to_phase=state["phase"],
          iteration=state.get("iteration", 0))
 
@@ -626,6 +679,89 @@ def _notify_workflow_end(reason: str, task: str = "") -> None:
     print(banner, file=sys.stderr)
 
 
+def _print_phase_transition(from_phase: str, to_phase: str, reason: str = "") -> None:
+    """Print phase transition banner with optional reason (OUTPUT.1, OUTPUT.5).
+    
+    Shows:
+    - Clear from→to transition
+    - Kickback reason when phase reverts
+    - Queue status for context
+    """
+    import sys
+    
+    # Determine if this is a kickback (revert to earlier phase)
+    phase_order = ["intake", "design", "orchestrate", "test_writing", "implement", "test", "review", "done"]
+    from_idx = phase_order.index(from_phase) if from_phase in phase_order else -1
+    to_idx = phase_order.index(to_phase) if to_phase in phase_order else -1
+    is_kickback = to_idx < from_idx and to_idx >= 0
+    
+    # Build banner
+    arrow = "⟲" if is_kickback else "→"
+    header = "KICKBACK" if is_kickback else "PHASE"
+    
+    lines = [
+        f"┌─[{header}]─────────────────────────────────────────────────────────────┐",
+        f"│  {from_phase.upper()} {arrow} {to_phase.upper():<54}│",
+    ]
+    
+    if reason:
+        lines.append(f"│  Reason: {reason:<58}│")
+    
+    # Add queue status if available
+    queue_status = _format_queue_status()
+    if queue_status:
+        lines.append("│" + "─" * 70 + "│")
+        for line in queue_status.split("\n")[:3]:  # First 3 lines of queue
+            lines.append(f"│  {line:<66}│")
+    
+    lines.append("└" + "─" * 70 + "┘")
+    
+    print("\n".join(lines), file=sys.stderr)
+
+
+def _print_phase_summary(phase: str, state: dict) -> None:
+    """Print summary of what was accomplished in a phase (OUTPUT.2).
+    
+    Called before transitioning to show phase completion status.
+    """
+    import sys
+    
+    summaries = {
+        "test_writing": "Tests written and ready for implementation",
+        "implement": "Implementation complete, ready for testing",
+        "test": _get_test_phase_summary(state),
+        "review": _get_review_phase_summary(state),
+        "intake": "Requirements gathered, ready for design",
+        "design": "Design complete, ready for orchestration",
+    }
+    
+    summary = summaries.get(phase, f"Phase {phase} complete")
+    if callable(summary):
+        summary = summary()
+    
+    print(f"[{phase.upper()}] ✓ {summary}", file=sys.stderr)
+
+
+def _get_test_phase_summary(state: dict) -> str:
+    """Generate summary for TEST phase completion."""
+    tests_ok = state.get("tests_passed", False)
+    lint_ok = state.get("lint_passed", False)
+    coverage_ok = state.get("coverage_ok", False)
+    
+    results = []
+    results.append("✓ tests" if tests_ok else "✗ tests")
+    results.append("✓ lint" if lint_ok else "✗ lint")
+    results.append("✓ coverage" if coverage_ok else "✗ coverage")
+    
+    return f"Test results: {' | '.join(results)}"
+
+
+def _get_review_phase_summary(state: dict) -> str:
+    """Generate summary for REVIEW phase completion."""
+    review_clean = state.get("review_status") == "clean"
+    return "Review passed - no issues" if review_clean else "Review complete - issues found"
+
+
 def stop(reason: str = "user_stopped") -> None:
     """Stop the iterate workflow.
 
@@ -690,6 +826,12 @@ def is_tool_allowed(tool_name: str, command: str | None = None) -> tuple[bool, s
     Returns:
         (allowed: bool, reason: str)
     """
+    # Normalize MCP router prefix once at the start
+    # mcp__router__native__bash -> native__bash
+    # mcp__router__serena__read_file -> serena__read_file
+    if tool_name.startswith("mcp__router__"):
+        tool_name = tool_name[len("mcp__router__"):]
+
     phase = get_phase()
     if phase is None:
         # No active workflow - block editing tools (BUG-PHASE-MISUSE fix)
@@ -755,17 +897,28 @@ def is_tool_allowed(tool_name: str, command: str | None = None) -> tuple[bool, s
 
     # Allow MCP variants of allowed tools
     base_tool = tool_name.split("__")[-1] if "__" in tool_name else tool_name
+    # Normalize to native Claude tool name via mapping
+    normalized_tool = MCP_TO_NATIVE.get(base_tool, base_tool)
+    if normalized_tool in phase_config["allowed"]:
+        return True, ""
+
+    # Also check base_tool directly (for tools like "bash" in allowed set)
     if base_tool in phase_config["allowed"]:
         return True, ""
 
-    # Default allow if not explicitly blocked
-    return True, ""
+    # Also check if full tool_name is in allowed (for tools like native__bash)
+    if tool_name in phase_config["allowed"]:
+        return True, ""
+
+    # Block tools not explicitly allowed (allowlist-only logic)
+    allowed_list = ", ".join(sorted(phase_config["allowed"]))
+    return False, f"[BLOCKED] {tool_name} not in allowed tools for {phase.value} phase. Allowed: {allowed_list}"
 
 
 def _format_queue_status() -> Optional[str]:
-    """Format task queue status for display.
+    """Format task queue status for display (OUTPUT.3, OUTPUT.4).
 
-    Returns queue status string if queue has items, None otherwise.
+    Returns queue status string with progress indicators if queue has items.
     """
     try:
         from iterate_state import load_queue
@@ -776,8 +929,17 @@ def _format_queue_status() -> Optional[str]:
         pending = sum(1 for t in queue.tasks if t.status.value == "pending")
         active = sum(1 for t in queue.tasks if t.status.value == "active")
         done = sum(1 for t in queue.tasks if t.status.value == "done")
+        total = len(queue.tasks)
 
-        lines = [f"Queue: {pending} pending | {active} active | {done} done"]
+        # Progress bar (OUTPUT.4)
+        progress_pct = int((done / total) * 100) if total > 0 else 0
+        progress_filled = progress_pct // 5  # 20 chars total
+        progress_bar = "█" * progress_filled + "░" * (20 - progress_filled)
+
+        lines = [
+            f"Queue Progress: [{progress_bar}] {done}/{total} ({progress_pct}%)",
+            f"  ⏳ {pending} pending | ▶ {active} active | ✓ {done} done"
+        ]
 
         # Show up to 5 tasks with status indicators
         for task in list(queue.tasks)[:5]:
@@ -788,7 +950,7 @@ def _format_queue_status() -> Optional[str]:
                 icon = "✓"
                 suffix = ""
             else:
-                icon = " "
+                icon = "○"
                 deps = getattr(task, 'depends_on', None)
                 suffix = f" (blocked by: {', '.join(deps)})" if deps else ""
 
@@ -803,37 +965,43 @@ def _format_queue_status() -> Optional[str]:
 
 
 def print_status_banner(force: bool = False) -> None:
-    """Print decorated status banner.
+    """Print decorated status banner (OUTPUT.1, OUTPUT.3, OUTPUT.4).
 
-    Only shows when in iterate-tdd mode (or force=True).
+    Shows current phase, iteration progress, task, and queue status.
     """
     state = state_manager.get_state("orchestrator") or {}
 
     if not state.get("active"):
         return
 
-    mode = state.get("mode", "")
-    if not force and mode != "iterate-tdd":
-        return
-
     phase = state.get("phase", "unknown")
     iteration = state.get("iteration", 0)
     max_iter = state.get("max_iterations", 5)
     task_desc = state.get("task", "No task")[:60]
+    mode = state.get("mode", "")
+
+    # Progress bar for iterations (OUTPUT.4)
+    progress_pct = min(100, int((iteration / max_iter) * 100)) if max_iter > 0 else 0
+    progress_filled = progress_pct // 5  # 20 chars total
+    progress_bar = "█" * progress_filled + "░" * (20 - progress_filled)
 
     lines = [
-        "[ITERATE] ═══════════════════════════════════════════════════════════════",
-        f"  Phase: {phase.upper()} | Iteration: {iteration}/{max_iter}",
-        f"  Task: {task_desc}",
+        "┌─[ITERATE]────────────────────────────────────────────────────────────┐",
+        f"│  Phase: {phase.upper():<12} Iteration: {iteration}/{max_iter} [{progress_bar}] {progress_pct}%│",
+        f"│  Task: {task_desc:<62}│",
     ]
 
+    if mode:
+        lines.append(f"│  Mode: {mode:<62}│")
+
+    # Queue status (OUTPUT.3)
     queue_status = _format_queue_status()
     if queue_status:
-        lines.append("")
+        lines.append("│" + "─" * 70 + "│")
         for line in queue_status.split("\n"):
-            lines.append(f"  {line}")
+            lines.append(f"│  {line:<66}│")
 
-    lines.append("═══════════════════════════════════════════════════════════════════════")
+    lines.append("└" + "─" * 70 + "┘")
     print("\n".join(lines))
 
 
@@ -1228,14 +1396,28 @@ if __name__ == "__main__":
         print("  test <t> <l> <c>         Record test results (1=pass, 0=fail)")
         print("                           t=tests, l=lint, c=coverage")
         print("  review <clean>           Record review status (1=clean, 0=issues)")
+        print("  set-phase <phase>        Manually set phase (intake, design, orchestrate,")
+        print("                           test_writing, implement, test, review, done)")
         print("  is-spec <text>           Check if text looks like a spec")
         print("  stop                     Stop workflow")
 
+    COMMANDS = {"start", "status", "phase", "advance", "test", "review", "stop", "set-phase", "is-spec", "help"}
+
     if len(sys.argv) < 2:
+        # No args - auto-start if not active, otherwise show status
+        if not is_active():
+            start("Unspecified task")
         print(status())
         sys.exit(0)
 
     cmd = sys.argv[1]
+
+    # Auto-start if first arg isn't a known command (treat as task description)
+    if cmd not in COMMANDS:
+        task = " ".join(sys.argv[1:])
+        start(task)
+        print(status())
+        sys.exit(0)
 
     if cmd == "start":
         # Parse options
@@ -1292,6 +1474,20 @@ if __name__ == "__main__":
     elif cmd == "stop":
         stop()
         print("Stopped")
+    elif cmd == "set-phase":
+        if len(sys.argv) < 3:
+            print("Usage: set-phase <phase>")
+            print("       Phases: intake, design, orchestrate, test_writing, implement, test, review, done")
+            sys.exit(1)
+        phase_name = sys.argv[2].lower()
+        try:
+            phase = Phase(phase_name)
+            set_phase(phase)
+            print(f"Phase set to: {phase.value}")
+        except ValueError:
+            print(f"Invalid phase: {phase_name}")
+            print("Valid phases: intake, design, orchestrate, test_writing, implement, test, review, done")
+            sys.exit(1)
     elif cmd == "is-spec":
         if len(sys.argv) < 3:
             print("Usage: is-spec <text>")

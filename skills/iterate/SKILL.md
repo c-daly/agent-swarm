@@ -1,8 +1,22 @@
+---
+name: iterate
+description: Autonomous TDD implementation workflow with phase gates
+user_invocable: true
+---
+
 # Iterate Workflow
 
-**User-Invocable:** Yes (`/iterate`)
-
 TDD development loop with phase gates. Works autonomously until exit conditions met.
+
+## Initialize (REQUIRED FIRST STEP)
+
+**Run this command immediately to start the workflow:**
+
+```bash
+python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py $ARGUMENTS
+```
+
+The workflow auto-initializes when invoked. This creates the state file that subagents need for TDD context.
 
 ## Flow
 
@@ -260,7 +274,7 @@ The orchestrator monitors and repopulates as needed.
 
 ## Parallel Execution
 
-Spawn agents in ONE message block (up to max configured) to run simultaneously:
+Spawn up to `config.orchestrate.max_agents` agents in ONE message block to run simultaneously:
 
 ```
 Task(description="Implement module A", subagent_type="agent-swarm:implementer", prompt="...")
@@ -272,6 +286,27 @@ Even for a single task:
 ```
 Task(description="Implement module A", subagent_type="agent-swarm:implementer", prompt="...")
 ```
+
+## Subagent Prompting
+
+When spawning implementer agents, your prompt must include:
+
+1. **Architectural context** - How the component fits in the system design
+2. **Constraints** - What NOT to do and why (prevent logical-but-wrong fixes)
+3. **Design intent** - The "why" behind existing code/restrictions
+
+**Example prompt structure:**
+```
+**Context:** [How this component relates to the system architecture]
+
+**Constraint:** Do NOT [specific thing to avoid] because [reason].
+
+**Task:** [Specific work to do]
+
+**Verification:** [How to verify the fix is correct]
+```
+
+Without architectural context, agents may make fixes that pass tests but break system invariants.
 
 ## Kick-back Logic
 

@@ -19,14 +19,6 @@
             "type": "command",
             "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/iterate-enforcement.py",
             "timeout": 3
-<<<<<<< Updated upstream
-=======
-          },
-          {
-            "type": "command",
-            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/state-protection.py",
-            "timeout": 3
->>>>>>> Stashed changes
           }
         ]
       },

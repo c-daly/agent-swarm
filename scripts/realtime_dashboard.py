@@ -14,6 +14,7 @@ from pathlib import Path
 
 STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
 TELEMETRY_FILE = STATE_DIR / "telemetry.json"
+METRICS_HISTORY_FILE = STATE_DIR / "metrics_history.json"
 DASHBOARD_FILE = STATE_DIR / "realtime_dashboard.html"
 
 
@@ -65,6 +66,95 @@ def generate_dashboard():
         @keyframes pulse {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.5; }
+        }
+        .nav-bar {
+            background: #16213e;
+            border-bottom: 1px solid #333;
+            padding: 0 40px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .nav-links {
+            display: flex;
+            gap: 0;
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+        .nav-links a {
+            color: #888;
+            text-decoration: none;
+            padding: 12px 20px;
+            font-size: 14px;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+        .nav-links a:hover {
+            color: #4cc9f0;
+            background: rgba(76, 201, 240, 0.1);
+        }
+        .nav-links a.active {
+            color: #4cc9f0;
+            border-bottom-color: #4cc9f0;
+        }
+        .filters-bar {
+            background: #0f0f1e;
+            padding: 15px 40px;
+            border-bottom: 1px solid #333;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .filter-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .filter-group label {
+            color: #888;
+            font-size: 13px;
+        }
+        .filter-group select {
+            background: #16213e;
+            color: #eee;
+            border: 1px solid #333;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        .filter-group select:hover {
+            border-color: #4cc9f0;
+        }
+        .chart-links {
+            display: flex;
+            gap: 10px;
+            margin-left: auto;
+        }
+        .chart-link-btn {
+            background: #16213e;
+            color: #4cc9f0;
+            border: 1px solid #333;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+        .chart-link-btn:hover {
+            background: #4cc9f0;
+            color: #1a1a2e;
+        }
+        .section-title {
+            font-size: 18px;
+            color: #4cc9f0;
+            margin: 30px 0 15px 0;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #333;
+        }
+        .section-title:first-of-type {
+            margin-top: 0;
         }
         .container {
             max-width: 1600px;
@@ -201,6 +291,39 @@ def generate_dashboard():
             font-size: 12px;
             color: #666;
         }
+        .alert-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .alert-item {
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+        .alert-item.ok {
+            background: rgba(74, 222, 128, 0.1);
+            border-left: 3px solid #4ade80;
+            color: #4ade80;
+        }
+        .alert-item.warning {
+            background: rgba(251, 191, 36, 0.1);
+            border-left: 3px solid #fbbf24;
+            color: #fbbf24;
+        }
+        .alert-item.error {
+            background: rgba(248, 113, 113, 0.1);
+            border-left: 3px solid #f87171;
+            color: #f87171;
+        }
+        .metric-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            border-bottom: 1px solid #333;
+        }
+        .metric-label { color: #888; }
+        .metric-value { color: #4cc9f0; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -213,7 +336,50 @@ def generate_dashboard():
         </div>
     </div>
 
+    <nav class="nav-bar">
+        <div class="nav-links">
+            <a href="#overview" class="active">Overview</a>
+            <a href="#charts">Charts</a>
+            <a href="#analysis">Analysis</a>
+            <a href="#logs">Logs</a>
+        </div>
+    </nav>
+
+    <div class="filters-bar">
+        <div class="filter-group">
+            <label>Time Range:</label>
+            <select id="filterTimeRange" onchange="applyFilters()">
+                <option value="1h">Last 1 hour</option>
+                <option value="6h">Last 6 hours</option>
+                <option value="24h" selected>Last 24 hours</option>
+                <option value="7d">Last 7 days</option>
+                <option value="all">All time</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label>Tool:</label>
+            <select id="filterTool" onchange="applyFilters()">
+                <option value="all">All tools</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label>Backend:</label>
+            <select id="filterBackend" onchange="applyFilters()">
+                <option value="all">All backends</option>
+            </select>
+        </div>
+        <div class="chart-links">
+            <a href="charts/telemetry.html" class="chart-link-btn">📡 Telemetry</a>
+            <a href="charts/latency.html" class="chart-link-btn">⏱️ Latency</a>
+            <a href="charts/activity_heatmap.html" class="chart-link-btn">📅 Heatmap</a>
+            <a href="charts/token_trend.html" class="chart-link-btn">📈 Tokens</a>
+            <a href="charts/tool_usage.html" class="chart-link-btn">🔧 Tools</a>
+            <a href="charts/dashboard.html" class="chart-link-btn">📊 All Charts</a>
+        </div>
+    </div>
+
     <div class="container">
+        <h3 id="overview" class="section-title">Overview</h3>
         <div class="grid">
             <!-- Summary Cards -->
             <div class="card">
@@ -240,9 +406,23 @@ def generate_dashboard():
                 <div class="sub-stat" id="trendDetails">Need more data</div>
             </div>
 
-            <!-- Charts -->
+        </div>
+
+        <h3 id="charts" class="section-title">Charts</h3>
+        <div class="grid">
             <div class="card wide-card">
-                <h2>Token Usage Over Time</h2>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <h2>Token Usage Over Time</h2>
+                    <div class="filter-group" style="margin: 0;">
+                        <label>Show:</label>
+                        <select id="tokenChartRange" onchange="updateTokenChartRange()">
+                            <option value="7">Last 7 days</option>
+                            <option value="14" selected>Last 14 days</option>
+                            <option value="30">Last 30 days</option>
+                            <option value="all">All data</option>
+                        </select>
+                    </div>
+                </div>
                 <div class="chart-container">
                     <canvas id="tokenChart"></canvas>
                 </div>
@@ -262,7 +442,37 @@ def generate_dashboard():
                 </div>
             </div>
 
-            <!-- Recommendations -->
+        </div>
+
+        <h3 id="analysis" class="section-title">Analysis</h3>
+        <div class="grid">
+            <div class="card">
+                <h2>Summary Effectiveness</h2>
+                <div class="big-number" id="drillDownRate">-</div>
+                <div class="sub-stat">drill-down rate</div>
+                <div class="sub-stat" id="fullRetrievals">- full retrievals</div>
+            </div>
+
+            <!-- Sequence Alerts -->
+            <div class="card">
+                <h2>Sequence Alerts</h2>
+                <div class="alert-list" id="sequenceAlerts">
+                    <div class="no-data">Analyzing patterns...</div>
+                </div>
+            </div>
+
+            <!-- Concurrency Stats -->
+            <div class="card">
+                <h2>Concurrency</h2>
+                <div class="big-number" id="peakInFlight">-</div>
+                <div class="sub-stat">peak in-flight</div>
+                <div class="sub-stat" id="backpressureEvents">- backpressure events</div>
+            </div>
+
+        </div>
+
+        <h3 id="logs" class="section-title">Logs & Recommendations</h3>
+        <div class="grid">
             <div class="card wide-card">
                 <h2>Optimization Recommendations</h2>
                 <div class="recommendations" id="recommendations">
@@ -283,6 +493,140 @@ def generate_dashboard():
     <script>
         let tokenChart = null;
         let subagentChart = null;
+
+        // Navigation handling
+        document.querySelectorAll('.nav-links a').forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                const targetId = link.getAttribute('href').slice(1);
+                const target = document.getElementById(targetId);
+                if (target) {
+                    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    // Update active state
+                    document.querySelectorAll('.nav-links a').forEach(l => l.classList.remove('active'));
+                    link.classList.add('active');
+                }
+            });
+        });
+
+        // Update nav on scroll
+        window.addEventListener('scroll', () => {
+            const sections = ['overview', 'charts', 'analysis', 'logs'];
+            let current = sections[0];
+            for (const id of sections) {
+                const el = document.getElementById(id);
+                if (el && el.getBoundingClientRect().top <= 100) {
+                    current = id;
+                }
+            }
+            document.querySelectorAll('.nav-links a').forEach(link => {
+                link.classList.toggle('active', link.getAttribute('href') === '#' + current);
+            });
+        });
+
+        // Filter state
+        let currentFilters = {
+            timeRange: '24h',
+            tool: 'all',
+            backend: 'all'
+        };
+        let allTelemetryData = null;
+        let tokenChartDays = 14; // Chart-specific range
+
+        function updateTokenChartRange() {
+            const value = document.getElementById('tokenChartRange').value;
+            tokenChartDays = value === 'all' ? Infinity : parseInt(value);
+            if (allTelemetryData) {
+                const filtered = filterData(allTelemetryData);
+                const events = filtered.events || [];
+                updateTokenChart(events, filtered.daily_summaries || {}, filtered.historical_timeline || []);
+            }
+        }
+
+        function populateFilterDropdowns(data) {
+            // Populate tools dropdown
+            const toolSelect = document.getElementById('filterTool');
+            const tools = new Set();
+            if (data.aggregates?.by_tool) {
+                Object.keys(data.aggregates.by_tool).forEach(t => tools.add(t));
+            }
+            if (data.events) {
+                data.events.forEach(e => e.tool && tools.add(e.tool));
+            }
+            const sortedTools = [...tools].sort();
+            toolSelect.innerHTML = '<option value="all">All tools</option>' +
+                sortedTools.map(t => `<option value="${t}">${t}</option>`).join('');
+
+            // Populate backends dropdown
+            const backendSelect = document.getElementById('filterBackend');
+            const backends = new Set();
+            if (data.aggregates?.by_backend) {
+                Object.keys(data.aggregates.by_backend).forEach(b => backends.add(b));
+            }
+            if (data.events) {
+                data.events.forEach(e => e.backend && backends.add(e.backend));
+            }
+            const sortedBackends = [...backends].sort();
+            backendSelect.innerHTML = '<option value="all">All backends</option>' +
+                sortedBackends.map(b => `<option value="${b}">${b}</option>`).join('');
+        }
+
+        function applyFilters() {
+            currentFilters.timeRange = document.getElementById('filterTimeRange').value;
+            currentFilters.tool = document.getElementById('filterTool').value;
+            currentFilters.backend = document.getElementById('filterBackend').value;
+            if (allTelemetryData) {
+                updateDashboard(filterData(allTelemetryData));
+            }
+        }
+
+        function filterData(data) {
+            if (!data) return data;
+            const filtered = JSON.parse(JSON.stringify(data)); // Deep clone
+
+            // Time filter
+            const now = Date.now();
+            const ranges = {
+                '1h': 60 * 60 * 1000,
+                '6h': 6 * 60 * 60 * 1000,
+                '24h': 24 * 60 * 60 * 1000,
+                '7d': 7 * 24 * 60 * 60 * 1000,
+                'all': Infinity
+            };
+            const cutoff = now - (ranges[currentFilters.timeRange] || ranges['24h']);
+            const cutoffDate = new Date(cutoff).toISOString().substring(0, 10);
+
+            // Filter events by time, tool, and backend
+            if (filtered.events) {
+                filtered.events = filtered.events.filter(e => {
+                    const ts = new Date(e.timestamp || e.ts).getTime();
+                    if (ts < cutoff) return false;
+                    if (currentFilters.tool !== 'all' && e.tool !== currentFilters.tool) return false;
+                    if (currentFilters.backend !== 'all' && e.backend !== currentFilters.backend) return false;
+                    return true;
+                });
+            }
+
+            // Filter daily_summaries by date range
+            if (filtered.daily_summaries && currentFilters.timeRange !== 'all') {
+                const filteredSummaries = {};
+                Object.entries(filtered.daily_summaries).forEach(([date, summary]) => {
+                    if (date >= cutoffDate) {
+                        filteredSummaries[date] = summary;
+                    }
+                });
+                filtered.daily_summaries = filteredSummaries;
+            }
+
+            // Filter historical_timeline by date range
+            if (filtered.historical_timeline && currentFilters.timeRange !== 'all') {
+                filtered.historical_timeline = filtered.historical_timeline.filter(h => {
+                    return h.date >= cutoffDate;
+                });
+            }
+
+            return filtered;
+        }
 
         const TELEMETRY_PATH = '""" + str(TELEMETRY_FILE) + """';
 
@@ -330,9 +674,9 @@ def generate_dashboard():
 
             // Update summary cards
             document.getElementById('totalCalls').textContent = formatNumber(totals.calls || 0);
-            document.getElementById('totalTokens').textContent = formatNumber(totals.tokens_est || 0);
+            document.getElementById('totalTokens').textContent = formatNumber(totals.tokens || totals.tokens_est || 0);
 
-            const avgTokens = totals.calls ? Math.round(totals.tokens_est / totals.calls) : 0;
+            const avgTokens = totals.calls ? Math.round((totals.tokens || totals.tokens_est || 0) / totals.calls) : 0;
             document.getElementById('avgTokens').textContent = formatNumber(avgTokens) + ' avg/call';
 
             const errorRate = totals.calls ? ((totals.errors / totals.calls) * 100).toFixed(1) : 0;
@@ -347,8 +691,8 @@ def generate_dashboard():
                 const firstHalf = events.slice(0, half);
                 const secondHalf = events.slice(half);
 
-                const firstTokens = firstHalf.reduce((sum, e) => sum + (e.tokens_est || 0), 0) / firstHalf.length;
-                const secondTokens = secondHalf.reduce((sum, e) => sum + (e.tokens_est || 0), 0) / secondHalf.length;
+                const firstTokens = firstHalf.reduce((sum, e) => sum + (e.response_size || e.tokens_est || 0), 0) / firstHalf.length;
+                const secondTokens = secondHalf.reduce((sum, e) => sum + (e.response_size || e.tokens_est || 0), 0) / secondHalf.length;
 
                 const changePct = firstTokens ? ((secondTokens - firstTokens) / firstTokens * 100) : 0;
 
@@ -388,14 +732,19 @@ def generate_dashboard():
                 toolListEl.innerHTML = '<div class="no-data">No tool data yet</div>';
             }
 
-            // Update token chart
-            updateTokenChart(events);
+            // Update token chart (use daily_summaries as primary, with historical_timeline fallback)
+            updateTokenChart(events, data.daily_summaries || {}, data.historical_timeline || []);
 
             // Update subagent chart
             updateSubagentChart(agg.subagents || {});
 
             // Update recommendations
             updateRecommendations(data);
+
+            // Update new metrics
+            updateSummaryEffectiveness(data);
+            updateSequenceAlerts(data);
+            updateConcurrency(data);
 
             // Update event log
             updateEventLog(events);
@@ -405,21 +754,75 @@ def generate_dashboard():
                 'Updated: ' + new Date().toLocaleTimeString();
         }
 
-        function updateTokenChart(events) {
+        function updateTokenChart(events, dailySummaries, historicalTimeline) {
             const ctx = document.getElementById('tokenChart').getContext('2d');
 
-            // Group events by time (last 20 data points)
-            const buckets = {};
-            events.slice(-100).forEach(e => {
-                const time = e.ts ? e.ts.substring(11, 16) : 'unknown';
-                if (!buckets[time]) buckets[time] = { tokens: 0, calls: 0 };
-                buckets[time].tokens += e.tokens_est || 0;
-                buckets[time].calls += 1;
+            // Combine all data sources: daily_summaries (primary), historical_timeline, and events
+            const allDataPoints = {};
+
+            // 1. Add daily_summaries data (primary source - contains imported historical data)
+            if (dailySummaries && typeof dailySummaries === 'object') {
+                Object.entries(dailySummaries).forEach(([date, summary]) => {
+                    if (date && date !== 'unknown') {
+                        allDataPoints[date] = {
+                            tokens: summary.tokens || 0,
+                            calls: summary.calls || 0,
+                            source: 'daily_summaries'
+                        };
+                    }
+                });
+            }
+
+            // 2. Add historical timeline data (fallback for older format)
+            if (historicalTimeline && historicalTimeline.length > 0) {
+                historicalTimeline.forEach(h => {
+                    if (h.date && !allDataPoints[h.date]) {
+                        allDataPoints[h.date] = {
+                            tokens: h.tokens || 0,
+                            calls: h.events || 0,
+                            source: 'historical_timeline'
+                        };
+                    }
+                });
+            }
+
+            // 3. Add current session events grouped by date
+            const eventBuckets = {};
+            events.forEach(e => {
+                const date = e.ts ? e.ts.substring(0, 10) : (e.timestamp ? e.timestamp.substring(0, 10) : 'unknown');
+                if (date && date !== 'unknown') {
+                    if (!eventBuckets[date]) eventBuckets[date] = { tokens: 0, calls: 0 };
+                    eventBuckets[date].tokens += e.response_size || e.tokens_est || 0;
+                    eventBuckets[date].calls += 1;
+                }
             });
 
-            const labels = Object.keys(buckets).slice(-20);
-            const tokenData = labels.map(l => buckets[l].tokens);
-            const callData = labels.map(l => buckets[l].calls);
+            // Merge event data into allDataPoints (add to existing or create new)
+            Object.entries(eventBuckets).forEach(([date, data]) => {
+                if (allDataPoints[date]) {
+                    // If source is daily_summaries, don't double-count (it already includes today's events)
+                    // Only add if this is historical_timeline or missing
+                    if (allDataPoints[date].source !== 'daily_summaries') {
+                        allDataPoints[date].tokens += data.tokens;
+                        allDataPoints[date].calls += data.calls;
+                    }
+                } else {
+                    allDataPoints[date] = { tokens: data.tokens, calls: data.calls, source: 'events' };
+                }
+            });
+
+            // Convert to array, sort by date, and take based on filter (up to 30 days for 'all')
+            const pointsArray = Object.entries(allDataPoints)
+                .map(([date, data]) => ({ label: date, ...data }))
+                .sort((a, b) => a.label.localeCompare(b.label));
+            
+            // Use chart-specific range (tokenChartDays) - controlled by its own dropdown
+            const maxPoints = tokenChartDays === Infinity ? pointsArray.length : tokenChartDays;
+            const recentPoints = pointsArray.slice(-maxPoints);
+
+            const labels = recentPoints.map(p => p.label.substring(5)); // MM-DD format
+            const tokenData = recentPoints.map(p => p.tokens);
+            const callData = recentPoints.map(p => p.calls);
 
             if (tokenChart) {
                 tokenChart.data.labels = labels;
@@ -512,6 +915,96 @@ def generate_dashboard():
             }
         }
 
+        function updateSummaryEffectiveness(data) {
+            const agg = data.aggregates || {};
+            const sequences = agg.sequences || data.sequences || {};
+            const effectiveness = sequences.summary_effectiveness || {};
+            
+            // Drill-down rate
+            const drillDownRate = effectiveness.drill_down_rate || 0;
+            const drillDownEl = document.getElementById('drillDownRate');
+            drillDownEl.textContent = (drillDownRate * 100).toFixed(0) + '%';
+            drillDownEl.className = 'big-number ' + (drillDownRate > 0.5 ? 'warning' : 'success');
+            
+            // Full retrievals
+            const fullRetrievals = agg.full_retrievals || 0;
+            document.getElementById('fullRetrievals').textContent = fullRetrievals + ' full retrievals';
+        }
+
+        function updateSequenceAlerts(data) {
+            const el = document.getElementById('sequenceAlerts');
+            const agg = data.aggregates || {};
+            const sequences = agg.sequences || data.sequences || {};
+            const alerts = [];
+            
+            // Check for thrashing
+            if (sequences.thrashing && sequences.thrashing.detected) {
+                alerts.push({
+                    level: 'error',
+                    text: '⚠️ Thrashing detected: ' + (sequences.thrashing.pattern || 'repeated patterns')
+                });
+            }
+            
+            // Check for error cascades
+            if (sequences.error_cascades && sequences.error_cascades.count > 0) {
+                alerts.push({
+                    level: 'error',
+                    text: '🔴 Error cascade: ' + sequences.error_cascades.count + ' consecutive failures'
+                });
+            }
+            
+            // Check for retries
+            if (sequences.retries && sequences.retries.count > 0) {
+                alerts.push({
+                    level: 'warning',
+                    text: '🔄 Retries detected: ' + sequences.retries.count + ' error→retry sequences'
+                });
+            }
+            
+            // Check for repeats
+            if (sequences.repeats && sequences.repeats.count > 3) {
+                alerts.push({
+                    level: 'warning',
+                    text: '🔁 Repeated calls: ' + sequences.repeats.count + ' identical requests'
+                });
+            }
+            
+            // Drill-downs info
+            if (sequences.drill_downs && sequences.drill_downs.count > 0) {
+                alerts.push({
+                    level: 'ok',
+                    text: '📥 ' + sequences.drill_downs.count + ' drill-downs (summary→detail)'
+                });
+            }
+            
+            if (alerts.length === 0) {
+                el.innerHTML = '<div class="alert-item ok">✓ No problematic patterns detected</div>';
+            } else {
+                el.innerHTML = alerts.map(a => 
+                    '<div class="alert-item ' + a.level + '">' + a.text + '</div>'
+                ).join('');
+            }
+        }
+
+        function updateConcurrency(data) {
+            const agg = data.aggregates || {};
+            const conc = agg.concurrency || {};
+            
+            // Peak in-flight
+            const peakEl = document.getElementById('peakInFlight');
+            const peak = conc.peak_in_flight || 0;
+            peakEl.textContent = peak;
+            peakEl.className = 'big-number ' + (peak > 8 ? 'warning' : 'success');
+            
+            // Backpressure events
+            const backpressure = conc.backpressure_events || 0;
+            const bpEl = document.getElementById('backpressureEvents');
+            bpEl.textContent = backpressure + ' backpressure events';
+            if (backpressure > 0) {
+                bpEl.style.color = '#fbbf24';
+            }
+        }
+
         function updateRecommendations(data) {
             const el = document.getElementById('recommendations');
             const agg = data.aggregates || {};
@@ -521,7 +1014,7 @@ def generate_dashboard():
             const recs = [];
 
             // Check average tokens
-            const avgTokens = totals.calls ? totals.tokens_est / totals.calls : 0;
+            const avgTokens = totals.calls ? (totals.tokens || totals.tokens_est || 0) / totals.calls : 0;
             if (avgTokens > 5000) {
                 recs.push({
                     priority: 'high',
@@ -543,7 +1036,7 @@ def generate_dashboard():
             // Check subagent usage
             const subagents = agg.subagents || {};
             const subagentTokens = Object.values(subagents).reduce((sum, s) => sum + (s.tokens || 0), 0);
-            const subagentPct = totals.tokens_est ? (subagentTokens / totals.tokens_est) * 100 : 0;
+            const subagentPct = (totals.tokens || totals.tokens_est) ? (subagentTokens / (totals.tokens || totals.tokens_est)) * 100 : 0;
             if (subagentPct > 70) {
                 recs.push({
                     priority: 'medium',
@@ -555,8 +1048,8 @@ def generate_dashboard():
             // Check trend
             if (events.length >= 10) {
                 const half = Math.floor(events.length / 2);
-                const firstTokens = events.slice(0, half).reduce((sum, e) => sum + (e.tokens_est || 0), 0) / half;
-                const secondTokens = events.slice(half).reduce((sum, e) => sum + (e.tokens_est || 0), 0) / (events.length - half);
+                const firstTokens = events.slice(0, half).reduce((sum, e) => sum + (e.response_size || e.tokens_est || 0), 0) / half;
+                const secondTokens = events.slice(half).reduce((sum, e) => sum + (e.response_size || e.tokens_est || 0), 0) / (events.length - half);
                 const changePct = firstTokens ? ((secondTokens - firstTokens) / firstTokens * 100) : 0;
 
                 if (changePct < -10) {
@@ -600,16 +1093,24 @@ def generate_dashboard():
                     <span class="event-time">${e.ts ? e.ts.substring(11, 19) : '-'}</span>
                     <span class="event-tool">${e.tool || '-'}</span>
                     <span class="event-status ${e.status}">${e.status || '-'}</span>
-                    <span>${formatNumber(e.tokens_est || 0)} tokens</span>
+                    <span>${formatNumber(e.response_size || e.tokens_est || 0)} chars</span>
                     <span>${e.duration_ms || 0}ms</span>
                 </div>
             `).join('');
         }
 
         // Initial load and auto-refresh
+        let filtersPopulated = false;
+
         async function refresh() {
             const data = await fetchTelemetry();
-            updateDashboard(data);
+            allTelemetryData = data;
+
+            if (!filtersPopulated && data) {
+                populateFilterDropdowns(data);
+                filtersPopulated = true;
+            }
+            updateDashboard(filterData(data));
         }
 
         // Refresh every 2 seconds
@@ -652,8 +1153,9 @@ def serve_dashboard(port: int = 8765):
                 self.send_header("Content-type", "text/html")
                 self.end_headers()
 
-                # Modify dashboard to use HTTP endpoint
-                html = DASHBOARD_FILE.read_text() if DASHBOARD_FILE.exists() else generate_dashboard().read_text()
+                # Always regenerate dashboard to pick up code changes
+                generate_dashboard()
+                html = DASHBOARD_FILE.read_text()
                 html = html.replace(
                     "const TELEMETRY_PATH = '" + str(TELEMETRY_FILE) + "';",
                     "const TELEMETRY_PATH = '/telemetry';"
@@ -704,8 +1206,59 @@ def serve_dashboard(port: int = 8765):
                     data = json.dumps({"events": [], "aggregates": {}})
 
                 self.wfile.write(data.encode())
+
+            elif self.path == "/history":
+                # Serve historical metrics
+                self.send_response(200)
+                self.send_header("Content-type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+
+                if METRICS_HISTORY_FILE.exists():
+                    data = METRICS_HISTORY_FILE.read_text()
+                else:
+                    data = json.dumps({"snapshots": []})
+
+                self.wfile.write(data.encode())
             else:
-                self.send_error(404)
+                # Serve static files from STATE_DIR (charts, etc.)
+                # Strip leading slash and resolve path
+                rel_path = self.path.lstrip("/")
+                file_path = STATE_DIR / rel_path
+
+                # Security: ensure path is within STATE_DIR
+                try:
+                    file_path = file_path.resolve()
+                    if not str(file_path).startswith(str(STATE_DIR.resolve())):
+                        self.send_error(403, "Forbidden")
+                        return
+                except:
+                    self.send_error(400, "Bad request")
+                    return
+
+                if file_path.is_file():
+                    # Determine content type
+                    content_types = {
+                        ".html": "text/html",
+                        ".css": "text/css",
+                        ".js": "application/javascript",
+                        ".json": "application/json",
+                        ".png": "image/png",
+                        ".svg": "image/svg+xml",
+                    }
+                    ext = file_path.suffix.lower()
+                    content_type = content_types.get(ext, "application/octet-stream")
+
+                    self.send_response(200)
+                    self.send_header("Content-type", content_type)
+                    self.end_headers()
+
+                    if ext in [".png"]:
+                        self.wfile.write(file_path.read_bytes())
+                    else:
+                        self.wfile.write(file_path.read_text().encode())
+                else:
+                    self.send_error(404, f"File not found: {rel_path}")
 
     # Generate dashboard first
     generate_dashboard()
@@ -716,7 +1269,9 @@ def serve_dashboard(port: int = 8765):
         print(f"  MCP Router Dashboard Server")
         print(f"{'='*50}")
         print(f"\n  Dashboard: {url}")
+        print(f"  Charts:    {url}/charts/dashboard.html")
         print(f"  Telemetry: {url}/telemetry")
+        print(f"  History:   {url}/history")
         print(f"\n  Press Ctrl+C to stop")
         print(f"{'='*50}\n")
 
