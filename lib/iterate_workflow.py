@@ -22,8 +22,8 @@ _state_dir_override = os.environ.get("ITERATE_STATE_DIR")
 STATE_DIR = Path(_state_dir_override) if _state_dir_override else Path.home() / ".claude/plugins/agent-swarm/.state"
 LOG_FILE = STATE_DIR / "iterate.log"
 
-# Import state manager for centralized state handling
-import state_manager
+# Import workflow client for state management via MCP router
+import workflow_client
 
 # Map MCP tool base names to their native Claude equivalents
 # Used by is_tool_allowed() to normalize tool names for PHASE_TOOLS lookup
@@ -307,7 +307,7 @@ def start(
         "review_status": None,
         "pr_number": None,
     }
-    state_manager.set_state("orchestrator", state)
+    workflow_client.workflow_set_state("iterate", state)
     _log("info", "Workflow started", task=task[:50], phase=Phase.ORCHESTRATE.value,
          agent_id=effective_agent_id)
     return state
@@ -333,7 +333,7 @@ def _decompose_spec_content(content: str) -> None:
 
 def get_phase() -> Optional[Phase]:
     """Get current phase, or None if not active."""
-    state = state_manager.get_state("orchestrator") or {}
+    state = workflow_client.workflow_get_state("iterate") or {}
     if not state.get("active"):
         return None
     phase_str = state.get("phase")
@@ -347,7 +347,7 @@ def get_phase() -> Optional[Phase]:
 
 def is_active() -> bool:
     """Check if iterate workflow is active."""
-    state = state_manager.get_state("orchestrator") or {}
+    state = workflow_client.workflow_get_state("iterate") or {}
     return state.get("active", False)
 
 
@@ -362,7 +362,7 @@ def verify_active(expected_phase: Optional[Phase] = None) -> None:
     Raises:
         RuntimeError: If workflow is not active or not in expected phase.
     """
-    state = state_manager.get_state("orchestrator") or {}
+    state = workflow_client.workflow_get_state("iterate") or {}
     if not state:
         raise RuntimeError(
             "[WORKFLOW TERMINATED] No state found. "
@@ -397,7 +397,7 @@ def set_phase(phase: Phase) -> None:
     - From REVIEW: DONE or IMPLEMENT allowed
     - From INTAKE/DESIGN: flexible (discovery phases)
     """
-    state = state_manager.get_state("orchestrator") or {}
+    state = workflow_client.workflow_get_state("iterate") or {}
     current_phase = state.get("phase")
 
     # Define valid transitions for TDD loop phases
@@ -424,7 +424,7 @@ def set_phase(phase: Phase) -> None:
             )
 
     state["phase"] = phase.value
-    state_manager.set_state("orchestrator", state)
+    workflow_client.workflow_set_state("iterate", state)
 
 
 def advance_phase() -> Optional[Phase]:
@@ -443,7 +443,7 @@ def advance_phase() -> Optional[Phase]:
 
     Returns new phase or None if workflow ended.
     """
-    state = state_manager.get_state("orchestrator") or {}
+    state = workflow_client.workflow_get_state("iterate") or {}
     if not state.get("active"):
         exit_reason = state.get("exit_reason", "unknown")
         raise RuntimeError(
@@ -508,7 +508,7 @@ def advance_phase() -> Optional[Phase]:
             # Everything passes, move to review
             state["phase"] = Phase.REVIEW.value
             # Save state first, then auto-fetch PR comments
-            state_manager.set_state("orchestrator", state)
+            workflow_client.workflow_set_state("iterate", state)
             pr = state.get("pr_number")
             if pr:
                 _log("info", "Auto-fetching PR review comments", pr=pr)
@@ -556,7 +556,7 @@ def advance_phase() -> Optional[Phase]:
         # Reset review status for next round
         state["review_status"] = None
 
-    state_manager.set_state("orchestrator", state)
+    workflow_client.workflow_set_state("iterate", state)
     
     # Determine kickback reason for OUTPUT.5
     new_phase = state["phase"]
@@ -605,11 +605,11 @@ def set_test_results(tests_passed: bool, lint_passed: bool, coverage_ok: bool) -
         _log("warning", "LINT FAILED: Agents must run and pass lint (ruff check .) before reporting success",
              tests=tests_passed, lint=lint_passed, coverage=coverage_ok)
 
-    state = state_manager.get_state("orchestrator") or {}
+    state = workflow_client.workflow_get_state("iterate") or {}
     state["tests_passed"] = tests_passed
     state["lint_passed"] = lint_passed
     state["coverage_ok"] = coverage_ok
-    state_manager.set_state("orchestrator", state)
+    workflow_client.workflow_set_state("iterate", state)
     _log("info", "Test results recorded", tests=tests_passed, lint=lint_passed, coverage=coverage_ok)
 
 
@@ -621,9 +621,9 @@ def set_review_status(clean: bool) -> None:
     """
     if not is_active():
         raise RuntimeError("No active workflow - cannot record review status")
-    state = state_manager.get_state("orchestrator") or {}
+    state = workflow_client.workflow_get_state("iterate") or {}
     state["review_status"] = "clean" if clean else "issues"
-    state_manager.set_state("orchestrator", state)
+    workflow_client.workflow_set_state("iterate", state)
     _log("info", "Review status recorded", clean=clean)
 
 
@@ -772,7 +772,7 @@ def stop(reason: str = "user_stopped") -> None:
     Raises:
         RuntimeError: If exit conditions not met.
     """
-    state = state_manager.get_state("orchestrator") or {}
+    state = workflow_client.workflow_get_state("iterate") or {}
     task = state.get("task", "unknown")
 
     # Check exit conditions
@@ -807,7 +807,7 @@ def stop(reason: str = "user_stopped") -> None:
 
     state["active"] = False
     state["exit_reason"] = reason
-    state_manager.set_state("orchestrator", state)
+    workflow_client.workflow_set_state("iterate", state)
     _log("info", "Workflow stopped", reason=reason)
     _notify_workflow_end(reason, task)
 
@@ -888,7 +888,7 @@ def is_tool_allowed(tool_name: str, command: str | None = None) -> tuple[bool, s
             cmd_parts = cmd_lower.split()
             is_commit_or_push = any(part in ["commit", "push"] for part in cmd_parts)
             if is_commit_or_push:
-                state = state_manager.get_state("orchestrator") or {}
+                state = workflow_client.workflow_get_state("iterate") or {}
                 coverage_ok = state.get("coverage_ok")
                 if coverage_ok is None:
                     return False, "[BLOCKED] Run tests and record coverage before commit/push"
@@ -969,7 +969,7 @@ def print_status_banner(force: bool = False) -> None:
 
     Shows current phase, iteration progress, task, and queue status.
     """
-    state = state_manager.get_state("orchestrator") or {}
+    state = workflow_client.workflow_get_state("iterate") or {}
 
     if not state.get("active"):
         return
@@ -1007,7 +1007,7 @@ def print_status_banner(force: bool = False) -> None:
 
 def status() -> str:
     """Get human-readable status."""
-    state = state_manager.get_state("orchestrator") or {}
+    state = workflow_client.workflow_get_state("iterate") or {}
     if not state.get("active"):
         if state.get("exit_reason"):
             return f"[ITERATE] Completed: {state['exit_reason']}"
@@ -1058,11 +1058,11 @@ def add_requirement(requirement: str) -> None:
     if phase != Phase.INTAKE:
         raise ValueError("add_requirement only allowed in intake phase")
 
-    state = state_manager.get_state("orchestrator") or {}
+    state = workflow_client.workflow_get_state("iterate") or {}
     if "requirements" not in state:
         state["requirements"] = []
     state["requirements"].append(requirement)
-    state_manager.set_state("orchestrator", state)
+    workflow_client.workflow_set_state("iterate", state)
     _log("info", "Requirement added", requirement=requirement[:50])
 
 
@@ -1072,7 +1072,7 @@ def get_requirements() -> list[str]:
     Returns:
         List of requirement strings.
     """
-    state = state_manager.get_state("orchestrator") or {}
+    state = workflow_client.workflow_get_state("iterate") or {}
     return state.get("requirements", [])
 
 
@@ -1087,9 +1087,9 @@ def set_spec_file(path: str) -> None:
     Args:
         path: Absolute or relative path to the spec markdown file.
     """
-    state = state_manager.get_state("orchestrator") or {}
+    state = workflow_client.workflow_get_state("iterate") or {}
     state["spec_file"] = path
-    state_manager.set_state("orchestrator", state)
+    workflow_client.workflow_set_state("iterate", state)
     _log("info", "Spec file set", path=path)
 
 
@@ -1108,7 +1108,7 @@ def decompose_spec_to_queue() -> list[dict]:
     if phase != Phase.DESIGN:
         raise ValueError("decompose_spec_to_queue only allowed in design phase")
 
-    state = state_manager.get_state("orchestrator") or {}
+    state = workflow_client.workflow_get_state("iterate") or {}
     spec_file = state.get("spec_file")
     if not spec_file:
         raise ValueError("No spec file set. Call set_spec_file() first.")
@@ -1126,7 +1126,7 @@ def decompose_spec_to_queue() -> list[dict]:
 
     # Store task count in state
     state["decomposed_task_count"] = len(tasks)
-    state_manager.set_state("orchestrator", state)
+    workflow_client.workflow_set_state("iterate", state)
 
     _log("info", "Spec decomposed", task_count=len(tasks), spec_file=spec_file)
     return tasks
@@ -1140,7 +1140,7 @@ def decompose_spec_to_queue() -> list[dict]:
 def _get_workflow_queue():
     """Get or create WorkflowQueue instance."""
     from workflow_queue import WorkflowQueue
-    state = state_manager.get_state("orchestrator") or {}
+    state = workflow_client.workflow_get_state("iterate") or {}
     pr_id = state.get("pr_id", "current")
     return WorkflowQueue(pr_id=pr_id)
 
@@ -1217,9 +1217,9 @@ def set_pr_number(pr_number: int) -> None:
     if not is_active():
         raise RuntimeError("Cannot set PR number: no active workflow")
 
-    state = state_manager.get_state("orchestrator") or {}
+    state = workflow_client.workflow_get_state("iterate") or {}
     state["pr_number"] = pr_number
-    state_manager.set_state("orchestrator", state)
+    workflow_client.workflow_set_state("iterate", state)
     _log("info", "PR number set", pr_number=pr_number)
 
 
@@ -1229,7 +1229,7 @@ def get_pr_number() -> Optional[int]:
     Returns:
         The PR number if set, None otherwise.
     """
-    state = state_manager.get_state("orchestrator") or {}
+    state = workflow_client.workflow_get_state("iterate") or {}
     return state.get("pr_number")
 
 
@@ -1452,7 +1452,7 @@ if __name__ == "__main__":
         if new_phase:
             print(f"Advanced to: {new_phase.value}")
         else:
-            state = state_manager.get_state("orchestrator") or {}
+            state = workflow_client.workflow_get_state("iterate") or {}
             print(f"Workflow ended: {state.get('exit_reason', 'done')}")
     elif cmd == "test":
         if len(sys.argv) < 5:

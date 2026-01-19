@@ -13,14 +13,14 @@ sys.path.insert(0, str(lib_dir))
 
 import orchestrate
 import iterate_workflow
-import state_manager
+import workflow_client
 
 
 @pytest.fixture(autouse=True)
 def setup_teardown():
     """Clear state before and after each test."""
     # Clear orchestrator state
-    state_manager.delete_state("orchestrator")
+    workflow_client.workflow_stop("iterate")
     # Clear any orchestrate state
     try:
         orchestrate.stop_orchestrate("test_cleanup")
@@ -28,7 +28,7 @@ def setup_teardown():
         pass
     yield
     # Cleanup after test
-    state_manager.delete_state("orchestrator")
+    workflow_client.workflow_stop("iterate")
     try:
         orchestrate.stop_orchestrate("test_cleanup")
     except:
@@ -241,12 +241,12 @@ class TestReviewPhaseAutoFetch:
         iterate_workflow.set_phase(iterate_workflow.Phase.TEST)
 
         # Set test results to pass and PR number
-        state = state_manager.get_state("orchestrator")
+        state = workflow_client.workflow_get_state("iterate")
         state["tests_passed"] = True
         state["lint_passed"] = True
         state["coverage_ok"] = True
         state["pr_number"] = 123
-        state_manager.set_state("orchestrator", state)
+        workflow_client.workflow_set_state("iterate", state)
 
         # Advance to REVIEW phase
         iterate_workflow.advance_phase()
@@ -261,12 +261,12 @@ class TestReviewPhaseAutoFetch:
         iterate_workflow.set_phase(iterate_workflow.Phase.TEST)
 
         # Set test results to pass but NO PR number
-        state = state_manager.get_state("orchestrator")
+        state = workflow_client.workflow_get_state("iterate")
         state["tests_passed"] = True
         state["lint_passed"] = True
         state["coverage_ok"] = True
         # pr_number not set
-        state_manager.set_state("orchestrator", state)
+        workflow_client.workflow_set_state("iterate", state)
 
         # Advance to REVIEW phase - should not raise error
         phase = iterate_workflow.advance_phase()
@@ -289,9 +289,9 @@ class TestEndToEndPolling:
 
         # Setup iterate workflow with PR number
         iterate_workflow.start("test task")
-        state = state_manager.get_state("orchestrator")
+        state = workflow_client.workflow_get_state("iterate")
         state["pr_number"] = 123
-        state_manager.set_state("orchestrator", state)
+        workflow_client.workflow_set_state("iterate", state)
 
         # Simulate push (sets push_pending=True)
         orch_state = orchestrate._load_state()

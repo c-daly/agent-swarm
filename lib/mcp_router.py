@@ -23,7 +23,8 @@ import sys
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from threading import Lock
+import socket
+from threading import Lock, Thread
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -396,6 +397,13 @@ class MCPRouter:
         # Telemetry collector for real-time metrics
         self.telemetry: Optional[TelemetryCollector] = TelemetryCollector() if enable_telemetry else None
 
+        # Socket listener for external clients (hooks, CLIs)
+        self._socket_server: Optional[socket.socket] = None
+        self._socket_thread: Optional[Thread] = None
+        self._socket_port: int = 0
+        self._socket_running: bool = False
+        self._port_file = Path.home() / ".claude" / "router.port"
+
     def _init_summarizer(
         self,
         provider: str,
@@ -522,7 +530,10 @@ class MCPRouter:
             }
 
     def shutdown(self) -> None:
-        """Shutdown all backend connections."""
+        """Shutdown all backend connections and socket listener."""
+        # Stop socket listener first
+        self.stop_socket_listener()
+
         with self._lock:
             for _, proc in list(self._connections.items()):
                 try:
@@ -531,6 +542,141 @@ class MCPRouter:
                 except Exception:
                     proc.kill()
             self._connections.clear()
+
+    # ─────────────────────────────────────────────────────────────
+    # Socket Listener for External Clients
+    # ─────────────────────────────────────────────────────────────
+
+    def start_socket_listener(self, port: int = 0) -> int:
+        """Start socket listener for external clients (hooks, CLIs).
+
+        Args:
+            port: Port to listen on (0 for auto-assign).
+
+        Returns:
+            The actual port being used.
+        """
+        self._socket_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._socket_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._socket_server.bind(("127.0.0.1", port))
+        self._socket_server.listen(5)
+        self._socket_port = self._socket_server.getsockname()[1]
+        self._socket_running = True
+
+        # Write port to file for client discovery
+        self._port_file.parent.mkdir(parents=True, exist_ok=True)
+        self._port_file.write_text(str(self._socket_port))
+
+        # Start accept loop in background thread
+        self._socket_thread = Thread(target=self._socket_accept_loop, daemon=True)
+        self._socket_thread.start()
+
+        return self._socket_port
+
+    def stop_socket_listener(self) -> None:
+        """Stop socket listener and clean up port file."""
+        self._socket_running = False
+        if self._socket_server:
+            try:
+                self._socket_server.close()
+            except Exception:
+                pass
+        if self._port_file.exists():
+            try:
+                self._port_file.unlink()
+            except Exception:
+                pass
+
+    def _socket_accept_loop(self) -> None:
+        """Accept connections and spawn handler threads."""
+        while self._socket_running:
+            try:
+                self._socket_server.settimeout(1.0)  # Check running flag periodically
+                try:
+                    client, _ = self._socket_server.accept()
+                    Thread(target=self._handle_socket_client, args=(client,), daemon=True).start()
+                except socket.timeout:
+                    continue
+            except Exception:
+                if self._socket_running:
+                    continue
+                break
+
+    def _handle_socket_client(self, client: socket.socket) -> None:
+        """Handle a single client connection.
+
+        Reads JSON-RPC request, routes it, sends response.
+        Connection is closed after one request-response cycle.
+        """
+        try:
+            # Read request (newline-delimited JSON)
+            data = b""
+            while b"\n" not in data:
+                chunk = client.recv(4096)
+                if not chunk:
+                    return
+                data += chunk
+
+            request = json.loads(data.decode().strip())
+            request_id = request.get("id")
+            method = request.get("method", "")
+            params = request.get("params", {})
+
+            # Route the request (same logic as stdio)
+            if method == "tools/call":
+                tool_name = params.get("name", "")
+                args = params.get("arguments", {})
+
+                if "__" in tool_name:
+                    prefix, actual_tool = tool_name.split("__", 1)
+                    # Find backend by prefix
+                    destination = None
+                    for server in self.list_servers():
+                        if server.get("tool_prefix") == prefix or server["name"] == prefix:
+                            destination = server["name"]
+                            break
+
+                    if not destination:
+                        result = {"content": [{"type": "text", "text": f"Error: Unknown backend prefix: {prefix}"}], "isError": True}
+                    else:
+                        response = self.route(destination, actual_tool, args)
+                        backend_result = response.full
+                        if isinstance(backend_result, dict) and "error" in backend_result:
+                            result = {"content": [{"type": "text", "text": f"Error: {backend_result['error']}"}], "isError": True}
+                        else:
+                            if isinstance(backend_result, dict) and "result" in backend_result:
+                                full_content = backend_result["result"]
+                            else:
+                                full_content = backend_result
+                            result = full_content
+                else:
+                    result = {"content": [{"type": "text", "text": "Tool name must be prefixed: prefix__tool"}], "isError": True}
+            else:
+                result = {"error": f"Unsupported method: {method}"}
+
+            # Send response
+            response = {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": result
+            }
+            client.sendall(json.dumps(response).encode() + b"\n")
+
+        except Exception as e:
+            try:
+                error_response = {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32603, "message": str(e)}
+                }
+                client.sendall(json.dumps(error_response).encode() + b"\n")
+            except Exception:
+                pass
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
 
     def list_servers(self) -> list[dict]:
         """List all registered servers.
@@ -1263,4 +1409,11 @@ if __name__ == "__main__":
     if default_server:
         router.register_server("default", default_server.split(), {})
 
-    start_stdio_server(router)
+    # Start socket listener for external clients (hooks, CLIs)
+    port = router.start_socket_listener()
+    sys.stderr.write(f"Router socket listener started on port {port}\n")
+
+    try:
+        start_stdio_server(router)
+    finally:
+        router.shutdown()
