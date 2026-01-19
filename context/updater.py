@@ -6,6 +6,7 @@ Provides safe interface for agents to propose context updates.
 Separates stable (manual-only) from dynamic (agent-updateable) sections.
 """
 
+import fcntl
 import json
 from pathlib import Path
 from datetime import datetime
@@ -97,20 +98,24 @@ def propose_context_update(
     # Find proposals file
     proposals_file = find_proposals_file(scope_path)
 
-    # Load existing proposals
-    proposals = []
-    if proposals_file.exists():
+    # Load existing proposals and save with file locking
+    proposals_file.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(proposals_file, 'a+') as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        f.seek(0)
+        content = f.read()
         try:
-            proposals = json.loads(proposals_file.read_text())
+            proposals = json.loads(content) if content else []
         except json.JSONDecodeError:
             proposals = []
 
-    # Add new proposal
-    proposals.append(proposal)
+        proposals.append(proposal)
 
-    # Save
-    proposals_file.parent.mkdir(parents=True, exist_ok=True)
-    proposals_file.write_text(json.dumps(proposals, indent=2))
+        f.seek(0)
+        f.truncate()
+        f.write(json.dumps(proposals, indent=2))
+        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
     return {
         "success": True,
@@ -185,14 +190,14 @@ def apply_proposal(proposal_id: str, scope_path: Optional[Path] = None) -> dict:
             in_section = False
             appended = False
 
-            for i, line in enumerate(lines):
+            for line in lines:
                 new_lines.append(line)
-                if line.strip() == section_header:
+                if line.strip() == section_header.strip():
                     in_section = True
-                elif in_section and line.startswith("## "):
+                elif in_section and line.strip().startswith("## "):
                     # Next section, insert before it
-                    new_lines.insert(-1, proposal["content"])
                     new_lines.insert(-1, "")
+                    new_lines.insert(-1, proposal["content"])
                     appended = True
                     in_section = False
 
