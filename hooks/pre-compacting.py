@@ -6,6 +6,7 @@ Automatically generates a handoff document before conversation compacting
 to preserve important context, decisions, and progress.
 """
 
+import fcntl
 import json
 import sys
 from datetime import datetime
@@ -21,8 +22,39 @@ except ImportError:
     def log_debug(msg, **kw): pass
     class ConfigError(Exception): pass
     class StateError(Exception): pass
-HANDOFF_FILE = Path(__file__).parent.parent / "HANDOFF.md"
+
 STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
+
+
+def detect_handoff_scope(cwd: Path) -> Path:
+    """
+    Detect appropriate handoff scope and return path.
+
+    Priority:
+    1. Git repo root (project-scoped) → <repo>/.claude/HANDOFF.md
+    2. Current working directory (directory-scoped) → <cwd>/.context/HANDOFF.md
+    3. Global scratch (fallback) → ~/.claude/docs/scratch/HANDOFF.md
+    """
+    # Check for git root by walking up
+    current = cwd.resolve()
+    while current != current.parent:
+        if (current / ".git").exists():
+            # Found git repo
+            handoff_dir = current / ".claude"
+            handoff_dir.mkdir(exist_ok=True)
+            return handoff_dir / "HANDOFF.md"
+        current = current.parent
+
+    # No git repo, use current directory
+    if cwd.exists() and cwd.is_dir():
+        handoff_dir = cwd / ".context"
+        handoff_dir.mkdir(exist_ok=True)
+        return handoff_dir / "HANDOFF.md"
+
+    # Fallback to global
+    global_dir = Path.home() / ".claude/docs/scratch"
+    global_dir.mkdir(parents=True, exist_ok=True)
+    return global_dir / "HANDOFF.md"
 
 def extract_session_info():
     """Extract key information from the current session."""
@@ -196,6 +228,12 @@ def main():
     except json.JSONDecodeError:
         input_data = {}  # Empty input is acceptable
 
+    # Get working directory for scoped handoffs
+    cwd = Path(input_data.get("cwd", ".")).resolve()
+
+    # Detect appropriate handoff scope
+    handoff_file = detect_handoff_scope(cwd)
+
     # Save persistent flags before compaction
     flags_saved = save_compaction_state()
 
@@ -205,10 +243,14 @@ def main():
     # Generate handoff
     handoff_content = generate_handoff(session_info)
 
-    # Write handoff file
+    # Write handoff file with locking to prevent race conditions
     try:
-        HANDOFF_FILE.write_text(handoff_content)
-        message = f"✓ Handoff auto-generated: {HANDOFF_FILE.name}"
+        handoff_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(handoff_file, 'w') as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            f.write(handoff_content)
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        message = f"✓ Handoff auto-generated: {handoff_file}"
     except Exception as e:
         message = f"⚠️ Failed to write handoff: {e}"
 

@@ -125,28 +125,49 @@ def run_inventory():
     except Exception:
         return None
 
-def search_episodic_memory(query_terms):
-    """Search episodic memory for relevant past conversations."""
+def list_serena_memories():
+    """List available Serena memories for the current project."""
     try:
-        # Use the episodic-memory plugin search tool
-        # Note: This would need to integrate with the actual MCP tool
-        # For now, we'll provide a helpful message
+        memories_dir = Path.home() / ".claude/plugins/agent-swarm/.serena/memories"
+        if not memories_dir.exists():
+            return []
+        return [f.stem for f in memories_dir.glob("*.md")]
+    except Exception:
+        return []
 
-        results = {
-            "found": False,
-            "message": f"💭 Episodic Memory Search:\n"
-                      f"   To search past conversations, use:\n"
-                      f"   Skill: episodic-memory:search-conversations\n"
-                      f"   OR: mcp__plugin_episodic-memory_episodic-memory__search(query='{query_terms}', limit=5)\n"
-        }
 
-        return results
+def suggest_memory_options(query_terms):
+    """Suggest available memory systems."""
+    serena_memories = list_serena_memories()
 
-    except Exception as e:
-        return {
-            "found": False,
-            "error": str(e)
-        }
+    messages = []
+
+    # Serena memories (project-specific)
+    if serena_memories:
+        memory_list = ", ".join(serena_memories[:5])
+        messages.append(
+            f"📚 Serena Memories: {memory_list}\n"
+            f"   mcp__router__serena__read_memory(memory_file_name='<name>')"
+        )
+
+    # Knowledge graph (structured facts/relations)
+    messages.append(
+        "🧠 Knowledge Graph:\n"
+        "   mcp__memory__search_nodes(query='<topic>')\n"
+        "   mcp__memory__read_graph() for full graph"
+    )
+
+    # Episodic memory (conversation history)
+    messages.append(
+        f"💭 Episodic Memory:\n"
+        f"   mcp__plugin_episodic-memory_episodic-memory__search(query='{query_terms}')"
+    )
+
+    return {
+        "found": bool(serena_memories),
+        "message": "\n\n".join(messages),
+        "serena_memories": serena_memories
+    }
 
 def main():
     """Session start hook entry point."""
@@ -178,8 +199,8 @@ def main():
         if words:
             query_terms = " ".join(words)
 
-    # Search episodic memory
-    results = search_episodic_memory(query_terms)
+    # Suggest memory options
+    results = suggest_memory_options(query_terms)
 
     # Build output message
     messages = []
