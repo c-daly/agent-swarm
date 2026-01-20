@@ -29,4 +29,8 @@ if __name__ == "__main__":
                 tool_prefix=config.get("tool_prefix", ""),
             )
 
+    # Start socket listener for hooks to call workflow tools
+    port = router.start_socket_listener()
+    sys.stderr.write(f"Router socket listener on port {port}\n")
+
     start_stdio_server(router)

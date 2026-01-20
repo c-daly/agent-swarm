@@ -15,6 +15,10 @@ import sys
 import subprocess
 from pathlib import Path
 
+# Add lib to path for workflow_client
+lib_dir = Path(__file__).parent.parent / "lib"
+sys.path.insert(0, str(lib_dir))
+
 try:
     from hook_logging import log_error, log_warning, log_info, log_debug, ConfigError, StateError
 except ImportError:
@@ -25,15 +29,21 @@ except ImportError:
     def log_debug(msg, **kw): pass
     class ConfigError(Exception): pass
     class StateError(Exception): pass
+
+try:
+    from workflow_client import workflow_get_state, workflow_set_state
+except ImportError:
+    # Fallback if workflow_client not available
+    def workflow_get_state(workflow_id: str) -> dict | None:
+        return None
+    def workflow_set_state(workflow_id: str, state: dict) -> dict | None:
+        return None
+
+
 def load_iterate_state() -> dict:
-    """Load iterate workflow state (orchestrator's phase)."""
-    iterate_file = Path.home() / ".claude/plugins/agent-swarm/.state/iterate.json"
-    if iterate_file.exists():
-        try:
-            return json.loads(iterate_file.read_text())
-        except (json.JSONDecodeError, IOError):
-            pass
-    return {}
+    """Load iterate workflow state from state server."""
+    state = workflow_get_state("iterate")
+    return state if state else {}
 
 
 def reset_enforcement_counters(agent_id: str | None = None):
@@ -92,11 +102,8 @@ def reset_enforcement_counters(agent_id: str | None = None):
             if phase:
                 state["phase"] = phase
 
-        # DISABLED: No longer writing session state to file
-
-
-        # with open(state_file, 'w') as f:
-            json.dump(state, f, indent=2)
+        # Write session state to state server
+        workflow_set_state("session", state)
 
         return True
     except Exception as e:
