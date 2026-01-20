@@ -55,19 +55,19 @@ def load_telemetry():
         
         # Convert v2 all_time.calls.by_tool to v1 format
         v1_by_tool = {}
-        for tool, data in all_time.get("calls", {}).get("by_tool", {}).items():
+        for tool, count in all_time.get("calls", {}).get("by_tool", {}).items():
             v1_by_tool[tool] = {
-                "count": data.get("count", 0),
-                "errors": data.get("errors", 0),
+                "count": count,
+                "errors": 0,  # v2 doesn't track errors per tool
                 "tokens": 0,  # v2 tracks tokens at day level
                 "duration_ms": 0
             }
         
         v1_by_backend = {}
-        for backend, data in all_time.get("calls", {}).get("by_backend", {}).items():
+        for backend, count in all_time.get("calls", {}).get("by_backend", {}).items():
             v1_by_backend[backend] = {
-                "count": data.get("count", 0),
-                "errors": data.get("errors", 0),
+                "count": count,
+                "errors": 0,  # v2 doesn't track errors per backend
                 "tokens": 0,
                 "duration_ms": 0
             }
