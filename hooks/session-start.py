@@ -31,12 +31,14 @@ except ImportError:
     class StateError(Exception): pass
 
 try:
-    from workflow_client import workflow_get_state, workflow_set_state
+    from workflow_client import workflow_get_state, workflow_set_state, agent_set_state
 except ImportError:
     # Fallback if workflow_client not available
     def workflow_get_state(workflow_id: str) -> dict | None:
         return None
     def workflow_set_state(workflow_id: str, state: dict) -> dict | None:
+        return None
+    def agent_set_state(agent_id: str, state: dict) -> dict | None:
         return None
 
 
@@ -95,14 +97,16 @@ def reset_enforcement_counters(agent_id: str | None = None):
         # Restore flags preserved from compaction
         state.update(compaction_flags)
 
-        # If subagent, inherit phase from orchestrator
+        # If subagent, inherit phase from orchestrator and set per-agent state
         if agent_id:
             iterate_state = load_iterate_state()
             phase = iterate_state.get("phase")
             if phase:
                 state["phase"] = phase
+            # Store state keyed by agent_id for subagent-specific queries
+            agent_set_state(agent_id, state)
 
-        # Write session state to state server
+        # Write session state to state server (global session for main agent)
         workflow_set_state("session", state)
 
         return True

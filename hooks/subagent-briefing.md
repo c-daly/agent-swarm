@@ -6,6 +6,21 @@
 
 This environment has enforcement hooks. When blocked:
 
+### Shell Commands (CRITICAL)
+The `Bash` tool does NOT exist in this environment. You MUST use:
+```
+mcp__router__native__bash
+```
+
+**Example usage:**
+```
+mcp__router__native__bash with parameters:
+  command: "python3 /tmp/my_script.py"
+  cwd: "/home/fearsidhe/.claude/plugins/agent-swarm"  (optional)
+```
+
+If you try to use `Bash`, it will fail. Always use the full tool name `mcp__router__native__bash`.
+
 ### Git/GitHub Commands
 Use the wrapper script:
 ```bash

@@ -299,6 +299,24 @@ class TelemetryCollector:
             # Compute efficiency metrics from summarization data
             tokens_saved = summ.get("tokens_saved_est", 0)
             offered = summ.get("offered", 0)
+            
+            # Get socket events if tracked
+            socket_events = getattr(self, '_socket_events', [])
+            socket_summary = {}
+            if socket_events:
+                # Count by status
+                by_status = {}
+                total_duration = 0
+                for evt in socket_events:
+                    status = evt.get("status", "unknown")
+                    by_status[status] = by_status.get(status, 0) + 1
+                    total_duration += evt.get("duration_ms", 0)
+                socket_summary = {
+                    "total": len(socket_events),
+                    "by_status": by_status,
+                    "avg_duration_ms": total_duration // len(socket_events) if socket_events else 0,
+                    "recent": socket_events[-5:]  # Last 5 socket events
+                }
 
             return {
                 "session_id": self._session_id,
@@ -314,6 +332,7 @@ class TelemetryCollector:
                         "tokens_saved_est": tokens_saved,
                     }
                 },
+                "socket": socket_summary,
                 "recent_events": self._events[-10:]  # Last 10
             }
 
@@ -367,6 +386,9 @@ class MCPRouter:
         self._connections: dict[str, subprocess.Popen] = {}  # Live backend processes
         self._backend_locks: dict[str, Lock] = {}  # Per-backend locks
 
+        # Shadow cache for workflow state (survives backend respawns)
+        self._workflow_state_cache: dict[str, dict] = {}
+
         # Initialize summarizer (decide provider once at startup)
         self._llm_call: Callable[[str], str] = self._init_summarizer(summarizer, summarizer_model)
 
@@ -383,6 +405,57 @@ class MCPRouter:
         self._socket_port: int = 0
         self._socket_running: bool = False
         self._port_file = Path(__file__).parent.parent / ".state" / "router.port"
+
+    def _cache_workflow_state(self, tool_name: str, args: dict, response: dict) -> None:
+        """Cache workflow state from set/update/start operations."""
+        if tool_name == "workflow_set_state":
+            workflow_id = args.get("workflow_id")
+            state = args.get("state")
+            if workflow_id and state:
+                self._workflow_state_cache[workflow_id] = state
+        elif tool_name == "workflow_start":
+            workflow_id = args.get("workflow_id")
+            state = args.get("initial_state")
+            if workflow_id and state:
+                self._workflow_state_cache[workflow_id] = state
+        elif tool_name == "workflow_stop":
+            workflow_id = args.get("workflow_id")
+            if workflow_id:
+                self._workflow_state_cache.pop(workflow_id, None)
+
+    def _restore_workflow_state(self, server_name: str) -> None:
+        """Restore cached workflow state to a freshly spawned backend."""
+        if server_name != "workflow" or not self._workflow_state_cache:
+            return
+        # Restore each cached workflow
+        server = self._servers.get(server_name)
+        if not server:
+            return
+        for workflow_id, state in self._workflow_state_cache.items():
+            try:
+                self._forward_to_server(server, "workflow_set_state", {
+                    "workflow_id": workflow_id,
+                    "state": state
+                }, _is_restore=True)
+            except Exception:
+                pass  # Best effort  # Best effort
+
+    def clear_workflow_cache(self, workflow_id: str | None = None) -> dict:
+        """Clear cached workflow state.
+        
+        Args:
+            workflow_id: Specific workflow to clear, or None for all.
+            
+        Returns:
+            Dict with cleared workflow IDs.
+        """
+        if workflow_id:
+            existed = self._workflow_state_cache.pop(workflow_id, None) is not None
+            return {"cleared": [workflow_id] if existed else [], "all": False}
+        else:
+            cleared = list(self._workflow_state_cache.keys())
+            self._workflow_state_cache.clear()
+            return {"cleared": cleared, "all": True}
 
     def _init_summarizer(
         self,
@@ -569,12 +642,29 @@ class MCPRouter:
 
     def _socket_accept_loop(self) -> None:
         """Accept connections and spawn handler threads."""
+        self._active_socket_connections = 0
+        self._total_socket_accepts = 0
+        
         while self._socket_running:
             try:
                 self._socket_server.settimeout(1.0)  # Check running flag periodically
                 try:
-                    client, _ = self._socket_server.accept()
-                    Thread(target=self._handle_socket_client, args=(client,), daemon=True).start()
+                    client, addr = self._socket_server.accept()
+                    self._total_socket_accepts += 1
+                    self._active_socket_connections += 1
+                    
+                    # Wrap handler to track connection lifecycle
+                    def handle_and_track(c, conn_id):
+                        try:
+                            self._handle_socket_client(c)
+                        finally:
+                            self._active_socket_connections -= 1
+                    
+                    Thread(
+                        target=handle_and_track,
+                        args=(client, self._total_socket_accepts),
+                        daemon=True
+                    ).start()
                 except socket.timeout:
                     continue
             except Exception:
@@ -588,7 +678,14 @@ class MCPRouter:
         Reads JSON-RPC request, routes it, sends response.
         Connection is closed after one request-response cycle.
         """
+        import time
+        start_time = time.time()
+        tool_name = "unknown"
+        
         try:
+            # Set timeout on socket operations
+            client.settimeout(30.0)  # 30 second timeout for reads
+            
             # Read request (newline-delimited JSON)
             data = b""
             while b"\n" not in data:
@@ -641,8 +738,29 @@ class MCPRouter:
                 "result": result
             }
             client.sendall(json.dumps(response).encode() + b"\n")
+            
+            # Track successful socket request in telemetry
+            duration_ms = int((time.time() - start_time) * 1000)
+            if self.telemetry:
+                self._track_socket_event("success", tool_name, duration_ms)
 
+        except socket.timeout:
+            duration_ms = int((time.time() - start_time) * 1000)
+            if self.telemetry:
+                self._track_socket_event("timeout", tool_name, duration_ms)
+            try:
+                error_response = {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32603, "message": "Socket timeout"}
+                }
+                client.sendall(json.dumps(error_response).encode() + b"\n")
+            except Exception:
+                pass
         except Exception as e:
+            duration_ms = int((time.time() - start_time) * 1000)
+            if self.telemetry:
+                self._track_socket_event("error", tool_name, duration_ms, str(e)[:100])
             try:
                 error_response = {
                     "jsonrpc": "2.0",
@@ -657,6 +775,69 @@ class MCPRouter:
                 client.close()
             except Exception:
                 pass
+
+    def _track_socket_event(
+        self,
+        status: str,
+        tool_name: str,
+        duration_ms: int,
+        error_msg: str = ""
+    ) -> None:
+        """Track socket connection event in telemetry.
+        
+        Args:
+            status: "success", "timeout", or "error"
+            tool_name: Tool that was called
+            duration_ms: Request duration in milliseconds
+            error_msg: Error message if any
+        """
+        if not self.telemetry:
+            return
+            
+        # Add to telemetry data under socket_events
+        with self.telemetry._lock:
+            if not hasattr(self.telemetry, '_socket_events'):
+                self.telemetry._socket_events = []
+            
+            event = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "status": status,
+                "tool": tool_name,
+                "duration_ms": duration_ms,
+                "error_msg": error_msg
+            }
+            self.telemetry._socket_events.append(event)
+            
+            # Keep last 100 events
+            if len(self.telemetry._socket_events) > 100:
+                self.telemetry._socket_events = self.telemetry._socket_events[-100:]
+
+    def get_socket_stats(self) -> dict:
+        """Get current socket connection statistics.
+        
+        Returns:
+            Dict with active connections, total accepts, and event summary
+        """
+        active = getattr(self, '_active_socket_connections', 0)
+        total = getattr(self, '_total_socket_accepts', 0)
+        
+        socket_events = []
+        if self.telemetry:
+            socket_events = getattr(self.telemetry, '_socket_events', [])
+        
+        # Count by status
+        by_status = {}
+        for evt in socket_events:
+            status = evt.get("status", "unknown")
+            by_status[status] = by_status.get(status, 0) + 1
+        
+        return {
+            "active_connections": active,
+            "total_accepts": total,
+            "events_tracked": len(socket_events),
+            "by_status": by_status,
+            "recent_events": socket_events[-10:] if socket_events else []
+        }
 
     def list_servers(self) -> list[dict]:
         """List all registered servers.
@@ -864,7 +1045,8 @@ class MCPRouter:
         self,
         server: ServerConfig,
         tool_name: str,
-        args: dict
+        args: dict,
+        _is_restore: bool = False
     ) -> dict:
         """Forward request to target MCP server.
 
@@ -875,6 +1057,7 @@ class MCPRouter:
             server: Target server config
             tool_name: Tool to invoke
             args: Tool arguments
+            _is_restore: Internal flag to prevent infinite recursion during state restore
 
         Returns:
             Response dict from target server
@@ -883,7 +1066,13 @@ class MCPRouter:
 
         with backend_lock:
             try:
+                # Check if this is a fresh connection (for state restoration)
+                is_new_connection = server.name not in self._connections
                 proc = self._get_connection(server)
+
+                # Restore cached state if this is a fresh workflow backend
+                if is_new_connection and server.name == "workflow" and not _is_restore:
+                    self._restore_workflow_state(server.name)
 
                 # Build request
                 request_id = hash((tool_name, json.dumps(args, sort_keys=True))) & 0xFFFFFFFF
@@ -919,7 +1108,13 @@ class MCPRouter:
                     self._connections.pop(server.name, None)
                     return self._forward_to_server(server, tool_name, args)
 
-                return json.loads(response_line.strip())
+                response = json.loads(response_line.strip())
+
+                # Cache workflow state on successful operations
+                if server.name == "workflow" and "error" not in response and not _is_restore:
+                    self._cache_workflow_state(tool_name, args, response)
+
+                return response
 
             except json.JSONDecodeError as e:
                 self._connections.pop(server.name, None)
@@ -1250,6 +1445,16 @@ def start_stdio_server(router: MCPRouter):
                 "description": "Get analysis of token usage trends and optimization effectiveness",
                 "inputSchema": {"type": "object", "properties": {}},
             },
+            {
+                "name": "router__clear_workflow_cache",
+                "description": "Clear cached workflow state. Pass workflow_id to clear specific workflow, or omit for all.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "workflow_id": {"type": "string", "description": "Workflow ID to clear (optional, omit for all)"}
+                    }
+                },
+            },
         ]
         for server in router.list_servers():
             name = server["name"]
@@ -1308,6 +1513,7 @@ def start_stdio_server(router: MCPRouter):
                 elif tool_name == "router__telemetry":
                     if router.telemetry:
                         summary = router.telemetry.get_summary()
+                        summary["socket_stats"] = router.get_socket_stats()
                         result = {"content": [{"type": "text", "text": json.dumps(summary, indent=2)}]}
                     else:
                         result = {"content": [{"type": "text", "text": "Telemetry not enabled"}]}
@@ -1318,6 +1524,11 @@ def start_stdio_server(router: MCPRouter):
                         result = {"content": [{"type": "text", "text": json.dumps(analysis, indent=2)}]}
                     else:
                         result = {"content": [{"type": "text", "text": "Telemetry not enabled"}]}
+
+                elif tool_name == "router__clear_workflow_cache":
+                    workflow_id = args.get("workflow_id")
+                    result_data = router.clear_workflow_cache(workflow_id)
+                    result = {"content": [{"type": "text", "text": json.dumps(result_data, indent=2)}]}
 
                 # Parse prefix__toolname for backend routing
                 elif "__" in tool_name:
