@@ -24,12 +24,14 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import socket
-from threading import Lock, Thread
+from threading import Lock, RLock, Thread
+import select
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 try:
     import anthropic
+
     ANTHROPIC_AVAILABLE = True
 except ImportError:
     anthropic = None  # type: ignore
@@ -962,11 +964,15 @@ class MCPRouter:
         hash_digest = hashlib.sha256(content.encode()).hexdigest()[:12]
         return f"req-{hash_digest}"
 
-    def _get_backend_lock(self, server_name: str) -> Lock:
-        """Get or create lock for a backend server."""
+    def _get_backend_lock(self, server_name: str) -> RLock:
+        """Get or create reentrant lock for a backend server.
+        
+        Uses RLock to allow recursive calls (e.g., _restore_workflow_state
+        calling _forward_to_server while lock is held).
+        """
         with self._lock:
             if server_name not in self._backend_locks:
-                self._backend_locks[server_name] = Lock()
+                self._backend_locks[server_name] = RLock()
             return self._backend_locks[server_name]
 
     def _get_connection(self, server: ServerConfig) -> subprocess.Popen:
@@ -1101,7 +1107,13 @@ class MCPRouter:
                 proc.stdin.write(line)  # type: ignore[union-attr]
                 proc.stdin.flush()  # type: ignore[union-attr]
 
-                # Receive response
+                # Receive response with timeout to prevent indefinite blocking
+                ready, _, _ = select.select([proc.stdout], [], [], 30.0)
+                if not ready:
+                    # Timeout - backend not responding, clean up connection
+                    self._connections.pop(server.name, None)
+                    return {"error": {"code": -32603, "message": f"Timeout waiting for {server.name}"}}
+
                 response_line = proc.stdout.readline()  # type: ignore[union-attr]
                 if not response_line:
                     # Connection died, remove and retry once
