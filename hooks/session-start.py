@@ -174,6 +174,18 @@ def main():
     # Reset enforcement counters - pass agent_id to inherit phase if subagent
     reset_enforcement_counters(agent_id)
 
+    # Clean up stale output files (only for main agent, not subagents)
+    cleanup_message = None
+    if not agent_id:
+        try:
+            from output_cleanup import cleanup_stale_outputs
+            result = cleanup_stale_outputs(max_age_hours=48, dry_run=False)
+            if result["files_deleted"] > 0:
+                space_mb = result["space_reclaimed"] / (1024 * 1024)
+                cleanup_message = f"🧹 Cleaned {result['files_deleted']} stale output files ({space_mb:.1f} MB)"
+        except Exception:
+            pass  # Fail silently - cleanup shouldn't break session start
+
     # Run inventory to discover capabilities
     inventory_output = run_inventory()
 
@@ -194,6 +206,10 @@ def main():
 
     # Build output message
     messages = []
+
+    # Add cleanup message if files were cleaned
+    if cleanup_message:
+        messages.append(cleanup_message)
 
     # Add inventory if available
     if inventory_output:

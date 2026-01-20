@@ -1,15 +1,28 @@
 #!/usr/bin/env python3
-"""Import old activity.log and subagent_metrics.json into new telemetry format."""
+"""Import old activity.log and subagent_metrics.json into v2 telemetry format.
+
+Merges historical data with existing v2 telemetry.json, preserving all data.
+"""
 
 import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from lib.telemetry_schema_v2 import (
+    load_telemetry_v2,
+    save_telemetry_v2,
+    ensure_day,
+    recompute_aggregates,
+    update_filter_options,
+    default_token_data,
+    default_call_data,
+    default_summarization_data,
+)
+
 STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
 ACTIVITY_LOG = STATE_DIR / "activity.log"
 SUBAGENT_METRICS = STATE_DIR / "subagent_metrics.json"
-TELEMETRY_FILE = STATE_DIR / "telemetry.json"
 
 # Token estimates
 TOKEN_ESTIMATES = {
@@ -52,7 +65,6 @@ def parse_activity_log():
                     # Extract tool name from details
                     tool = "unknown"
                     if isinstance(details, str):
-                        # "Bash: some command" or just "Read"
                         if ":" in details:
                             tool = details.split(":")[0].strip()
                         else:
@@ -62,12 +74,11 @@ def parse_activity_log():
                         events.append({
                             "ts": f"{today}T{ts}",
                             "tool": tool,
-                            "backend": "claude-native",
-                            "duration_ms": 0,  # Unknown
+                            "backend": "native",
+                            "duration_ms": 0,
                             "status": "error" if event_type == "BLOCKED" else "success",
                             "tokens_est": TOKEN_ESTIMATES.get(tool, 500),
                             "subagent_type": "",
-                            "error_msg": "" if event_type != "BLOCKED" else "Blocked by enforcement"
                         })
                 except json.JSONDecodeError:
                     pass
@@ -81,12 +92,11 @@ def parse_activity_log():
                         events.append({
                             "ts": f"{today}T{ts}",
                             "tool": tool,
-                            "backend": "claude-native",
+                            "backend": "native",
                             "duration_ms": 0,
                             "status": "error" if event_type == "BLOCKED" else "success",
                             "tokens_est": TOKEN_ESTIMATES.get(tool, 500),
                             "subagent_type": "",
-                            "error_msg": ""
                         })
 
     return events
@@ -115,72 +125,52 @@ def parse_subagent_metrics():
         events.append({
             "ts": spawned_at,
             "tool": "Task",
-            "backend": "claude-native",
-            "duration_ms": 0,  # Unknown
-            "status": "success" if data.get("status") == "completed" else "success",
+            "backend": "native",
+            "duration_ms": 0,
+            "status": "success",
             "tokens_est": tokens,
             "subagent_type": agent_type,
-            "error_msg": ""
         })
 
     return events
 
 
-def update_aggregates(telemetry: dict, events: list) -> None:
-    """Update aggregate statistics from events."""
-    agg = telemetry.setdefault("aggregates", {
-        "by_tool": {},
-        "by_backend": {},
-        "subagents": {},
-        "totals": {"calls": 0, "errors": 0, "tokens_est": 0, "duration_ms": 0}
-    })
-
+def merge_events_into_v2(telemetry: dict, events: list) -> None:
+    """Merge parsed events into v2 telemetry structure."""
     for event in events:
-        tool = event["tool"]
-        backend = event["backend"]
-        tokens = event["tokens_est"]
-        duration = event["duration_ms"]
-        is_error = event["status"] == "error"
+        ts = event.get("ts", "")
+        if not ts or len(ts) < 10:
+            continue
+        
+        date_str = ts[:10]
+        if not date_str[0].isdigit():
+            continue
 
-        # By tool
-        if tool not in agg["by_tool"]:
-            agg["by_tool"][tool] = {"count": 0, "tokens": 0, "errors": 0, "duration_ms": 0}
-        agg["by_tool"][tool]["count"] += 1
-        agg["by_tool"][tool]["tokens"] += tokens
-        agg["by_tool"][tool]["duration_ms"] += duration
-        if is_error:
-            agg["by_tool"][tool]["errors"] += 1
-
-        # By backend
-        if backend not in agg["by_backend"]:
-            agg["by_backend"][backend] = {"count": 0, "tokens": 0, "errors": 0, "duration_ms": 0}
-        agg["by_backend"][backend]["count"] += 1
-        agg["by_backend"][backend]["tokens"] += tokens
-        agg["by_backend"][backend]["duration_ms"] += duration
-        if is_error:
-            agg["by_backend"][backend]["errors"] += 1
-
-        # Subagents
-        if event.get("subagent_type"):
-            sa = event["subagent_type"]
-            if sa not in agg["subagents"]:
-                agg["subagents"][sa] = {"count": 0, "tokens": 0, "errors": 0}
-            agg["subagents"][sa]["count"] += 1
-            agg["subagents"][sa]["tokens"] += tokens
-            if is_error:
-                agg["subagents"][sa]["errors"] += 1
-
-        # Totals
-        agg["totals"]["calls"] += 1
-        agg["totals"]["tokens_est"] += tokens
-        agg["totals"]["duration_ms"] += duration
-        if is_error:
-            agg["totals"]["errors"] += 1
+        tool = event.get("tool", "unknown")
+        backend = event.get("backend", "native")
+        tokens_est = event.get("tokens_est", 0)
+        
+        # Ensure day exists in v2 structure
+        ensure_day(telemetry, date_str)
+        day = telemetry["days"][date_str]
+        
+        # Update day tokens (estimated, so use input field)
+        day["tokens"]["input"] = day["tokens"].get("input", 0) + tokens_est
+        day["tokens"]["source"] = "estimated"
+        
+        # Update day calls
+        day["calls"]["total"] = day["calls"].get("total", 0) + 1
+        if "by_tool" not in day["calls"]:
+            day["calls"]["by_tool"] = {}
+        day["calls"]["by_tool"][tool] = day["calls"]["by_tool"].get(tool, 0) + 1
+        if "by_backend" not in day["calls"]:
+            day["calls"]["by_backend"] = {}
+        day["calls"]["by_backend"][backend] = day["calls"]["by_backend"].get(backend, 0) + 1
 
 
 def import_data():
-    """Import old data into telemetry.json."""
-    print("Importing old telemetry data...")
+    """Import old data into v2 telemetry.json."""
+    print("Importing old telemetry data into v2 format...")
 
     # Parse old sources
     activity_events = parse_activity_log()
@@ -197,68 +187,31 @@ def import_data():
         print("No old data to import")
         return
 
-    # Load existing telemetry or create new
-    if TELEMETRY_FILE.exists():
-        telemetry = json.loads(TELEMETRY_FILE.read_text())
-        existing_count = len(telemetry.get("events", []))
-        print(f"  Existing telemetry has {existing_count} events")
-    else:
-        telemetry = {
-            "session_id": datetime.now(timezone.utc).isoformat(),
-            "session_start": datetime.now(timezone.utc).isoformat(),
-            "events": [],
-            "aggregates": {
-                "by_tool": {},
-                "by_backend": {},
-                "subagents": {},
-                "totals": {"calls": 0, "errors": 0, "tokens_est": 0, "duration_ms": 0}
-            }
-        }
+    # Load existing v2 telemetry or create new
+    telemetry = load_telemetry_v2()
+    print(f"  Loaded v2 telemetry (version: {telemetry.get('version', 'unknown')})")
 
-    # Add imported events (prepend so new events come after)
-    all_combined = all_events + telemetry.get("events", [])
+    # Merge events into v2 structure
+    merge_events_into_v2(telemetry, all_events)
 
-    # Recalculate aggregates from ALL events (before truncating)
-    telemetry["aggregates"] = {
-        "by_tool": {},
-        "by_backend": {},
-        "subagents": {},
-        "totals": {"calls": 0, "errors": 0, "tokens_est": 0, "duration_ms": 0}
-    }
-    update_aggregates(telemetry, all_combined)
-
-    # Build daily_summaries from all events (for historical trending)
-    daily_summaries = {}
-    for event in all_combined:
-        ts = event.get("ts", "")
-        if ts:
-            # Extract date from timestamp (YYYY-MM-DD)
-            date_str = ts[:10] if len(ts) >= 10 else ""
-            if date_str and date_str[0].isdigit():
-                if date_str not in daily_summaries:
-                    daily_summaries[date_str] = {"calls": 0, "tokens": 0, "errors": 0, "duration_ms": 0}
-                daily_summaries[date_str]["calls"] += 1
-                daily_summaries[date_str]["tokens"] += event.get("tokens_est", 0)
-                daily_summaries[date_str]["duration_ms"] += event.get("duration_ms", 0)
-                if event.get("status") == "error":
-                    daily_summaries[date_str]["errors"] += 1
-    telemetry["daily_summaries"] = daily_summaries
-
-    # Keep last 500 events for display (but aggregates include all)
-    if len(all_combined) > 500:
-        telemetry["events"] = all_combined[-500:]
-    else:
-        telemetry["events"] = all_combined
+    # Recompute aggregates from days data
+    recompute_aggregates(telemetry)
+    
+    # Update filter options
+    update_filter_options(telemetry)
 
     # Save
-    TELEMETRY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    TELEMETRY_FILE.write_text(json.dumps(telemetry, indent=2))
+    save_telemetry_v2(telemetry)
 
-    print(f"\n✅ Imported {len(all_events)} historical events")
-    print(f"   Total events now: {len(telemetry['events'])}")
-    print(f"   Days with data: {len(daily_summaries)}")
-    print(f"   Total calls: {telemetry['aggregates']['totals']['calls']}")
-    print(f"   Est. tokens: {telemetry['aggregates']['totals']['tokens_est']:,}")
+    # Summary
+    agg = telemetry.get("aggregates", {}).get("all_time", {})
+    calls = agg.get("calls", {})
+    tokens = agg.get("tokens", {})
+    
+    print(f"\n✅ Imported {len(all_events)} historical events into v2 format")
+    print(f"   Days with data: {len(telemetry.get('days', {}))}")
+    print(f"   Total calls: {calls.get('total', 0)}")
+    print(f"   Est. tokens: {tokens.get('input', 0) + tokens.get('output', 0):,}")
 
 
 if __name__ == "__main__":

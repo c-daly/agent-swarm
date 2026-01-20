@@ -406,6 +406,12 @@ def generate_dashboard():
                 <div class="sub-stat" id="trendDetails">Need more data</div>
             </div>
 
+            <div class="card">
+                <h2>Summarization</h2>
+                <div class="big-number" id="summarizationRate">-</div>
+                <div class="sub-stat" id="summarizationDetails">- offered / - accepted</div>
+            </div>
+
         </div>
 
         <h3 id="charts" class="section-title">Charts</h3>
@@ -660,6 +666,54 @@ def generate_dashboard():
             if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
             if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
             return n.toString();
+        }
+
+        // Normalize v2 telemetry schema to v1 format for backward compatibility
+        function normalizeV2Data(data) {
+            if (!data) return data;
+
+            // Check if already v1 format (has totals directly)
+            if (data.aggregates?.totals) return data;
+
+            // Check if v2 format (has all_time structure)
+            if (!data.aggregates?.all_time) return data;
+
+            const v2 = data.aggregates.all_time;
+            const tokens = v2.tokens || {};
+            const calls = v2.calls || {};
+            const summarization = v2.summarization || {};
+
+            // Build v1-compatible structure
+            data.aggregates.totals = {
+                calls: calls.total || 0,
+                tokens: (tokens.input || 0) + (tokens.output || 0),
+                tokens_input: tokens.input || 0,
+                tokens_output: tokens.output || 0,
+                cache_read: tokens.cache_read || 0,
+                cache_creation: tokens.cache_creation || 0,
+                errors: 0  // v2 doesn't track errors in aggregates
+            };
+
+            // Map by_tool and by_backend to top level
+            data.aggregates.by_tool = calls.by_tool || {};
+            data.aggregates.by_backend = calls.by_backend || {};
+
+            // Preserve summarization stats for effectiveness display
+            data.aggregates.summarization = {
+                offered: summarization.offered || 0,
+                accepted: summarization.accepted || 0,
+                rejected: summarization.rejected || 0,
+                full_content_requests: summarization.full_content_requests || 0,
+                tokens_before: summarization.tokens_before || 0,
+                tokens_after: summarization.tokens_after || 0
+            };
+
+            // v2 doesn't have events array - mark as empty
+            if (!data.events) {
+                data.events = [];
+            }
+
+            return data;
         }
 
         function updateDashboard(data) {
@@ -923,12 +977,52 @@ def generate_dashboard():
             // Drill-down rate
             const drillDownRate = effectiveness.drill_down_rate || 0;
             const drillDownEl = document.getElementById('drillDownRate');
-            drillDownEl.textContent = (drillDownRate * 100).toFixed(0) + '%';
-            drillDownEl.className = 'big-number ' + (drillDownRate > 0.5 ? 'warning' : 'success');
+            if (drillDownEl) {
+                drillDownEl.textContent = (drillDownRate * 100).toFixed(0) + '%';
+                drillDownEl.className = 'big-number ' + (drillDownRate > 0.5 ? 'warning' : 'success');
+            }
             
             // Full retrievals
             const fullRetrievals = agg.full_retrievals || 0;
-            document.getElementById('fullRetrievals').textContent = fullRetrievals + ' full retrievals';
+            const fullRetrievalsEl = document.getElementById('fullRetrievals');
+            if (fullRetrievalsEl) {
+                fullRetrievalsEl.textContent = fullRetrievals + ' full retrievals';
+            }
+
+            // Update summarization card (from v2 normalized data)
+            const summarization = agg.summarization || {};
+            const offered = summarization.offered || 0;
+            const accepted = summarization.accepted || 0;
+            const fullContentRequests = summarization.full_content_requests || 0;
+            const tokensBefore = summarization.tokens_before || 0;
+            const tokensAfter = summarization.tokens_after || 0;
+
+            const summarizationRateEl = document.getElementById('summarizationRate');
+            const summarizationDetailsEl = document.getElementById('summarizationDetails');
+
+            if (summarizationRateEl) {
+                if (offered > 0) {
+                    const acceptRate = (accepted / offered * 100).toFixed(0);
+                    summarizationRateEl.textContent = acceptRate + '%';
+                    // Green if high acceptance, yellow if moderate, red if low
+                    summarizationRateEl.className = 'big-number ' + 
+                        (acceptRate >= 70 ? 'success' : acceptRate >= 40 ? 'warning' : 'error');
+                } else {
+                    summarizationRateEl.textContent = 'N/A';
+                    summarizationRateEl.className = 'big-number';
+                }
+            }
+
+            if (summarizationDetailsEl) {
+                if (offered > 0) {
+                    const savings = tokensBefore > 0 ? ((tokensBefore - tokensAfter) / tokensBefore * 100).toFixed(0) : 0;
+                    summarizationDetailsEl.textContent = `${offered} offered / ${accepted} accepted` + 
+                        (fullContentRequests > 0 ? ` / ${fullContentRequests} full requests` : '') +
+                        (tokensBefore > 0 ? ` (${savings}% saved)` : '');
+                } else {
+                    summarizationDetailsEl.textContent = 'No summarizations yet';
+                }
+            }
         }
 
         function updateSequenceAlerts(data) {
@@ -1103,7 +1197,8 @@ def generate_dashboard():
         let filtersPopulated = false;
 
         async function refresh() {
-            const data = await fetchTelemetry();
+            const rawData = await fetchTelemetry();
+            const data = normalizeV2Data(rawData);
             allTelemetryData = data;
 
             if (!filtersPopulated && data) {
