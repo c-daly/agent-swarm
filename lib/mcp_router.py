@@ -42,6 +42,15 @@ except ImportError:
     openai = None  # type: ignore
     OPENAI_AVAILABLE = False
 
+# Import v2 telemetry schema functions
+from telemetry_schema_v2 import (
+    TelemetryV2,
+    load_telemetry_v2,
+    save_telemetry_v2,
+    ensure_day,
+    update_timing_stats,
+)
+
 
 @dataclass
 class RouterResponse:
@@ -98,10 +107,11 @@ class TelemetryEvent:
 
 
 class TelemetryCollector:
-    """Real-time telemetry collection for MCP router.
+    """Real-time telemetry collection for MCP router using v2 schema.
 
     Tracks all tool calls, durations, token estimates, and errors.
     Writes to telemetry.json on every event for real-time dashboard updates.
+    Uses the unified v2 telemetry schema.
     """
 
     # Token estimates by tool type (conservative estimates)
@@ -147,42 +157,12 @@ class TelemetryCollector:
         self._lock = Lock()
         self._pending_requests: dict[str, tuple[str, str, dict, float]] = {}
         self._session_id = datetime.now(timezone.utc).isoformat()
-        self._data = self._load_or_init()
-
-    def _load_or_init(self) -> dict:
-        """Load existing telemetry or initialize fresh."""
-        if self._telemetry_file.exists():
-            try:
-                data = json.loads(self._telemetry_file.read_text())
-                # Start fresh session but keep historical aggregates
-                data["session_id"] = self._session_id
-                data["events"] = []  # Fresh events for this session
-                return data
-            except (json.JSONDecodeError, IOError):
-                pass
-
-        return {
-            "session_id": self._session_id,
-            "session_start": self._session_id,
-            "events": [],
-            "aggregates": {
-                "by_tool": {},
-                "by_backend": {},
-                "subagents": {},
-                "totals": {"calls": 0, "errors": 0, "tokens": 0, "duration_ms": 0},
-                "efficiency": {
-                    "full_chars": 0,
-                    "summary_chars": 0,
-                    "calls_summarized": 0,
-                    "chars_saved": 0
-                }
-            }
-        }
+        self._events: list[dict] = []  # Session events (rolling window)
+        self._data: TelemetryV2 = load_telemetry_v2(self._telemetry_file)
 
     def _save(self) -> None:
-        """Save telemetry to file."""
-        self._telemetry_file.parent.mkdir(parents=True, exist_ok=True)
-        self._telemetry_file.write_text(json.dumps(self._data, indent=2))
+        """Save telemetry to file using v2 schema."""
+        save_telemetry_v2(self._data, self._telemetry_file)
 
     def _estimate_tokens(self, tool: str, subagent_type: str = "") -> int:
         """Estimate tokens for a tool call."""
@@ -190,6 +170,10 @@ class TelemetryCollector:
             return self.SUBAGENT_TOKEN_ESTIMATES.get(subagent_type, 50000)
         base_tool = tool.split("__")[-1] if "__" in tool else tool
         return self.TOKEN_ESTIMATES.get(base_tool, 500)
+
+    def _get_today_key(self) -> str:
+        """Get today's date key in YYYY-MM-DD format."""
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     def track_request(self, destination: str, tool_name: str, args: dict) -> str:
         """Called when a request is made. Returns correlation_id."""
@@ -232,7 +216,7 @@ class TelemetryCollector:
             subagent_type = args.get("subagent_type", "") if tool_name == "Task" else ""
             tokens_est = self._estimate_tokens(tool_name, subagent_type)
 
-            # Create event
+            # Create event for session tracking
             event = {
                 "ts": datetime.now(timezone.utc).isoformat(),
                 "tool": tool_name,
@@ -246,98 +230,94 @@ class TelemetryCollector:
                 "summary_size": summary_size
             }
 
-            # Add to events (rolling window)
-            self._data["events"].append(event)
-            if len(self._data["events"]) > self._max_events:
-                self._data["events"] = self._data["events"][-self._max_events:]
+            # Add to session events (rolling window)
+            self._events.append(event)
+            if len(self._events) > self._max_events:
+                self._events = self._events[-self._max_events:]
 
-            # Update aggregates
-            self._update_aggregates(event, error)
+            # Update v2 telemetry
+            self._update_v2_telemetry(event, error, full_size, summary_size, duration_ms)
 
             # Save immediately for real-time updates
             self._save()
 
-    def _update_aggregates(self, event: dict, error: bool) -> None:
-        """Update aggregate statistics."""
-        agg = self._data["aggregates"]
+    def _update_v2_telemetry(
+        self,
+        event: dict,
+        error: bool,
+        full_size: int,
+        summary_size: int,
+        duration_ms: int
+    ) -> None:
+        """Update v2 telemetry structure."""
+        day_key = self._get_today_key()
+        day_data = ensure_day(self._data, day_key)
 
-        # By tool
+        # Update call counts
+        calls = day_data.setdefault("calls", {"total": 0, "by_tool": {}, "by_backend": {}})
+        calls["total"] = calls.get("total", 0) + 1
+
         tool = event["tool"]
-        if tool not in agg["by_tool"]:
-            agg["by_tool"][tool] = {"count": 0, "tokens": 0, "errors": 0, "duration_ms": 0}
-        agg["by_tool"][tool]["count"] += 1
-        agg["by_tool"][tool]["tokens"] += event["tokens_est"]
-        agg["by_tool"][tool]["duration_ms"] += event["duration_ms"]
-        if error:
-            agg["by_tool"][tool]["errors"] += 1
+        calls.setdefault("by_tool", {})[tool] = calls.get("by_tool", {}).get(tool, 0) + 1
 
-        # By backend
         backend = event["backend"]
-        if backend not in agg["by_backend"]:
-            agg["by_backend"][backend] = {"count": 0, "tokens": 0, "errors": 0, "duration_ms": 0}
-        agg["by_backend"][backend]["count"] += 1
-        agg["by_backend"][backend]["tokens"] += event["tokens_est"]
-        agg["by_backend"][backend]["duration_ms"] += event["duration_ms"]
-        if error:
-            agg["by_backend"][backend]["errors"] += 1
+        calls.setdefault("by_backend", {})[backend] = calls.get("by_backend", {}).get(backend, 0) + 1
 
-        # Subagents
-        if event["subagent_type"]:
-            sa = event["subagent_type"]
-            if sa not in agg["subagents"]:
-                agg["subagents"][sa] = {"count": 0, "tokens": 0, "errors": 0}
-            agg["subagents"][sa]["count"] += 1
-            agg["subagents"][sa]["tokens"] += event["tokens_est"]
-            if error:
-                agg["subagents"][sa]["errors"] += 1
+        # Update timing stats
+        timing = day_data.setdefault("timing", {"avg_response_ms": 0.0, "p95_response_ms": 0.0, "by_backend": {}})
+        update_timing_stats(timing, backend, duration_ms)
 
-        # Totals
-        agg["totals"]["calls"] += 1
-        agg["totals"]["tokens"] += event["tokens_est"]
-        agg["totals"]["duration_ms"] += event["duration_ms"]
-        if error:
-            agg["totals"]["errors"] += 1
-
-        # Efficiency tracking (for summarized responses)
-        full_size = event.get("full_size", 0)
-        summary_size = event.get("summary_size", 0)
+        # Update summarization stats if applicable
         if full_size > 0 and summary_size > 0:
-            # Ensure efficiency dict exists (for backwards compatibility)
-            if "efficiency" not in agg:
-                agg["efficiency"] = {
-                    "full_chars": 0,
-                    "summary_chars": 0,
-                    "calls_summarized": 0,
-                    "chars_saved": 0
-                }
-            agg["efficiency"]["full_chars"] += full_size
-            agg["efficiency"]["summary_chars"] += summary_size
-            agg["efficiency"]["calls_summarized"] += 1
-            agg["efficiency"]["chars_saved"] += (full_size - summary_size)
+            summ = day_data.setdefault("summarization", {
+                "offered": 0, "accepted": 0, "rejected": 0,
+                "acceptance_rate": 0.0, "tokens_saved_est": 0
+            })
+            summ["offered"] = summ.get("offered", 0) + 1
+            summ["accepted"] = summ.get("accepted", 0) + 1  # Router always accepts
+            chars_saved = full_size - summary_size
+            tokens_saved = chars_saved // 4  # ~4 chars per token
+            summ["tokens_saved_est"] = summ.get("tokens_saved_est", 0) + tokens_saved
+            total = summ.get("offered", 1)
+            summ["acceptance_rate"] = summ.get("accepted", 0) / total if total > 0 else 0.0
+
+        # Track session
+        sessions = day_data.setdefault("sessions", [])
+        if self._session_id not in sessions:
+            sessions.append(self._session_id)
 
     def get_summary(self) -> dict:
         """Get current telemetry summary."""
         with self._lock:
-            agg = self._data["aggregates"]
+            day_key = self._get_today_key()
+            day_data = self._data.get("days", {}).get(day_key, {})
 
-            # Compute efficiency metrics
-            eff = agg.get("efficiency", {})
-            full_chars = eff.get("full_chars", 0)
-            summary_chars = eff.get("summary_chars", 0)
+            calls = day_data.get("calls", {})
+            timing = day_data.get("timing", {})
+            summ = day_data.get("summarization", {})
 
-            efficiency_computed = {
-                **eff,
-                "compression_ratio": round(summary_chars / full_chars, 3) if full_chars > 0 else 0,
-                "savings_pct": round((1 - summary_chars / full_chars) * 100, 1) if full_chars > 0 else 0,
-                "tokens_saved_est": (full_chars - summary_chars) // 4 if full_chars > 0 else 0  # ~4 chars/token
-            }
+            # Compute efficiency metrics from summarization data
+            tokens_saved = summ.get("tokens_saved_est", 0)
+            offered = summ.get("offered", 0)
 
             return {
-                "session_id": self._data["session_id"],
-                "event_count": len(self._data["events"]),
-                "aggregates": {**agg, "efficiency": efficiency_computed},
-                "recent_events": self._data["events"][-10:]  # Last 10
+                "session_id": self._session_id,
+                "event_count": len(self._events),
+                "today": day_key,
+                "aggregates": {
+                    "by_tool": calls.get("by_tool", {}),
+                    "by_backend": calls.get("by_backend", {}),
+                    "totals": {"calls": calls.get("total", 0)},
+                    "timing": timing,
+                    "efficiency": {
+                        "calls_summarized": offered,
+                        "tokens_saved_est": tokens_saved,
+                    }
+                },
+                "recent_events": self._events[-10:]  # Last 10
             }
+
+
 
 
 class MCPRouter:
@@ -1148,6 +1128,7 @@ def analyze_telemetry_trends(telemetry: TelemetryCollector) -> dict:
     """Analyze telemetry data for trends and effectiveness.
 
     Returns analysis of token usage patterns and optimization effectiveness.
+    Works with v2 telemetry schema.
     """
     summary = telemetry.get_summary()
     events = summary.get("recent_events", [])
@@ -1156,6 +1137,7 @@ def analyze_telemetry_trends(telemetry: TelemetryCollector) -> dict:
     analysis = {
         "session_id": summary.get("session_id", ""),
         "total_events": summary.get("event_count", 0),
+        "today": summary.get("today", ""),
         "totals": agg.get("totals", {}),
         "trends": {},
         "recommendations": []
@@ -1189,44 +1171,46 @@ def analyze_telemetry_trends(telemetry: TelemetryCollector) -> dict:
             else:
                 analysis["trends"]["verdict"] = "STABLE"
 
-    # Check for high-token tools
+    # Check for high-call tools (v2 schema has counts, not token totals per tool)
     by_tool = agg.get("by_tool", {})
-    high_token_tools = [
-        (tool, data["tokens"])
-        for tool, data in by_tool.items()
-        if data.get("tokens", 0) > 10000
+    high_call_tools = [
+        (tool, count)
+        for tool, count in by_tool.items()
+        if isinstance(count, int) and count > 50
     ]
-    if high_token_tools:
-        sorted_tools = sorted(high_token_tools, key=lambda x: x[1], reverse=True)[:3]
-        analysis["top_token_consumers"] = [
-            {"tool": t, "tokens": v} for t, v in sorted_tools
+    if high_call_tools:
+        sorted_tools = sorted(high_call_tools, key=lambda x: x[1], reverse=True)[:3]
+        analysis["top_tool_callers"] = [
+            {"tool": t, "calls": v} for t, v in sorted_tools
         ]
         analysis["recommendations"].append(
-            f"High token usage in: {', '.join(t for t, _ in sorted_tools)}"
+            f"High call count in: {', '.join(t for t, _ in sorted_tools)}"
         )
 
-    # Check subagent usage
-    subagents = agg.get("subagents", {})
-    if subagents:
-        total_subagent_tokens = sum(s.get("tokens", 0) for s in subagents.values())
-        total_tokens = agg.get("totals", {}).get("tokens", 1)
-        subagent_pct = (total_subagent_tokens / total_tokens) * 100 if total_tokens else 0
-        analysis["subagent_token_pct"] = round(subagent_pct, 1)
+    # Timing analysis
+    timing = agg.get("timing", {})
+    by_backend = timing.get("by_backend", {})
+    slow_backends = [
+        (backend, stats.get("avg_ms", 0))
+        for backend, stats in by_backend.items()
+        if isinstance(stats, dict) and stats.get("avg_ms", 0) > 1000
+    ]
+    if slow_backends:
+        analysis["slow_backends"] = [
+            {"backend": b, "avg_ms": round(ms, 1)} for b, ms in slow_backends
+        ]
+        analysis["recommendations"].append(
+            f"Slow response times from: {', '.join(b for b, _ in slow_backends)}"
+        )
 
-        if subagent_pct > 50:
-            analysis["recommendations"].append(
-                f"Subagents account for {subagent_pct:.0f}% of tokens - consider using smaller scoped tasks"
-            )
-
-    # Error rate
-    totals = agg.get("totals", {})
-    if totals.get("calls", 0) > 0:
-        error_rate = (totals.get("errors", 0) / totals["calls"]) * 100
-        analysis["error_rate_pct"] = round(error_rate, 1)
-        if error_rate > 10:
-            analysis["recommendations"].append(
-                f"High error rate ({error_rate:.0f}%) - review failing tools"
-            )
+    # Summarization efficiency
+    efficiency = agg.get("efficiency", {})
+    tokens_saved = efficiency.get("tokens_saved_est", 0)
+    if tokens_saved > 0:
+        analysis["tokens_saved_est"] = tokens_saved
+        analysis["recommendations"].append(
+            f"Summarization saved approximately {tokens_saved} tokens"
+        )
 
     return analysis
 
