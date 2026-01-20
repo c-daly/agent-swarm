@@ -288,9 +288,11 @@ def start(
         starting_phase = Phase.ORCHESTRATE.value
         needs_intake = False
     else:
-        # Vague task: needs intake/discovery first
-        starting_phase = Phase.INTAKE.value
-        needs_intake = True
+        # Main agent starts in ORCHESTRATE - ready to spawn subagents
+        # Can kick back to INTAKE if needs context (then: INTAKE → DESIGN → ORCHESTRATE)
+        # Main agent NEVER enters IMPLEMENT - only subagents do
+        starting_phase = Phase.ORCHESTRATE.value
+        needs_intake = False
 
     state = {
         "active": True,

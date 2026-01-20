@@ -402,7 +402,7 @@ class MCPRouter:
         self._socket_thread: Optional[Thread] = None
         self._socket_port: int = 0
         self._socket_running: bool = False
-        self._port_file = Path.home() / ".claude" / "router.port"
+        self._port_file = Path(__file__).parent.parent / ".state" / "router.port"
 
     def _init_summarizer(
         self,

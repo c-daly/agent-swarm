@@ -5,6 +5,21 @@ description: Main workflow orchestrator for complex tasks. Coordinates phase tra
 
 # Workflow Orchestrator
 
+## CRITICAL: Orchestrator Role
+
+**Orchestrators NEVER go to IMPLEMENT phase.** You stay in ORCHESTRATE and spawn subagents.
+
+| You (Orchestrator) | Subagents |
+|--------------------|-----------|
+| Stay in ORCHESTRATE | Go through implement → test → review |
+| Spawn via Task tool | Do the actual code changes |
+| Read, TodoWrite, Task, TaskOutput | Edit, Write, Bash |
+| Coordinate and monitor | Execute and verify |
+
+**If you need context:** Go to INTAKE (exploration), then back to ORCHESTRATE.
+**If you need code changed:** Spawn an `implementer` subagent. Never edit yourself.
+
+---
 
 **State Management:** This skill uses `scripts/state.py` CLI for all state operations.
 - Phase transitions: `python3 scripts/state.py transition <phase>`
@@ -194,10 +209,11 @@ EOF
 - Use `architect` agent (sonnet model)
 - **Checkpoint if enabled**: Present plan, get approval
 
-### IMPLEMENT
-- **ENFORCED**: Must use Task tool with `implementer` agent
-- Direct Edit/Write BLOCKED
-- Each subagent: focused scope, sonnet model
+### IMPLEMENT (Subagents Only - NOT You)
+- **You stay in ORCHESTRATE** - spawn `implementer` subagents
+- Subagents do: Edit, Write, code changes
+- You do: monitor via TaskOutput, update TodoWrite
+- Each subagent: focused scope, opus model
 
 ### REVIEW
 - Use `reviewer` agent (sonnet model)
