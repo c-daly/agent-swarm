@@ -125,23 +125,19 @@ def mock_workflow_client(monkeypatch):
 
     # Import workflow_client to patch it
     import workflow_client
-    # Also import lib.workflow_client since some modules use that import path
-    # (e.g., iterate_state.py uses `from lib.workflow_client import ...`)
-    import lib.workflow_client as lib_workflow_client
 
-    # Patch all workflow_client functions (both import paths)
-    for wc_module in [workflow_client, lib_workflow_client]:
-        monkeypatch.setattr(wc_module, "workflow_start", _mock_state.workflow_start)
-        monkeypatch.setattr(wc_module, "workflow_stop", _mock_state.workflow_stop)
-        monkeypatch.setattr(wc_module, "workflow_is_active", _mock_state.workflow_is_active)
-        monkeypatch.setattr(wc_module, "workflow_get_state", _mock_state.workflow_get_state)
-        monkeypatch.setattr(wc_module, "workflow_set_state", _mock_state.workflow_set_state)
-        monkeypatch.setattr(wc_module, "workflow_update", _mock_state.workflow_update)
-        monkeypatch.setattr(wc_module, "workflow_get_value", _mock_state.workflow_get_value)
-        monkeypatch.setattr(wc_module, "workflow_set_value", _mock_state.workflow_set_value)
-        monkeypatch.setattr(wc_module, "agent_get_state", _mock_state.agent_get_state)
-        monkeypatch.setattr(wc_module, "agent_set_state", _mock_state.agent_set_state)
-        monkeypatch.setattr(wc_module, "agent_delete", _mock_state.agent_delete)
-        monkeypatch.setattr(wc_module, "list_agents", _mock_state.list_agents)
+    # Patch all workflow_client functions
+    monkeypatch.setattr(workflow_client, "workflow_start", _mock_state.workflow_start)
+    monkeypatch.setattr(workflow_client, "workflow_stop", _mock_state.workflow_stop)
+    monkeypatch.setattr(workflow_client, "workflow_is_active", _mock_state.workflow_is_active)
+    monkeypatch.setattr(workflow_client, "workflow_get_state", _mock_state.workflow_get_state)
+    monkeypatch.setattr(workflow_client, "workflow_set_state", _mock_state.workflow_set_state)
+    monkeypatch.setattr(workflow_client, "workflow_update", _mock_state.workflow_update)
+    monkeypatch.setattr(workflow_client, "workflow_get_value", _mock_state.workflow_get_value)
+    monkeypatch.setattr(workflow_client, "workflow_set_value", _mock_state.workflow_set_value)
+    monkeypatch.setattr(workflow_client, "agent_get_state", _mock_state.agent_get_state)
+    monkeypatch.setattr(workflow_client, "agent_set_state", _mock_state.agent_set_state)
+    monkeypatch.setattr(workflow_client, "agent_delete", _mock_state.agent_delete)
+    monkeypatch.setattr(workflow_client, "list_agents", _mock_state.list_agents)
 
     yield _mock_state
