@@ -312,6 +312,7 @@ def start(
     workflow_client.workflow_set_state("iterate", state)
     _log("info", "Workflow started", task=task[:50], phase=Phase.ORCHESTRATE.value,
          agent_id=effective_agent_id)
+    print_status_banner()
     return state
 
 
@@ -427,6 +428,7 @@ def set_phase(phase: Phase) -> None:
 
     state["phase"] = phase.value
     workflow_client.workflow_set_state("iterate", state)
+    _print_phase_transition(current_phase or "none", phase.value)
 
 
 def advance_phase() -> Optional[Phase]:
@@ -1445,7 +1447,7 @@ if __name__ == "__main__":
         start(task, spec=spec, queue=queue, max_iterations=max_iter, agent_id=agent_id)
         print(status())
     elif cmd == "status":
-        print(status())
+        print_status_banner()
     elif cmd == "phase":
         phase = get_phase()
         print(phase.value if phase else "none")

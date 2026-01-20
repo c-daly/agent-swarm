@@ -65,7 +65,12 @@ def main():
     phase = iterate_state.get("phase") or session_state.get("phase") or "none"
     mode = iterate_state.get("mode", "")
 
-    # Store subagent state with its inherited phase
+    # CRITICAL FIX: When spawning implementer in iterate-tdd from orchestrate phase,
+    # force the subagent to start in test_writing phase (not parent's orchestrate phase)
+    if mode == "iterate-tdd" and phase == "orchestrate" and agent_type == "implementer":
+        phase = "test_writing"
+
+    # Store subagent state with its phase
     agent_state = {
         "phase": phase,
         "mode": mode,
@@ -98,9 +103,9 @@ def main():
 
     elif mode == "iterate-tdd":
         # In iterate-tdd mode - check phase for specific handling
-        if phase == "orchestrate":
-            # Subagent spawned by orchestrator
-            message_suffix = " (iterate-tdd/orchestrate)"
+        if agent_type == "implementer" and phase in ("orchestrate", "test_writing", "implement"):
+            # Subagent spawned by orchestrator for implementation work
+            message_suffix = f" (iterate-tdd/{phase})"
             additional_context.append(f"""
 ## SUBAGENT WORKFLOW CONTEXT
 
@@ -109,6 +114,8 @@ def main():
 **Spawned by:** Orchestrator
 
 ### TDD Workflow (Follow This Order)
+
+**YOU CANNOT SKIP PHASES.** You MUST follow this exact sequence:
 
 1. **TEST_WRITING** - Write failing tests first
    - These tests define what success looks like
