@@ -4,7 +4,7 @@ Appends events to session-specific JSONL files for DuckDB querying.
 """
 import json
 from pathlib import Path
-from lib.stores.events import ToolCallEvent
+from .events import ToolCallEvent
 
 
 class JSONLWriter:

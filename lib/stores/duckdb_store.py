@@ -14,7 +14,7 @@ try:
 except ImportError:
     duckdb = None  # type: ignore
 
-from lib.stores.interfaces import (
+from .interfaces import (
     AnalyticsStore,
     DaySummary,
     SessionRecord,
