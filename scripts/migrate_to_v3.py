@@ -76,11 +76,15 @@ def extract_tool_calls(path: Path) -> Iterator[ToolCallEvent]:
     """Extract tool call events from a session JSONL file.
     
     Looks for tool_use and tool_result message pairs.
+    Also extracts token usage from assistant messages.
     """
     session_id = extract_session_id(path)
     
     # Track pending tool uses (waiting for result)
     pending: dict[str, dict] = {}  # tool_use_id -> {name, timestamp, ...}
+    
+    # Track the most recent usage data (applies to tool calls in same response)
+    current_usage: dict = {}
     
     for record in parse_jsonl_file(path):
         # Skip non-message records
@@ -93,16 +97,42 @@ def extract_tool_calls(path: Path) -> Iterator[ToolCallEvent]:
         agent_id = extract_agent_id(record)
         
         # Handle assistant messages with tool_use
-        if record.get("type") == "assistant" and isinstance(content, list):
-            for item in content:
-                if item.get("type") == "tool_use":
-                    tool_use_id = item.get("id", "")
-                    tool_name = item.get("name", "unknown")
-                    pending[tool_use_id] = {
-                        "name": tool_name,
-                        "timestamp": timestamp,
-                        "agent_id": agent_id,
-                    }
+        if record.get("type") == "assistant":
+            # Capture usage data from this response
+            usage = message.get("usage", {})
+            if usage:
+                current_usage = {
+                    "input_tokens": usage.get("input_tokens", 0),
+                    "output_tokens": usage.get("output_tokens", 0),
+                    "cache_read_tokens": usage.get("cache_read_input_tokens", 0),
+                    "cache_creation_tokens": usage.get("cache_creation_input_tokens", 0),
+                }
+            
+            if isinstance(content, list):
+                # Count tool uses in this message for token distribution
+                tool_count = sum(1 for item in content if item.get("type") == "tool_use")
+                
+                for item in content:
+                    if item.get("type") == "tool_use":
+                        tool_use_id = item.get("id", "")
+                        tool_name = item.get("name", "unknown")
+                        
+                        # Distribute tokens across tool calls in this message
+                        tokens_per_tool = {}
+                        if current_usage and tool_count > 0:
+                            tokens_per_tool = {
+                                "input_tokens": current_usage.get("input_tokens", 0) // tool_count,
+                                "output_tokens": current_usage.get("output_tokens", 0) // tool_count,
+                                "cache_read_tokens": current_usage.get("cache_read_tokens", 0) // tool_count,
+                                "cache_creation_tokens": current_usage.get("cache_creation_tokens", 0) // tool_count,
+                            }
+                        
+                        pending[tool_use_id] = {
+                            "name": tool_name,
+                            "timestamp": timestamp,
+                            "agent_id": agent_id,
+                            **tokens_per_tool,
+                        }
         
         # Handle user messages with tool_result
         if record.get("type") == "user" and isinstance(content, list):
@@ -146,14 +176,11 @@ def extract_tool_calls(path: Path) -> Iterator[ToolCallEvent]:
                         duration_ms=max(0, duration_ms),
                         status=status,
                         error_type=error_type,
+                        input_tokens=start_info.get("input_tokens", 0),
+                        output_tokens=start_info.get("output_tokens", 0),
+                        cache_read_tokens=start_info.get("cache_read_tokens", 0),
+                        cache_creation_tokens=start_info.get("cache_creation_tokens", 0),
                     )
-        
-        # Also extract token usage from assistant messages
-        usage = message.get("usage", {})
-        if usage and record.get("type") == "assistant":
-            # Token data is associated with the response, not individual tool calls
-            # We'll skip this for now - tool calls don't have individual token counts
-            pass
 
 
 def find_jsonl_files(source_dir: Path) -> Iterator[Path]:
