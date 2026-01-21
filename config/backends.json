@@ -1,6 +1,6 @@
 {
   "serena": {
-    "command": ["uvx", "--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server"],
+    "command": ["uvx", "--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server", "--project", "/home/fearsidhe/.claude/plugins/agent-swarm"],
     "tool_prefix": "serena"
   },
   "context7": {

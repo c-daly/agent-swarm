@@ -2,7 +2,6 @@
 """SubagentStop hook - runs when a subagent completes.
 
 Logs completion and can trigger queue updates.
-Detects and handles failed agents using agent_recovery module.
 Note: This runs in the PARENT context, not inside the subagent.
 """
 
@@ -13,10 +12,9 @@ from datetime import datetime
 from pathlib import Path
 import glob
 
-# Add lib to path for workflow_client and agent_recovery
+# Add lib to path for workflow_client
 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
 from workflow_client import agent_set_state
-from agent_recovery import detect_failed_agent, handle_failed_agent
 
 STATE_DIR = Path.home() / ".claude" / "plugins" / "agent-swarm" / ".state"
 STATE_FILE = STATE_DIR / "session.json"
@@ -94,34 +92,28 @@ def find_agent_output_file(session_id: str):
         return None
 
 
-def persist_agent_output(session_id: str, agent_type: str) -> dict:
+def persist_agent_output(session_id: str, agent_type: str) -> None:
     """Persist agent completion data to state manager.
     
     Extracts completion info from agent output and stores via agent_set_state.
-    Also detects and handles failed agents.
     Handles errors gracefully - does not fail if parsing/storage fails.
-    
-    Returns:
-        dict with failure_detected (bool) and failure_reason (str) if failed
     """
-    failure_info = {"failure_detected": False, "failure_reason": ""}
-    
     try:
         # Find and read agent output file
         output_file = find_agent_output_file(session_id)
         if not output_file:
-            return failure_info  # No output file found, skip silently
+            return  # No output file found, skip silently
         
         output_path = Path(output_file)
         if not output_path.exists():
-            return failure_info
+            return
         
         output_text = output_path.read_text()
         
         # Extract completion info from output
         completion_info = extract_agent_completion_info(output_text)
         if not completion_info or not completion_info.get("agent_id"):
-            return failure_info  # No valid completion info found
+            return  # No valid completion info found
         
         # Add timestamp and agent type
         completion_info["timestamp"] = datetime.now().isoformat()
@@ -134,19 +126,10 @@ def persist_agent_output(session_id: str, agent_type: str) -> dict:
         agent_id = completion_info["agent_id"]
         agent_set_state(agent_id, completion_info)
         
-        # Detect and handle failed agents
-        if detect_failed_agent(agent_id):
-            reason = f"Agent output indicates failure (status={completion_info.get('status')}, summary contains error keywords)"
-            handle_failed_agent(agent_id, reason=reason)
-            failure_info["failure_detected"] = True
-            failure_info["failure_reason"] = reason
-        
-        return failure_info
-        
     except Exception as e:
         # Log error but don't fail the hook
         # (In production, could use logging module)
-        return failure_info
+        pass
 
 
 def main():
@@ -161,8 +144,8 @@ def main():
     state = load_state()
     phase = state.get("phase") or state.get("iterate_phase") or "none"
 
-    # Persist agent output to state manager and check for failures
-    failure_info = persist_agent_output(session_id, agent_type)
+    # Persist agent output to state manager
+    persist_agent_output(session_id, agent_type)
 
     # Log the subagent completion
     # DISABLED: No longer logging subagent stops to file
@@ -180,16 +163,10 @@ def main():
 
     # STATE_FILE.write_text(json.dumps(state, indent=2))
 
-    # Build result with failure status if detected
-    message = f"Subagent {agent_type} completed in phase {phase}"
-    if failure_info["failure_detected"]:
-        message += f" [FAILED: {failure_info['failure_reason']}]"
-
     result = {
         "hookSpecificOutput": {
             "hookEventName": "SubagentStop",
-            "message": message,
-            "failure_detected": failure_info["failure_detected"]
+            "message": f"Subagent {agent_type} completed in phase {phase}"
         }
     }
 

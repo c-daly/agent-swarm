@@ -16,6 +16,19 @@ SIZE_THRESHOLD = 2000
 # Only summarize MCP tools (not native Claude tools)
 MCP_PREFIX = "mcp__"
 
+# Passthrough patterns - content with these patterns should NOT be summarized
+# so the user can see status output from iterate workflow
+PASSTHROUGH_PATTERNS = [
+    "[PHASE]",           # Phase transition banners
+    "[ORCHESTRATOR]",    # Orchestrator status messages
+    "→",                 # Phase transition arrows (INTAKE → DESIGN)
+    "TEST_WRITING",      # Iterate workflow phases
+    "ORCHESTRATE",
+    "Phase set to:",     # Phase change confirmations
+    "┌─",                # Box drawing characters (banners)
+    "└─",
+]
+
 # Cache to avoid re-summarizing identical responses
 CACHE_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/summary_cache.json"
 MAX_CACHE_SIZE = 100
@@ -124,6 +137,14 @@ def main():
 
     # Get the response content
     content = str(tool_response) if tool_response else ""
+
+    # PASSTHROUGH: Don't summarize iterate workflow status output
+    # so the user can see phase banners and status messages
+    for pattern in PASSTHROUGH_PATTERNS:
+        if pattern in content:
+            log_debug(f"Passthrough: {tool_name} contains '{pattern}'")
+            print(json.dumps({}))
+            return
 
     # Check size threshold
     if len(content) < SIZE_THRESHOLD:

@@ -17,6 +17,11 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
+# Add lib to path for workflow_client import
+_lib_dir = Path(__file__).parent.parent / "lib"
+if str(_lib_dir) not in sys.path:
+    sys.path.insert(0, str(_lib_dir))
+
 
 # =============================================================================
 # Task Queue Enums and Constants
@@ -334,7 +339,7 @@ def save_queue(queue: "TaskQueue") -> None:
 
     Note: Queue is ephemeral - resets on process restart.
     """
-    from lib.workflow_client import workflow_set_state, workflow_get_state
+    import workflow_client
 
     # Get existing session state (for compatibility with other keys)
     state = load_state()
@@ -376,7 +381,7 @@ def save_queue(queue: "TaskQueue") -> None:
     }
 
     # Save to workflow_client (in-memory via MCP, ephemeral)
-    workflow_set_state("queue", queue_data)
+    workflow_client.workflow_set_state("queue", queue_data)
 
     # Also save to session.json for backwards compatibility
     state["queue"] = queue_data
@@ -390,12 +395,12 @@ def load_queue() -> "TaskQueue":
     Handles missing/malformed data gracefully.
     Note: Queue is ephemeral - resets on process restart.
     """
-    from lib.workflow_client import workflow_get_state
+    import workflow_client
 
     queue = TaskQueue()
 
     # Try workflow_client first (primary source)
-    queue_data = workflow_get_state("queue")
+    queue_data = workflow_client.workflow_get_state("queue")
     
     # Fall back to session.json for backwards compatibility
     if not queue_data:

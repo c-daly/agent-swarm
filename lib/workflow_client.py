@@ -26,7 +26,7 @@ class WorkflowClientError(Exception):
 
 def _get_router_port() -> int:
     """Get router port from port file."""
-    port_file = Path.home() / ".claude" / "router.port"
+    port_file = Path(__file__).parent.parent / ".state" / "router.port"
     if not port_file.exists():
         raise WorkflowClientError(
             f"Router port file not found: {port_file}. "

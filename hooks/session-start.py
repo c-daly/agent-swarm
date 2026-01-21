@@ -15,6 +15,10 @@ import sys
 import subprocess
 from pathlib import Path
 
+# Add lib to path for workflow_client
+lib_dir = Path(__file__).parent.parent / "lib"
+sys.path.insert(0, str(lib_dir))
+
 try:
     from hook_logging import log_error, log_warning, log_info, log_debug, ConfigError, StateError
 except ImportError:
@@ -25,15 +29,23 @@ except ImportError:
     def log_debug(msg, **kw): pass
     class ConfigError(Exception): pass
     class StateError(Exception): pass
+
+try:
+    from workflow_client import workflow_get_state, workflow_set_state, agent_set_state
+except ImportError:
+    # Fallback if workflow_client not available
+    def workflow_get_state(workflow_id: str) -> dict | None:
+        return None
+    def workflow_set_state(workflow_id: str, state: dict) -> dict | None:
+        return None
+    def agent_set_state(agent_id: str, state: dict) -> dict | None:
+        return None
+
+
 def load_iterate_state() -> dict:
-    """Load iterate workflow state (orchestrator's phase)."""
-    iterate_file = Path.home() / ".claude/plugins/agent-swarm/.state/iterate.json"
-    if iterate_file.exists():
-        try:
-            return json.loads(iterate_file.read_text())
-        except (json.JSONDecodeError, IOError):
-            pass
-    return {}
+    """Load iterate workflow state from state server."""
+    state = workflow_get_state("iterate")
+    return state if state else {}
 
 
 def reset_enforcement_counters(agent_id: str | None = None):
@@ -85,18 +97,17 @@ def reset_enforcement_counters(agent_id: str | None = None):
         # Restore flags preserved from compaction
         state.update(compaction_flags)
 
-        # If subagent, inherit phase from orchestrator
+        # If subagent, inherit phase from orchestrator and set per-agent state
         if agent_id:
             iterate_state = load_iterate_state()
             phase = iterate_state.get("phase")
             if phase:
                 state["phase"] = phase
+            # Store state keyed by agent_id for subagent-specific queries
+            agent_set_state(agent_id, state)
 
-        # DISABLED: No longer writing session state to file
-
-
-        # with open(state_file, 'w') as f:
-            json.dump(state, f, indent=2)
+        # Write session state to state server (global session for main agent)
+        workflow_set_state("session", state)
 
         return True
     except Exception as e:
@@ -184,6 +195,18 @@ def main():
     # Reset enforcement counters - pass agent_id to inherit phase if subagent
     reset_enforcement_counters(agent_id)
 
+    # Clean up stale output files (only for main agent, not subagents)
+    cleanup_message = None
+    if not agent_id:
+        try:
+            from output_cleanup import cleanup_stale_outputs
+            result = cleanup_stale_outputs(max_age_hours=48, dry_run=False)
+            if result["files_deleted"] > 0:
+                space_mb = result["space_reclaimed"] / (1024 * 1024)
+                cleanup_message = f"🧹 Cleaned {result['files_deleted']} stale output files ({space_mb:.1f} MB)"
+        except Exception:
+            pass  # Fail silently - cleanup shouldn't break session start
+
     # Run inventory to discover capabilities
     inventory_output = run_inventory()
 
@@ -204,6 +227,10 @@ def main():
 
     # Build output message
     messages = []
+
+    # Add cleanup message if files were cleaned
+    if cleanup_message:
+        messages.append(cleanup_message)
 
     # Add inventory if available
     if inventory_output:

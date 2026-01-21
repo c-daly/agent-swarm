@@ -24,12 +24,14 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import socket
-from threading import Lock, Thread
+from threading import Lock, RLock, Thread
+import select
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 try:
     import anthropic
+
     ANTHROPIC_AVAILABLE = True
 except ImportError:
     anthropic = None  # type: ignore
@@ -41,6 +43,15 @@ try:
 except ImportError:
     openai = None  # type: ignore
     OPENAI_AVAILABLE = False
+
+# Import v2 telemetry schema functions
+from telemetry_schema_v2 import (
+    TelemetryV2,
+    load_telemetry_v2,
+    save_telemetry_v2,
+    ensure_day,
+    update_timing_stats,
+)
 
 
 @dataclass
@@ -98,10 +109,11 @@ class TelemetryEvent:
 
 
 class TelemetryCollector:
-    """Real-time telemetry collection for MCP router.
+    """Real-time telemetry collection for MCP router using v2 schema.
 
     Tracks all tool calls, durations, token estimates, and errors.
     Writes to telemetry.json on every event for real-time dashboard updates.
+    Uses the unified v2 telemetry schema.
     """
 
     # Token estimates by tool type (conservative estimates)
@@ -147,42 +159,12 @@ class TelemetryCollector:
         self._lock = Lock()
         self._pending_requests: dict[str, tuple[str, str, dict, float]] = {}
         self._session_id = datetime.now(timezone.utc).isoformat()
-        self._data = self._load_or_init()
-
-    def _load_or_init(self) -> dict:
-        """Load existing telemetry or initialize fresh."""
-        if self._telemetry_file.exists():
-            try:
-                data = json.loads(self._telemetry_file.read_text())
-                # Start fresh session but keep historical aggregates
-                data["session_id"] = self._session_id
-                data["events"] = []  # Fresh events for this session
-                return data
-            except (json.JSONDecodeError, IOError):
-                pass
-
-        return {
-            "session_id": self._session_id,
-            "session_start": self._session_id,
-            "events": [],
-            "aggregates": {
-                "by_tool": {},
-                "by_backend": {},
-                "subagents": {},
-                "totals": {"calls": 0, "errors": 0, "tokens": 0, "duration_ms": 0},
-                "efficiency": {
-                    "full_chars": 0,
-                    "summary_chars": 0,
-                    "calls_summarized": 0,
-                    "chars_saved": 0
-                }
-            }
-        }
+        self._events: list[dict] = []  # Session events (rolling window)
+        self._data: TelemetryV2 = load_telemetry_v2(self._telemetry_file)
 
     def _save(self) -> None:
-        """Save telemetry to file."""
-        self._telemetry_file.parent.mkdir(parents=True, exist_ok=True)
-        self._telemetry_file.write_text(json.dumps(self._data, indent=2))
+        """Save telemetry to file using v2 schema."""
+        save_telemetry_v2(self._data, self._telemetry_file)
 
     def _estimate_tokens(self, tool: str, subagent_type: str = "") -> int:
         """Estimate tokens for a tool call."""
@@ -190,6 +172,10 @@ class TelemetryCollector:
             return self.SUBAGENT_TOKEN_ESTIMATES.get(subagent_type, 50000)
         base_tool = tool.split("__")[-1] if "__" in tool else tool
         return self.TOKEN_ESTIMATES.get(base_tool, 500)
+
+    def _get_today_key(self) -> str:
+        """Get today's date key in YYYY-MM-DD format."""
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     def track_request(self, destination: str, tool_name: str, args: dict) -> str:
         """Called when a request is made. Returns correlation_id."""
@@ -232,7 +218,7 @@ class TelemetryCollector:
             subagent_type = args.get("subagent_type", "") if tool_name == "Task" else ""
             tokens_est = self._estimate_tokens(tool_name, subagent_type)
 
-            # Create event
+            # Create event for session tracking
             event = {
                 "ts": datetime.now(timezone.utc).isoformat(),
                 "tool": tool_name,
@@ -246,98 +232,113 @@ class TelemetryCollector:
                 "summary_size": summary_size
             }
 
-            # Add to events (rolling window)
-            self._data["events"].append(event)
-            if len(self._data["events"]) > self._max_events:
-                self._data["events"] = self._data["events"][-self._max_events:]
+            # Add to session events (rolling window)
+            self._events.append(event)
+            if len(self._events) > self._max_events:
+                self._events = self._events[-self._max_events:]
 
-            # Update aggregates
-            self._update_aggregates(event, error)
+            # Update v2 telemetry
+            self._update_v2_telemetry(event, error, full_size, summary_size, duration_ms)
 
             # Save immediately for real-time updates
             self._save()
 
-    def _update_aggregates(self, event: dict, error: bool) -> None:
-        """Update aggregate statistics."""
-        agg = self._data["aggregates"]
+    def _update_v2_telemetry(
+        self,
+        event: dict,
+        error: bool,
+        full_size: int,
+        summary_size: int,
+        duration_ms: int
+    ) -> None:
+        """Update v2 telemetry structure."""
+        day_key = self._get_today_key()
+        day_data = ensure_day(self._data, day_key)
 
-        # By tool
+        # Update call counts
+        calls = day_data.setdefault("calls", {"total": 0, "by_tool": {}, "by_backend": {}})
+        calls["total"] = calls.get("total", 0) + 1
+
         tool = event["tool"]
-        if tool not in agg["by_tool"]:
-            agg["by_tool"][tool] = {"count": 0, "tokens": 0, "errors": 0, "duration_ms": 0}
-        agg["by_tool"][tool]["count"] += 1
-        agg["by_tool"][tool]["tokens"] += event["tokens_est"]
-        agg["by_tool"][tool]["duration_ms"] += event["duration_ms"]
-        if error:
-            agg["by_tool"][tool]["errors"] += 1
+        calls.setdefault("by_tool", {})[tool] = calls.get("by_tool", {}).get(tool, 0) + 1
 
-        # By backend
         backend = event["backend"]
-        if backend not in agg["by_backend"]:
-            agg["by_backend"][backend] = {"count": 0, "tokens": 0, "errors": 0, "duration_ms": 0}
-        agg["by_backend"][backend]["count"] += 1
-        agg["by_backend"][backend]["tokens"] += event["tokens_est"]
-        agg["by_backend"][backend]["duration_ms"] += event["duration_ms"]
-        if error:
-            agg["by_backend"][backend]["errors"] += 1
+        calls.setdefault("by_backend", {})[backend] = calls.get("by_backend", {}).get(backend, 0) + 1
 
-        # Subagents
-        if event["subagent_type"]:
-            sa = event["subagent_type"]
-            if sa not in agg["subagents"]:
-                agg["subagents"][sa] = {"count": 0, "tokens": 0, "errors": 0}
-            agg["subagents"][sa]["count"] += 1
-            agg["subagents"][sa]["tokens"] += event["tokens_est"]
-            if error:
-                agg["subagents"][sa]["errors"] += 1
+        # Update timing stats
+        timing = day_data.setdefault("timing", {"avg_response_ms": 0.0, "p95_response_ms": 0.0, "by_backend": {}})
+        update_timing_stats(timing, backend, duration_ms)
 
-        # Totals
-        agg["totals"]["calls"] += 1
-        agg["totals"]["tokens"] += event["tokens_est"]
-        agg["totals"]["duration_ms"] += event["duration_ms"]
-        if error:
-            agg["totals"]["errors"] += 1
-
-        # Efficiency tracking (for summarized responses)
-        full_size = event.get("full_size", 0)
-        summary_size = event.get("summary_size", 0)
+        # Update summarization stats if applicable
         if full_size > 0 and summary_size > 0:
-            # Ensure efficiency dict exists (for backwards compatibility)
-            if "efficiency" not in agg:
-                agg["efficiency"] = {
-                    "full_chars": 0,
-                    "summary_chars": 0,
-                    "calls_summarized": 0,
-                    "chars_saved": 0
-                }
-            agg["efficiency"]["full_chars"] += full_size
-            agg["efficiency"]["summary_chars"] += summary_size
-            agg["efficiency"]["calls_summarized"] += 1
-            agg["efficiency"]["chars_saved"] += (full_size - summary_size)
+            summ = day_data.setdefault("summarization", {
+                "offered": 0, "accepted": 0, "rejected": 0,
+                "acceptance_rate": 0.0, "tokens_saved_est": 0
+            })
+            summ["offered"] = summ.get("offered", 0) + 1
+            summ["accepted"] = summ.get("accepted", 0) + 1  # Router always accepts
+            chars_saved = full_size - summary_size
+            tokens_saved = chars_saved // 4  # ~4 chars per token
+            summ["tokens_saved_est"] = summ.get("tokens_saved_est", 0) + tokens_saved
+            total = summ.get("offered", 1)
+            summ["acceptance_rate"] = summ.get("accepted", 0) / total if total > 0 else 0.0
+
+        # Track session
+        sessions = day_data.setdefault("sessions", [])
+        if self._session_id not in sessions:
+            sessions.append(self._session_id)
 
     def get_summary(self) -> dict:
         """Get current telemetry summary."""
         with self._lock:
-            agg = self._data["aggregates"]
+            day_key = self._get_today_key()
+            day_data = self._data.get("days", {}).get(day_key, {})
 
-            # Compute efficiency metrics
-            eff = agg.get("efficiency", {})
-            full_chars = eff.get("full_chars", 0)
-            summary_chars = eff.get("summary_chars", 0)
+            calls = day_data.get("calls", {})
+            timing = day_data.get("timing", {})
+            summ = day_data.get("summarization", {})
 
-            efficiency_computed = {
-                **eff,
-                "compression_ratio": round(summary_chars / full_chars, 3) if full_chars > 0 else 0,
-                "savings_pct": round((1 - summary_chars / full_chars) * 100, 1) if full_chars > 0 else 0,
-                "tokens_saved_est": (full_chars - summary_chars) // 4 if full_chars > 0 else 0  # ~4 chars/token
-            }
+            # Compute efficiency metrics from summarization data
+            tokens_saved = summ.get("tokens_saved_est", 0)
+            offered = summ.get("offered", 0)
+            
+            # Get socket events if tracked
+            socket_events = getattr(self, '_socket_events', [])
+            socket_summary = {}
+            if socket_events:
+                # Count by status
+                by_status = {}
+                total_duration = 0
+                for evt in socket_events:
+                    status = evt.get("status", "unknown")
+                    by_status[status] = by_status.get(status, 0) + 1
+                    total_duration += evt.get("duration_ms", 0)
+                socket_summary = {
+                    "total": len(socket_events),
+                    "by_status": by_status,
+                    "avg_duration_ms": total_duration // len(socket_events) if socket_events else 0,
+                    "recent": socket_events[-5:]  # Last 5 socket events
+                }
 
             return {
-                "session_id": self._data["session_id"],
-                "event_count": len(self._data["events"]),
-                "aggregates": {**agg, "efficiency": efficiency_computed},
-                "recent_events": self._data["events"][-10:]  # Last 10
+                "session_id": self._session_id,
+                "event_count": len(self._events),
+                "today": day_key,
+                "aggregates": {
+                    "by_tool": calls.get("by_tool", {}),
+                    "by_backend": calls.get("by_backend", {}),
+                    "totals": {"calls": calls.get("total", 0)},
+                    "timing": timing,
+                    "efficiency": {
+                        "calls_summarized": offered,
+                        "tokens_saved_est": tokens_saved,
+                    }
+                },
+                "socket": socket_summary,
+                "recent_events": self._events[-10:]  # Last 10
             }
+
+
 
 
 class MCPRouter:
@@ -385,7 +386,10 @@ class MCPRouter:
         self._lock = Lock()
         self._servers: dict[str, ServerConfig] = {}
         self._connections: dict[str, subprocess.Popen] = {}  # Live backend processes
-        self._backend_locks: dict[str, Lock] = {}  # Per-backend locks
+        self._backend_locks: dict[str, RLock] = {}  # Per-backend locks
+
+        # Shadow cache for workflow state (survives backend respawns)
+        self._workflow_state_cache: dict[str, dict] = {}
 
         # Initialize summarizer (decide provider once at startup)
         self._llm_call: Callable[[str], str] = self._init_summarizer(summarizer, summarizer_model)
@@ -402,7 +406,58 @@ class MCPRouter:
         self._socket_thread: Optional[Thread] = None
         self._socket_port: int = 0
         self._socket_running: bool = False
-        self._port_file = Path.home() / ".claude" / "router.port"
+        self._port_file = Path(__file__).parent.parent / ".state" / "router.port"
+
+    def _cache_workflow_state(self, tool_name: str, args: dict, response: dict) -> None:
+        """Cache workflow state from set/update/start operations."""
+        if tool_name == "workflow_set_state":
+            workflow_id = args.get("workflow_id")
+            state = args.get("state")
+            if workflow_id and state:
+                self._workflow_state_cache[workflow_id] = state
+        elif tool_name == "workflow_start":
+            workflow_id = args.get("workflow_id")
+            state = args.get("initial_state")
+            if workflow_id and state:
+                self._workflow_state_cache[workflow_id] = state
+        elif tool_name == "workflow_stop":
+            workflow_id = args.get("workflow_id")
+            if workflow_id:
+                self._workflow_state_cache.pop(workflow_id, None)
+
+    def _restore_workflow_state(self, server_name: str) -> None:
+        """Restore cached workflow state to a freshly spawned backend."""
+        if server_name != "workflow" or not self._workflow_state_cache:
+            return
+        # Restore each cached workflow
+        server = self._servers.get(server_name)
+        if not server:
+            return
+        for workflow_id, state in self._workflow_state_cache.items():
+            try:
+                self._forward_to_server(server, "workflow_set_state", {
+                    "workflow_id": workflow_id,
+                    "state": state
+                }, _is_restore=True)
+            except Exception:
+                pass  # Best effort  # Best effort
+
+    def clear_workflow_cache(self, workflow_id: str | None = None) -> dict:
+        """Clear cached workflow state.
+        
+        Args:
+            workflow_id: Specific workflow to clear, or None for all.
+            
+        Returns:
+            Dict with cleared workflow IDs.
+        """
+        if workflow_id:
+            existed = self._workflow_state_cache.pop(workflow_id, None) is not None
+            return {"cleared": [workflow_id] if existed else [], "all": False}
+        else:
+            cleared = list(self._workflow_state_cache.keys())
+            self._workflow_state_cache.clear()
+            return {"cleared": cleared, "all": True}
 
     def _init_summarizer(
         self,
@@ -589,12 +644,29 @@ class MCPRouter:
 
     def _socket_accept_loop(self) -> None:
         """Accept connections and spawn handler threads."""
+        self._active_socket_connections = 0
+        self._total_socket_accepts = 0
+        
         while self._socket_running:
             try:
                 self._socket_server.settimeout(1.0)  # Check running flag periodically
                 try:
-                    client, _ = self._socket_server.accept()
-                    Thread(target=self._handle_socket_client, args=(client,), daemon=True).start()
+                    client, addr = self._socket_server.accept()
+                    self._total_socket_accepts += 1
+                    self._active_socket_connections += 1
+                    
+                    # Wrap handler to track connection lifecycle
+                    def handle_and_track(c, conn_id):
+                        try:
+                            self._handle_socket_client(c)
+                        finally:
+                            self._active_socket_connections -= 1
+                    
+                    Thread(
+                        target=handle_and_track,
+                        args=(client, self._total_socket_accepts),
+                        daemon=True
+                    ).start()
                 except socket.timeout:
                     continue
             except Exception:
@@ -608,7 +680,14 @@ class MCPRouter:
         Reads JSON-RPC request, routes it, sends response.
         Connection is closed after one request-response cycle.
         """
+        import time
+        start_time = time.time()
+        tool_name = "unknown"
+        
         try:
+            # Set timeout on socket operations
+            client.settimeout(30.0)  # 30 second timeout for reads
+            
             # Read request (newline-delimited JSON)
             data = b""
             while b"\n" not in data:
@@ -661,8 +740,29 @@ class MCPRouter:
                 "result": result
             }
             client.sendall(json.dumps(response).encode() + b"\n")
+            
+            # Track successful socket request in telemetry
+            duration_ms = int((time.time() - start_time) * 1000)
+            if self.telemetry:
+                self._track_socket_event("success", tool_name, duration_ms)
 
+        except socket.timeout:
+            duration_ms = int((time.time() - start_time) * 1000)
+            if self.telemetry:
+                self._track_socket_event("timeout", tool_name, duration_ms)
+            try:
+                error_response = {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32603, "message": "Socket timeout"}
+                }
+                client.sendall(json.dumps(error_response).encode() + b"\n")
+            except Exception:
+                pass
         except Exception as e:
+            duration_ms = int((time.time() - start_time) * 1000)
+            if self.telemetry:
+                self._track_socket_event("error", tool_name, duration_ms, str(e)[:100])
             try:
                 error_response = {
                     "jsonrpc": "2.0",
@@ -677,6 +777,69 @@ class MCPRouter:
                 client.close()
             except Exception:
                 pass
+
+    def _track_socket_event(
+        self,
+        status: str,
+        tool_name: str,
+        duration_ms: int,
+        error_msg: str = ""
+    ) -> None:
+        """Track socket connection event in telemetry.
+        
+        Args:
+            status: "success", "timeout", or "error"
+            tool_name: Tool that was called
+            duration_ms: Request duration in milliseconds
+            error_msg: Error message if any
+        """
+        if not self.telemetry:
+            return
+            
+        # Add to telemetry data under socket_events
+        with self.telemetry._lock:
+            if not hasattr(self.telemetry, '_socket_events'):
+                self.telemetry._socket_events = []
+            
+            event = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "status": status,
+                "tool": tool_name,
+                "duration_ms": duration_ms,
+                "error_msg": error_msg
+            }
+            self.telemetry._socket_events.append(event)
+            
+            # Keep last 100 events
+            if len(self.telemetry._socket_events) > 100:
+                self.telemetry._socket_events = self.telemetry._socket_events[-100:]
+
+    def get_socket_stats(self) -> dict:
+        """Get current socket connection statistics.
+        
+        Returns:
+            Dict with active connections, total accepts, and event summary
+        """
+        active = getattr(self, '_active_socket_connections', 0)
+        total = getattr(self, '_total_socket_accepts', 0)
+        
+        socket_events = []
+        if self.telemetry:
+            socket_events = getattr(self.telemetry, '_socket_events', [])
+        
+        # Count by status
+        by_status = {}
+        for evt in socket_events:
+            status = evt.get("status", "unknown")
+            by_status[status] = by_status.get(status, 0) + 1
+        
+        return {
+            "active_connections": active,
+            "total_accepts": total,
+            "events_tracked": len(socket_events),
+            "by_status": by_status,
+            "recent_events": socket_events[-10:] if socket_events else []
+        }
 
     def list_servers(self) -> list[dict]:
         """List all registered servers.
@@ -801,11 +964,15 @@ class MCPRouter:
         hash_digest = hashlib.sha256(content.encode()).hexdigest()[:12]
         return f"req-{hash_digest}"
 
-    def _get_backend_lock(self, server_name: str) -> Lock:
-        """Get or create lock for a backend server."""
+    def _get_backend_lock(self, server_name: str) -> RLock:
+        """Get or create reentrant lock for a backend server.
+        
+        Uses RLock to allow recursive calls (e.g., _restore_workflow_state
+        calling _forward_to_server while lock is held).
+        """
         with self._lock:
             if server_name not in self._backend_locks:
-                self._backend_locks[server_name] = Lock()
+                self._backend_locks[server_name] = RLock()
             return self._backend_locks[server_name]
 
     def _get_connection(self, server: ServerConfig) -> subprocess.Popen:
@@ -884,7 +1051,8 @@ class MCPRouter:
         self,
         server: ServerConfig,
         tool_name: str,
-        args: dict
+        args: dict,
+        _is_restore: bool = False
     ) -> dict:
         """Forward request to target MCP server.
 
@@ -895,6 +1063,7 @@ class MCPRouter:
             server: Target server config
             tool_name: Tool to invoke
             args: Tool arguments
+            _is_restore: Internal flag to prevent infinite recursion during state restore
 
         Returns:
             Response dict from target server
@@ -903,7 +1072,13 @@ class MCPRouter:
 
         with backend_lock:
             try:
+                # Check if this is a fresh connection (for state restoration)
+                is_new_connection = server.name not in self._connections
                 proc = self._get_connection(server)
+
+                # Restore cached state if this is a fresh workflow backend
+                if is_new_connection and server.name == "workflow" and not _is_restore:
+                    self._restore_workflow_state(server.name)
 
                 # Build request
                 request_id = hash((tool_name, json.dumps(args, sort_keys=True))) & 0xFFFFFFFF
@@ -932,14 +1107,26 @@ class MCPRouter:
                 proc.stdin.write(line)  # type: ignore[union-attr]
                 proc.stdin.flush()  # type: ignore[union-attr]
 
-                # Receive response
+                # Receive response with timeout to prevent indefinite blocking
+                ready, _, _ = select.select([proc.stdout], [], [], 30.0)
+                if not ready:
+                    # Timeout - backend not responding, clean up connection
+                    self._connections.pop(server.name, None)
+                    return {"error": {"code": -32603, "message": f"Timeout waiting for {server.name}"}}
+
                 response_line = proc.stdout.readline()  # type: ignore[union-attr]
                 if not response_line:
                     # Connection died, remove and retry once
                     self._connections.pop(server.name, None)
                     return self._forward_to_server(server, tool_name, args)
 
-                return json.loads(response_line.strip())
+                response = json.loads(response_line.strip())
+
+                # Cache workflow state on successful operations
+                if server.name == "workflow" and "error" not in response and not _is_restore:
+                    self._cache_workflow_state(tool_name, args, response)
+
+                return response
 
             except json.JSONDecodeError as e:
                 self._connections.pop(server.name, None)
@@ -1148,6 +1335,7 @@ def analyze_telemetry_trends(telemetry: TelemetryCollector) -> dict:
     """Analyze telemetry data for trends and effectiveness.
 
     Returns analysis of token usage patterns and optimization effectiveness.
+    Works with v2 telemetry schema.
     """
     summary = telemetry.get_summary()
     events = summary.get("recent_events", [])
@@ -1156,6 +1344,7 @@ def analyze_telemetry_trends(telemetry: TelemetryCollector) -> dict:
     analysis = {
         "session_id": summary.get("session_id", ""),
         "total_events": summary.get("event_count", 0),
+        "today": summary.get("today", ""),
         "totals": agg.get("totals", {}),
         "trends": {},
         "recommendations": []
@@ -1189,44 +1378,46 @@ def analyze_telemetry_trends(telemetry: TelemetryCollector) -> dict:
             else:
                 analysis["trends"]["verdict"] = "STABLE"
 
-    # Check for high-token tools
+    # Check for high-call tools (v2 schema has counts, not token totals per tool)
     by_tool = agg.get("by_tool", {})
-    high_token_tools = [
-        (tool, data["tokens"])
-        for tool, data in by_tool.items()
-        if data.get("tokens", 0) > 10000
+    high_call_tools = [
+        (tool, count)
+        for tool, count in by_tool.items()
+        if isinstance(count, int) and count > 50
     ]
-    if high_token_tools:
-        sorted_tools = sorted(high_token_tools, key=lambda x: x[1], reverse=True)[:3]
-        analysis["top_token_consumers"] = [
-            {"tool": t, "tokens": v} for t, v in sorted_tools
+    if high_call_tools:
+        sorted_tools = sorted(high_call_tools, key=lambda x: x[1], reverse=True)[:3]
+        analysis["top_tool_callers"] = [
+            {"tool": t, "calls": v} for t, v in sorted_tools
         ]
         analysis["recommendations"].append(
-            f"High token usage in: {', '.join(t for t, _ in sorted_tools)}"
+            f"High call count in: {', '.join(t for t, _ in sorted_tools)}"
         )
 
-    # Check subagent usage
-    subagents = agg.get("subagents", {})
-    if subagents:
-        total_subagent_tokens = sum(s.get("tokens", 0) for s in subagents.values())
-        total_tokens = agg.get("totals", {}).get("tokens", 1)
-        subagent_pct = (total_subagent_tokens / total_tokens) * 100 if total_tokens else 0
-        analysis["subagent_token_pct"] = round(subagent_pct, 1)
+    # Timing analysis
+    timing = agg.get("timing", {})
+    by_backend = timing.get("by_backend", {})
+    slow_backends = [
+        (backend, stats.get("avg_ms", 0))
+        for backend, stats in by_backend.items()
+        if isinstance(stats, dict) and stats.get("avg_ms", 0) > 1000
+    ]
+    if slow_backends:
+        analysis["slow_backends"] = [
+            {"backend": b, "avg_ms": round(ms, 1)} for b, ms in slow_backends
+        ]
+        analysis["recommendations"].append(
+            f"Slow response times from: {', '.join(b for b, _ in slow_backends)}"
+        )
 
-        if subagent_pct > 50:
-            analysis["recommendations"].append(
-                f"Subagents account for {subagent_pct:.0f}% of tokens - consider using smaller scoped tasks"
-            )
-
-    # Error rate
-    totals = agg.get("totals", {})
-    if totals.get("calls", 0) > 0:
-        error_rate = (totals.get("errors", 0) / totals["calls"]) * 100
-        analysis["error_rate_pct"] = round(error_rate, 1)
-        if error_rate > 10:
-            analysis["recommendations"].append(
-                f"High error rate ({error_rate:.0f}%) - review failing tools"
-            )
+    # Summarization efficiency
+    efficiency = agg.get("efficiency", {})
+    tokens_saved = efficiency.get("tokens_saved_est", 0)
+    if tokens_saved > 0:
+        analysis["tokens_saved_est"] = tokens_saved
+        analysis["recommendations"].append(
+            f"Summarization saved approximately {tokens_saved} tokens"
+        )
 
     return analysis
 
@@ -1265,6 +1456,16 @@ def start_stdio_server(router: MCPRouter):
                 "name": "router__telemetry_analysis",
                 "description": "Get analysis of token usage trends and optimization effectiveness",
                 "inputSchema": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "router__clear_workflow_cache",
+                "description": "Clear cached workflow state. Pass workflow_id to clear specific workflow, or omit for all.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "workflow_id": {"type": "string", "description": "Workflow ID to clear (optional, omit for all)"}
+                    }
+                },
             },
         ]
         for server in router.list_servers():
@@ -1324,6 +1525,7 @@ def start_stdio_server(router: MCPRouter):
                 elif tool_name == "router__telemetry":
                     if router.telemetry:
                         summary = router.telemetry.get_summary()
+                        summary["socket_stats"] = router.get_socket_stats()
                         result = {"content": [{"type": "text", "text": json.dumps(summary, indent=2)}]}
                     else:
                         result = {"content": [{"type": "text", "text": "Telemetry not enabled"}]}
@@ -1334,6 +1536,11 @@ def start_stdio_server(router: MCPRouter):
                         result = {"content": [{"type": "text", "text": json.dumps(analysis, indent=2)}]}
                     else:
                         result = {"content": [{"type": "text", "text": "Telemetry not enabled"}]}
+
+                elif tool_name == "router__clear_workflow_cache":
+                    workflow_id = args.get("workflow_id")
+                    result_data = router.clear_workflow_cache(workflow_id)
+                    result = {"content": [{"type": "text", "text": json.dumps(result_data, indent=2)}]}
 
                 # Parse prefix__toolname for backend routing
                 elif "__" in tool_name:

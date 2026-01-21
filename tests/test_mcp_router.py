@@ -378,5 +378,46 @@ class TestStdioServer:
             assert request_id == 42
 
 
+class TestReentrantLock:
+    """Tests for reentrant lock support in backend locks."""
+
+    def test_backend_lock_is_reentrant(self):
+        """Test that backend locks are RLock (reentrant).
+        
+        This is critical for _restore_workflow_state which calls
+        _forward_to_server while already holding the backend lock.
+        """
+        from threading import RLock
+        
+        router = MCPRouter.__new__(MCPRouter)
+        router._lock = RLock()
+        router._backend_locks = {}
+        
+        lock = router._get_backend_lock("test")
+        # RLock() returns RLock type, check by type name
+        assert type(lock).__name__ == "RLock", "Backend lock should be RLock for reentrant support"
+    
+    def test_reentrant_acquisition_succeeds(self):
+        """Test that the same thread can acquire the lock multiple times."""
+        from threading import RLock
+        
+        router = MCPRouter.__new__(MCPRouter)
+        router._lock = RLock()
+        router._backend_locks = {}
+        
+        lock = router._get_backend_lock("test")
+        
+        # First acquisition
+        acquired_first = lock.acquire(timeout=1)
+        assert acquired_first, "First lock acquisition should succeed"
+        
+        # Second (reentrant) acquisition - this would deadlock with regular Lock
+        acquired_second = lock.acquire(timeout=1)
+        assert acquired_second, "Second (reentrant) lock acquisition should succeed"
+        
+        lock.release()
+        lock.release()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

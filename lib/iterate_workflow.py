@@ -288,9 +288,11 @@ def start(
         starting_phase = Phase.ORCHESTRATE.value
         needs_intake = False
     else:
-        # Vague task: needs intake/discovery first
-        starting_phase = Phase.INTAKE.value
-        needs_intake = True
+        # Main agent starts in ORCHESTRATE - ready to spawn subagents
+        # Can kick back to INTAKE if needs context (then: INTAKE → DESIGN → ORCHESTRATE)
+        # Main agent NEVER enters IMPLEMENT - only subagents do
+        starting_phase = Phase.ORCHESTRATE.value
+        needs_intake = False
 
     state = {
         "active": True,
@@ -310,6 +312,7 @@ def start(
     workflow_client.workflow_set_state("iterate", state)
     _log("info", "Workflow started", task=task[:50], phase=Phase.ORCHESTRATE.value,
          agent_id=effective_agent_id)
+    print_status_banner()
     return state
 
 
@@ -425,6 +428,7 @@ def set_phase(phase: Phase) -> None:
 
     state["phase"] = phase.value
     workflow_client.workflow_set_state("iterate", state)
+    _print_phase_transition(current_phase or "none", phase.value)
 
 
 def advance_phase() -> Optional[Phase]:
@@ -1443,7 +1447,7 @@ if __name__ == "__main__":
         start(task, spec=spec, queue=queue, max_iterations=max_iter, agent_id=agent_id)
         print(status())
     elif cmd == "status":
-        print(status())
+        print_status_banner()
     elif cmd == "phase":
         phase = get_phase()
         print(phase.value if phase else "none")

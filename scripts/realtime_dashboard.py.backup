@@ -450,16 +450,6 @@ def generate_dashboard():
 
         </div>
 
-        <h3 id="sessions" class="section-title">Sessions</h3>
-        <div class="grid">
-            <div class="card wide-card">
-                <h2>Recent Sessions</h2>
-                <div class="tool-list" id="sessionsList">
-                    <div class="no-data">Loading sessions...</div>
-                </div>
-            </div>
-        </div>
-
         <h3 id="analysis" class="section-title">Analysis</h3>
         <div class="grid">
             <div class="card">
@@ -520,7 +510,7 @@ def generate_dashboard():
 
         // Update nav on scroll
         window.addEventListener('scroll', () => {
-            const sections = ['overview', 'charts', 'sessions', 'analysis', 'logs'];
+            const sections = ['overview', 'charts', 'analysis', 'logs'];
             let current = sections[0];
             for (const id of sections) {
                 const el = document.getElementById(id);
@@ -777,33 +767,6 @@ def generate_dashboard():
                 data.aggregates.subagents = {};
             }
 
-            // Build sessions array from days[*].by_session
-            if (!data.sessions && data.days) {
-                data.sessions = [];
-                for (const [date, dayData] of Object.entries(data.days)) {
-                    if (dayData.by_session) {
-                        for (const [sessionId, sessionData] of Object.entries(dayData.by_session)) {
-                            const sessionTokens = sessionData.tokens || {};
-                            const sessionCalls = sessionData.calls || {};
-                            data.sessions.push({
-                                id: sessionId,
-                                date: date,
-                                start_time: sessionData.start_time,
-                                end_time: sessionData.end_time,
-                                tokens: (sessionTokens.input || 0) + (sessionTokens.output || 0),
-                                calls: sessionCalls.total || 0
-                            });
-                        }
-                    }
-                }
-                // Sort by start_time descending (most recent first)
-                data.sessions.sort((a, b) => {
-                    const timeA = a.start_time ? new Date(a.start_time).getTime() : 0;
-                    const timeB = b.start_time ? new Date(b.start_time).getTime() : 0;
-                    return timeB - timeA;
-                });
-            }
-
             return data;
         }
 
@@ -901,7 +864,6 @@ def generate_dashboard():
             updateSummaryEffectiveness(data);
             updateSequenceAlerts(data);
             updateConcurrency(data);
-            updateSessionsTable(data.sessions || []);
 
             // Update timestamp
             document.getElementById('lastUpdate').textContent =
@@ -1197,56 +1159,6 @@ def generate_dashboard():
             if (backpressure > 0) {
                 bpEl.style.color = '#fbbf24';
             }
-        }
-
-        function formatDuration(startTime, endTime) {
-            if (!startTime || !endTime) return 'N/A';
-            const start = new Date(startTime).getTime();
-            const end = new Date(endTime).getTime();
-            const durationMs = end - start;
-            
-            if (durationMs < 0) return 'N/A';
-            
-            const seconds = Math.floor(durationMs / 1000);
-            const minutes = Math.floor(seconds / 60);
-            const hours = Math.floor(minutes / 60);
-            
-            if (hours > 0) {
-                const remainingMinutes = minutes % 60;
-                return hours + 'h ' + remainingMinutes + 'm';
-            } else if (minutes > 0) {
-                const remainingSeconds = seconds % 60;
-                return minutes + 'm ' + remainingSeconds + 's';
-            } else {
-                return seconds + 's';
-            }
-        }
-
-        function updateSessionsTable(sessions) {
-            const el = document.getElementById('sessionsList');
-            
-            if (!sessions || sessions.length === 0) {
-                el.innerHTML = '<div class="no-data">No sessions recorded yet</div>';
-                return;
-            }
-            
-            // Take max 20 most recent sessions
-            const recentSessions = sessions.slice(0, 20);
-            
-            el.innerHTML = recentSessions.map(s => {
-                const sessionIdShort = s.id.substring(0, 8);
-                const duration = formatDuration(s.start_time, s.end_time);
-                const dateDisplay = s.date || 'Unknown';
-                
-                return `
-                    <div class="tool-item">
-                        <div class="tool-name">${sessionIdShort}... (${dateDisplay})</div>
-                        <div class="tool-stats">
-                            ${formatNumber(s.tokens || 0)} tokens / ${s.calls || 0} calls / ${duration}
-                        </div>
-                    </div>
-                `;
-            }).join('');
         }
 
         function updateRecommendations(data) {

@@ -23,7 +23,7 @@ All times displayed in EST.
 import json
 import sys
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import defaultdict
 
 STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
@@ -32,6 +32,78 @@ HISTORY_FILE = STATE_DIR / "metrics_history.json"
 ACTIVITY_LOG = STATE_DIR / "activity.log"
 SUBAGENT_METRICS = STATE_DIR / "subagent_metrics.json"
 TELEMETRY_FILE = STATE_DIR / "telemetry.json"
+
+
+def load_telemetry():
+    """Load telemetry data with v2.0 schema support.
+    
+    Returns a dict with:
+    - events: list of recent events (v1 compatible)
+    - aggregates: dict with by_tool, by_backend, totals (v1 compatible)
+    - days: dict of day data (v2 feature)
+    - filters: available filter options (v2 feature)
+    """
+    if not TELEMETRY_FILE.exists():
+        return None
+    
+    telemetry = json.loads(TELEMETRY_FILE.read_text())
+    
+    # Check if v2.0 schema
+    if telemetry.get("version") == "2.0":
+        # Build v1-compatible aggregates from v2 structure
+        all_time = telemetry.get("aggregates", {}).get("all_time", {})
+        
+        # Convert v2 all_time.calls.by_tool to v1 format
+        v1_by_tool = {}
+        for tool, count in all_time.get("calls", {}).get("by_tool", {}).items():
+            v1_by_tool[tool] = {
+                "count": count,
+                "errors": 0,  # v2 doesn't track errors per tool
+                "tokens": 0,  # v2 tracks tokens at day level
+                "duration_ms": 0
+            }
+        
+        v1_by_backend = {}
+        for backend, count in all_time.get("calls", {}).get("by_backend", {}).items():
+            v1_by_backend[backend] = {
+                "count": count,
+                "errors": 0,  # v2 doesn't track errors per backend
+                "tokens": 0,
+                "duration_ms": 0
+            }
+        
+        v1_totals = {
+            "calls": all_time.get("calls", {}).get("total", 0),
+            "errors": 0,
+            "tokens": all_time.get("tokens", {}).get("total", 0),
+            "duration_ms": 0
+        }
+        
+        telemetry["aggregates"] = {
+            "by_tool": v1_by_tool,
+            "by_backend": v1_by_backend,
+            "totals": v1_totals,
+            "subagents": {}
+        }
+        
+        # Build daily_summaries from v2 days for backward compatibility
+        daily_summaries = {}
+        for day_key, day_data in telemetry.get("days", {}).items():
+            daily_summaries[day_key] = {
+                "calls": day_data.get("calls", {}).get("total", 0),
+                "tokens": day_data.get("tokens", {}).get("input", 0) + day_data.get("tokens", {}).get("output", 0),
+                "errors": 0,
+                "duration_ms": 0,
+                "input_tokens": day_data.get("tokens", {}).get("input", 0),
+                "output_tokens": day_data.get("tokens", {}).get("output", 0),
+                "cache_read": day_data.get("tokens", {}).get("cache_read", 0),
+                "cache_create": day_data.get("tokens", {}).get("cache_creation", 0),
+            }
+        telemetry["daily_summaries"] = daily_summaries
+    
+    return telemetry
+
+
 
 def ensure_charts_dir():
     """Create charts directory if needed."""
@@ -90,6 +162,54 @@ def get_chart_dropdown_css():
             border-color: #4cc9f0;
         }
 """
+
+
+def generate_chart_colors(n):
+    """Generate n distinct colors using HSL color wheel.
+    
+    Args:
+        n: Number of colors to generate
+        
+    Returns:
+        List of RGBA color strings for chart.js
+    """
+    if n == 0:
+        return []
+    
+    colors = []
+    for i in range(n):
+        # Evenly space hues around color wheel
+        hue = int(i * (360 / n))
+        # Keep saturation at 70% and lightness at 60% for good visibility
+        saturation = 70
+        lightness = 60
+        
+        # Convert HSL to RGB
+        c = (1 - abs(2 * lightness / 100 - 1)) * saturation / 100
+        x = c * (1 - abs((hue / 60) % 2 - 1))
+        m = lightness / 100 - c / 2
+        
+        if hue < 60:
+            r, g, b = c, x, 0
+        elif hue < 120:
+            r, g, b = x, c, 0
+        elif hue < 180:
+            r, g, b = 0, c, x
+        elif hue < 240:
+            r, g, b = 0, x, c
+        elif hue < 300:
+            r, g, b = x, 0, c
+        else:
+            r, g, b = c, 0, x
+        
+        # Convert to 0-255 range and add margin
+        r = int((r + m) * 255)
+        g = int((g + m) * 255)
+        b = int((b + m) * 255)
+        
+        colors.append(f'rgba({r}, {g}, {b}, 0.8)')
+    
+    return colors
 
 
 def get_chart_dropdown_html(options, default_value=None):
@@ -291,11 +411,10 @@ def chart_efficiency_trend():
     # EST timezone offset (UTC-5)
     EST = timezone(timedelta(hours=-5))
 
-    if not TELEMETRY_FILE.exists():
+    telemetry = load_telemetry()
+    if telemetry is None:
         print("⚠️  No telemetry data found")
         return None
-
-    telemetry = json.loads(TELEMETRY_FILE.read_text())
     events = telemetry.get("events", [])
 
     if len(events) < 2:
@@ -524,11 +643,10 @@ def chart_tool_usage():
     # EST timezone offset (UTC-5)
     EST = timezone(timedelta(hours=-5))
 
-    if not TELEMETRY_FILE.exists():
+    telemetry = load_telemetry()
+    if telemetry is None:
         print("⚠️  No telemetry data found")
         return None
-
-    telemetry = json.loads(TELEMETRY_FILE.read_text())
     events = telemetry.get("events", [])
     aggregates = telemetry.get("aggregates", {})
 
@@ -818,11 +936,10 @@ def chart_subagents(session_filter=None):
     # EST timezone offset (UTC-5)
     EST = timezone(timedelta(hours=-5))
 
-    if not TELEMETRY_FILE.exists():
+    telemetry = load_telemetry()
+    if telemetry is None:
         print("⚠️  No telemetry data found")
         return None
-
-    telemetry = json.loads(TELEMETRY_FILE.read_text())
     subagents = telemetry.get("aggregates", {}).get("subagents", {})
 
     if not subagents:
@@ -881,11 +998,10 @@ def chart_token_trend():
     # EST timezone offset (UTC-5)
     EST = timezone(timedelta(hours=-5))
 
-    if not TELEMETRY_FILE.exists():
+    telemetry = load_telemetry()
+    if telemetry is None:
         print("⚠️  No telemetry data found")
         return None
-
-    telemetry = json.loads(TELEMETRY_FILE.read_text())
     # Prefer actual data if available
     daily_summaries = telemetry.get("daily_summaries_actual", telemetry.get("daily_summaries", {}))
     events = telemetry.get("events", [])
@@ -1467,13 +1583,7 @@ def chart_realtime_telemetry():
                 labels: {json.dumps(backend_labels)},
                 datasets: [{{
                     data: {json.dumps(backend_tokens)},
-                    backgroundColor: [
-                        'rgba(76, 201, 240, 0.8)',
-                        'rgba(74, 222, 128, 0.8)',
-                        'rgba(251, 191, 36, 0.8)',
-                        'rgba(248, 113, 113, 0.8)',
-                        'rgba(167, 139, 250, 0.8)'
-                    ]
+                    backgroundColor: {json.dumps(generate_chart_colors(len(backend_labels)))}
                 }}]
             }},
             options: {{
@@ -1520,11 +1630,10 @@ def chart_latency_by_tool():
     """Chart average latency (duration) by tool - find slow tools with time filtering."""
     from datetime import datetime, timedelta, timezone
     
-    if not TELEMETRY_FILE.exists():
+    telemetry = load_telemetry()
+    if telemetry is None:
         print("⚠️  No telemetry data found")
         return None
-
-    telemetry = json.loads(TELEMETRY_FILE.read_text())
     events = telemetry.get("events", [])
     by_tool_all = telemetry.get("aggregates", {}).get("by_tool", {})
 
@@ -1710,11 +1819,10 @@ def chart_latency_by_tool():
 
 def chart_error_timeline():
     """Chart errors over time to spot error spikes."""
-    if not TELEMETRY_FILE.exists():
+    telemetry = load_telemetry()
+    if telemetry is None:
         print("⚠️  No telemetry data found")
         return None
-
-    telemetry = json.loads(TELEMETRY_FILE.read_text())
     events = telemetry.get("events", [])
     daily_summaries = telemetry.get("daily_summaries", {})
 
@@ -1741,7 +1849,7 @@ def chart_error_timeline():
         # Create a midday entry for each day
         ts_key = f"{date_str}T12"
         if ts_key not in hourly_data:
-            hourly_data[ts_key]["total"] = summary.get("total_calls", 0)
+            hourly_data[ts_key]["total"] = summary.get("calls", 0)
             hourly_data[ts_key]["errors"] = summary.get("errors", 0)
 
     # Sort all data by time
@@ -1891,11 +1999,10 @@ def chart_error_timeline():
 
 def chart_activity_heatmap():
     """Chart activity by hour of day - see work patterns."""
-    if not TELEMETRY_FILE.exists():
+    telemetry = load_telemetry()
+    if telemetry is None:
         print("⚠️  No telemetry data found")
         return None
-
-    telemetry = json.loads(TELEMETRY_FILE.read_text())
     events = telemetry.get("events", [])
     daily_summaries = telemetry.get("daily_summaries", {})
 
@@ -2040,11 +2147,10 @@ def chart_native_vs_mcp():
     """Compare native Claude tools vs MCP tools with time filtering."""
     from datetime import datetime, timedelta, timezone
 
-    if not TELEMETRY_FILE.exists():
+    telemetry = load_telemetry()
+    if telemetry is None:
         print("⚠️  No telemetry data found")
         return None
-
-    telemetry = json.loads(TELEMETRY_FILE.read_text())
     events = telemetry.get("events", [])
     by_backend = telemetry.get("aggregates", {}).get("by_backend", {})
 
@@ -2249,11 +2355,10 @@ def chart_token_efficiency():
     """Chart token efficiency - tokens per call ratio by tool with time filtering."""
     from datetime import datetime, timezone
 
-    if not TELEMETRY_FILE.exists():
+    telemetry = load_telemetry()
+    if telemetry is None:
         print("⚠️  No telemetry data found")
         return None
-
-    telemetry = json.loads(TELEMETRY_FILE.read_text())
     events = telemetry.get("events", [])
     by_tool = telemetry.get("aggregates", {}).get("by_tool", {})
 
@@ -2424,11 +2529,10 @@ def chart_compression_ratio():
     """Chart summarization compression ratio with time filtering."""
     from datetime import datetime, timezone
 
-    if not TELEMETRY_FILE.exists():
+    telemetry = load_telemetry()
+    if telemetry is None:
         print("⚠️  No telemetry data found")
         return None
-
-    telemetry = json.loads(TELEMETRY_FILE.read_text())
     events = telemetry.get("events", [])
     efficiency = telemetry.get("aggregates", {}).get("efficiency", {})
 
@@ -2615,11 +2719,10 @@ def chart_tokens_saved():
     """Chart cumulative tokens saved over time via summarization with time filtering."""
     from datetime import datetime, timezone
 
-    if not TELEMETRY_FILE.exists():
+    telemetry = load_telemetry()
+    if telemetry is None:
         print("⚠️  No telemetry data found")
         return None
-
-    telemetry = json.loads(TELEMETRY_FILE.read_text())
     events = telemetry.get("events", [])
 
     # Filter events with efficiency data
@@ -2760,11 +2863,10 @@ def chart_tokens_saved():
 
 def chart_cache_efficiency():
     """Chart cache hit rate over time using actual token data."""
-    if not TELEMETRY_FILE.exists():
+    telemetry = load_telemetry()
+    if telemetry is None:
         print("⚠️  No telemetry data found")
         return None
-
-    telemetry = json.loads(TELEMETRY_FILE.read_text())
 
     # Try daily_summaries_actual first, then fall back to daily_summaries
     daily = telemetry.get("daily_summaries_actual", {})
@@ -2932,11 +3034,10 @@ def chart_cache_efficiency():
 
 def chart_session_comparison():
     """Compare metrics across sessions."""
-    if not TELEMETRY_FILE.exists():
+    telemetry = load_telemetry()
+    if telemetry is None:
         print("⚠️  No telemetry data found")
         return None
-
-    telemetry = json.loads(TELEMETRY_FILE.read_text())
     events = telemetry.get("events", [])
 
     if not events:
@@ -3057,11 +3158,10 @@ def chart_blocked_tools():
     """Chart blocked/errored tools with time filtering."""
     from datetime import datetime, timezone
 
-    if not TELEMETRY_FILE.exists():
+    telemetry = load_telemetry()
+    if telemetry is None:
         print("⚠️  No telemetry data found")
         return None
-
-    telemetry = json.loads(TELEMETRY_FILE.read_text())
     events = telemetry.get("events", [])
     by_tool = telemetry.get("aggregates", {}).get("by_tool", {})
 

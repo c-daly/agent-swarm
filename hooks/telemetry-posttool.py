@@ -2,16 +2,31 @@
 """PostToolUse telemetry hook - completes tracking for ALL tool calls.
 
 Pairs with telemetry-pretool.py to record duration and status.
-Writes to centralized telemetry.json for dashboard consumption.
+Writes to centralized telemetry.json using v2.0 unified schema.
 
-Now extracts ACTUAL token usage from transcript when available.
+Extracts ACTUAL token usage from transcript when available.
 """
 
 import sys
 import json
 import time
+import os
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Add lib to path for schema imports
+sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
+
+from telemetry_schema_v2 import (
+    load_telemetry_v2,
+    save_telemetry_v2,
+    ensure_day,
+    update_timing_stats,
+    recompute_aggregates,
+    update_filter_options,
+    default_token_data,
+    default_call_data,
+)
 
 # Shared state files
 PENDING_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/telemetry_pending.json"
@@ -58,11 +73,7 @@ MAX_EVENTS = 500
 
 
 def extract_tokens_from_transcript(transcript_path: str) -> dict | None:
-    """Extract actual token usage from the conversation transcript.
-
-    Returns dict with input_tokens, output_tokens, cache_read_input_tokens, etc.
-    or None if not available.
-    """
+    """Extract actual token usage from the conversation transcript."""
     if not transcript_path:
         return None
 
@@ -71,12 +82,10 @@ def extract_tokens_from_transcript(transcript_path: str) -> dict | None:
         return None
 
     try:
-        # Read the last few lines efficiently (usage is in recent entries)
         content = path.read_text()
         lines = content.strip().split('\n')
 
-        # Search backwards for the most recent usage entry
-        for line in reversed(lines[-20:]):  # Check last 20 entries
+        for line in reversed(lines[-20:]):
             try:
                 entry = json.loads(line)
                 if "message" in entry and "usage" in entry.get("message", {}):
@@ -121,7 +130,6 @@ def estimate_tokens(tool_name: str, subagent_type: str = "") -> int:
     if subagent_type:
         return SUBAGENT_TOKEN_ESTIMATES.get(subagent_type, 50000)
 
-    # Check for MCP tool (extract base name)
     if tool_name.startswith("mcp__"):
         parts = tool_name.split("__")
         base_name = parts[-1] if parts else tool_name
@@ -144,60 +152,9 @@ def detect_error(tool_output) -> tuple[bool, str]:
     return False, ""
 
 
-def update_aggregates(telemetry: dict, event: dict, is_error: bool) -> None:
-    """Update aggregate statistics."""
-    agg = telemetry.setdefault("aggregates", {})
-    # Ensure all required keys exist (handles partial/legacy data)
-    agg.setdefault("by_tool", {})
-    agg.setdefault("by_backend", {})
-    agg.setdefault("subagents", {})
-    agg.setdefault("totals", {})
-    # Handle legacy data missing tokens/duration keys
-    totals = agg["totals"]
-    totals.setdefault("calls", 0)
-    totals.setdefault("errors", 0)
-    totals.setdefault("tokens", 0)
-    totals.setdefault("duration_ms", 0)
-
-    tool = event["tool"]
-    backend = event["backend"]
-    tokens = event["tokens"]
-    duration = event["duration_ms"]
-
-    # By tool
-    if tool not in agg["by_tool"]:
-        agg["by_tool"][tool] = {"count": 0, "tokens": 0, "errors": 0, "duration_ms": 0}
-    agg["by_tool"][tool]["count"] += 1
-    agg["by_tool"][tool]["tokens"] += tokens
-    agg["by_tool"][tool]["duration_ms"] += duration
-    if is_error:
-        agg["by_tool"][tool]["errors"] += 1
-
-    # By backend
-    if backend not in agg["by_backend"]:
-        agg["by_backend"][backend] = {"count": 0, "tokens": 0, "errors": 0, "duration_ms": 0}
-    agg["by_backend"][backend]["count"] += 1
-    agg["by_backend"][backend]["tokens"] += tokens
-    agg["by_backend"][backend]["duration_ms"] += duration
-    if is_error:
-        agg["by_backend"][backend]["errors"] += 1
-
-    # Subagents
-    if event.get("subagent_type"):
-        sa = event["subagent_type"]
-        if sa not in agg["subagents"]:
-            agg["subagents"][sa] = {"count": 0, "tokens": 0, "errors": 0}
-        agg["subagents"][sa]["count"] += 1
-        agg["subagents"][sa]["tokens"] += tokens
-        if is_error:
-            agg["subagents"][sa]["errors"] += 1
-
-    # Totals
-    agg["totals"]["calls"] += 1
-    agg["totals"]["tokens"] += tokens
-    agg["totals"]["duration_ms"] += duration
-    if is_error:
-        agg["totals"]["errors"] += 1
+def get_session_id() -> str:
+    """Get current session ID from environment or generate one."""
+    return os.environ.get("CLAUDE_SESSION_ID", datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S"))
 
 
 def main():
@@ -215,7 +172,6 @@ def main():
     request_id = latest.get(tool_name)
 
     if not request_id:
-        # No matching pre-tool entry, skip
         print(json.dumps({}))
         return
 
@@ -223,7 +179,6 @@ def main():
     request_data = pending.pop(request_id, None)
     save_json(PENDING_FILE, pending)
 
-    # Clean up latest
     if tool_name in latest:
         del latest[tool_name]
         save_json(LATEST_FILE, latest)
@@ -246,23 +201,111 @@ def main():
 
     if actual_tokens:
         tokens = actual_tokens["total"]
-        tokens_source = "actual"
-        tokens_breakdown = {
-            "input": actual_tokens["input_tokens"],
-            "output": actual_tokens["output_tokens"],
-            "cache_read": actual_tokens["cache_read_input_tokens"],
-            "cache_create": actual_tokens["cache_creation_input_tokens"]
-        }
+        tokens_source = "jsonl"
+        input_tokens = actual_tokens["input_tokens"]
+        output_tokens = actual_tokens["output_tokens"]
+        cache_read = actual_tokens["cache_read_input_tokens"]
+        cache_create = actual_tokens["cache_creation_input_tokens"]
     else:
         tokens = estimate_tokens(tool_name, subagent_type)
-        tokens_source = "estimated"
-        tokens_breakdown = None
+        tokens_source = "router"
+        input_tokens = 0
+        output_tokens = 0
+        cache_read = 0
+        cache_create = 0
 
-    # Create event
+    # Load v2.0 telemetry
+    telemetry = load_telemetry_v2(TELEMETRY_FILE)
+    
+    # Get today's date key
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    
+    # Ensure day exists
+    ensure_day(telemetry, today)
+    day_data = telemetry["days"][today]
+    
+    backend = request_data.get("backend", "unknown")
+    
+    # Update day-level tokens (no summary wrapper in v2 schema)
+    day_data["tokens"]["input"] += input_tokens
+    day_data["tokens"]["output"] += output_tokens
+    day_data["tokens"]["cache_read"] += cache_read
+    day_data["tokens"]["cache_creation"] += cache_create
+    if tokens_source == "jsonl":
+        day_data["tokens"]["source"] = "jsonl"
+    
+    # Update day-level calls
+    day_data["calls"]["total"] += 1
+    
+    if tool_name not in day_data["calls"]["by_tool"]:
+        day_data["calls"]["by_tool"][tool_name] = {"count": 0, "errors": 0}
+    day_data["calls"]["by_tool"][tool_name]["count"] += 1
+    if is_error:
+        day_data["calls"]["by_tool"][tool_name]["errors"] += 1
+    
+    if backend not in day_data["calls"]["by_backend"]:
+        day_data["calls"]["by_backend"][backend] = {"count": 0, "errors": 0}
+    day_data["calls"]["by_backend"][backend]["count"] += 1
+    if is_error:
+        day_data["calls"]["by_backend"][backend]["errors"] += 1
+    
+    # Update subagent tracking
+    if subagent_type:
+        if "by_subagent" not in day_data["calls"]:
+            day_data["calls"]["by_subagent"] = {}
+        if subagent_type not in day_data["calls"]["by_subagent"]:
+            day_data["calls"]["by_subagent"][subagent_type] = {"count": 0, "tokens": 0}
+        day_data["calls"]["by_subagent"][subagent_type]["count"] += 1
+        day_data["calls"]["by_subagent"][subagent_type]["tokens"] += tokens
+    
+    # Update timing stats
+    update_timing_stats(day_data["timing"], duration_ms)
+    
+    # Update session tracking
+    session_id = get_session_id()
+    if session_id not in day_data["sessions"]:
+        day_data["sessions"].append(session_id)
+    
+    if session_id not in day_data["by_session"]:
+        day_data["by_session"][session_id] = {
+            "tokens": default_token_data(),
+            "calls": default_call_data(),
+            "start_time": datetime.now(timezone.utc).isoformat(),
+            "end_time": None
+        }
+    
+    session = day_data["by_session"][session_id]
+    session["tokens"]["input"] += input_tokens
+    session["tokens"]["output"] += output_tokens
+    session["tokens"]["cache_read"] += cache_read
+    session["tokens"]["cache_creation"] += cache_create
+    if tokens_source == "jsonl":
+        session["tokens"]["source"] = "jsonl"
+    
+    session["calls"]["total"] += 1
+    if tool_name not in session["calls"]["by_tool"]:
+        session["calls"]["by_tool"][tool_name] = {"count": 0, "errors": 0}
+    session["calls"]["by_tool"][tool_name]["count"] += 1
+    if is_error:
+        session["calls"]["by_tool"][tool_name]["errors"] += 1
+    
+    session["end_time"] = datetime.now(timezone.utc).isoformat()
+    
+    # Recompute rolling aggregates
+    recompute_aggregates(telemetry)
+    
+    # Update filter options
+    update_filter_options(telemetry)
+    
+    # Keep legacy events array for backward compatibility
+    if "events" not in telemetry:
+        telemetry["events"] = []
+    
     event = {
         "ts": datetime.now(timezone.utc).isoformat(),
+        "session_id": session_id,
         "tool": tool_name,
-        "backend": request_data.get("backend", "unknown"),
+        "backend": backend,
         "duration_ms": duration_ms,
         "status": "error" if is_error else "success",
         "tokens": tokens,
@@ -270,68 +313,14 @@ def main():
         "subagent_type": subagent_type,
         "error_msg": error_msg
     }
-    if tokens_breakdown:
-        event["tokens_breakdown"] = tokens_breakdown
-
-    # Load or initialize telemetry (preserve existing keys like historical_timeline)
-    telemetry = load_json(TELEMETRY_FILE)
-    if "events" not in telemetry:
-        # Initialize missing keys but preserve existing ones
-        telemetry.setdefault("session_id", datetime.now(timezone.utc).isoformat())
-        telemetry.setdefault("session_start", datetime.now(timezone.utc).isoformat())
-        telemetry.setdefault("events", [])
-        telemetry.setdefault("daily_summaries", {})
-        telemetry.setdefault("aggregates", {
-            "by_tool": {},
-            "by_backend": {},
-            "subagents": {},
-            "totals": {"calls": 0, "errors": 0, "tokens": 0, "duration_ms": 0}
-        })
-
-    # Add event (rolling window)
+    
     telemetry["events"].append(event)
     if len(telemetry["events"]) > MAX_EVENTS:
         telemetry["events"] = telemetry["events"][-MAX_EVENTS:]
-
-    # Update daily summaries (persistent historical data)
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    daily = telemetry.setdefault("daily_summaries", {})
-    if today not in daily:
-        daily[today] = {
-            "calls": 0, "tokens": 0, "errors": 0, "duration_ms": 0,
-            "cache_read": 0, "cache_create": 0, "input_tokens": 0, "output_tokens": 0
-        }
-    daily[today]["calls"] += 1
-    daily[today]["tokens"] += tokens
-    daily[today]["duration_ms"] += duration_ms
-    if is_error:
-        daily[today]["errors"] += 1
-
-    # Track cache metrics if available
-    if tokens_breakdown:
-        daily[today]["cache_read"] = daily[today].get("cache_read", 0) + tokens_breakdown["cache_read"]
-        daily[today]["cache_create"] = daily[today].get("cache_create", 0) + tokens_breakdown["cache_create"]
-        daily[today]["input_tokens"] = daily[today].get("input_tokens", 0) + tokens_breakdown["input"]
-        daily[today]["output_tokens"] = daily[today].get("output_tokens", 0) + tokens_breakdown["output"]
-
-    # Update global cache stats
-    cache_stats = telemetry.setdefault("cache_stats", {
-        "total_cache_read": 0,
-        "total_cache_create": 0,
-        "calls_with_cache_data": 0
-    })
-    if tokens_breakdown:
-        cache_stats["total_cache_read"] += tokens_breakdown["cache_read"]
-        cache_stats["total_cache_create"] += tokens_breakdown["cache_create"]
-        cache_stats["calls_with_cache_data"] += 1
-
-    # Update aggregates
-    update_aggregates(telemetry, event, is_error)
-
+    
     # Save
-    save_json(TELEMETRY_FILE, telemetry)
+    save_telemetry_v2(telemetry, TELEMETRY_FILE)
 
-    # PostToolUse doesn't need to return anything special
     print(json.dumps({}))
 
 

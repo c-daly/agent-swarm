@@ -18,37 +18,33 @@ Subagents do NOT:
 import json
 import sys
 import uuid
-from datetime import datetime
 from pathlib import Path
 
-STATE_DIR = Path.home() / ".claude" / "plugins" / "agent-swarm" / ".state"
-STATE_FILE = STATE_DIR / "session.json"
-ITERATE_FILE = STATE_DIR / "iterate.json"
-SUBAGENT_LOG = STATE_DIR / "subagent_executions.log"
+# Add lib to path for workflow_client
+lib_dir = Path(__file__).parent.parent / "lib"
+sys.path.insert(0, str(lib_dir))
+
+try:
+    from workflow_client import workflow_get_state, agent_set_state, workflow_is_active
+except ImportError:
+    def workflow_get_state(workflow_id: str) -> dict | None:
+        return None
+    def agent_set_state(agent_id: str, state: dict) -> dict | None:
+        return None
+    def workflow_is_active(workflow_id: str) -> bool:
+        return False
 
 
-def load_state() -> dict:
-    """Load session state."""
-    if STATE_FILE.exists():
-        return json.loads(STATE_FILE.read_text())
-    return {}
+def load_session_state() -> dict:
+    """Load session state from state server."""
+    state = workflow_get_state("session")
+    return state if state else {}
 
 
 def load_iterate_state() -> dict:
-    """Load iterate workflow state."""
-    if ITERATE_FILE.exists():
-        try:
-            return json.loads(ITERATE_FILE.read_text())
-        except json.JSONDecodeError:
-            pass
-    return {}
-
-
-def log_subagent_start(agent_id: str, agent_type: str, session_id: str, phase: str) -> None:
-    """Log subagent start to tracking file."""
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    with open(SUBAGENT_LOG, "a") as f:
-        f.write(f"{datetime.now().isoformat()} | START | id={agent_id} | type={agent_type} | session={session_id} | phase={phase}\n")
+    """Load iterate workflow state from state server."""
+    state = workflow_get_state("iterate")
+    return state if state else {}
 
 
 def main():
@@ -63,13 +59,28 @@ def main():
     # Generate unique agent ID for this subagent
     agent_id = f"sub-{uuid.uuid4().hex[:8]}"
 
-    # Load all state once
-    session_state = load_state()
+    # Load all state from state server
+    session_state = load_session_state()
     iterate_state = load_iterate_state()
 
     # Determine context
     phase = iterate_state.get("phase") or session_state.get("phase") or "none"
     mode = iterate_state.get("mode", "")
+
+    # CRITICAL FIX: When iterate workflow is active and spawning from orchestrate phase,
+    # force ALL subagent types to start in test_writing phase (TDD enforcement)
+    # Use workflow_is_active instead of checking mode (which may be empty string)
+    if workflow_is_active("iterate") and phase == "orchestrate":
+        phase = "test_writing"
+
+    # Store subagent state with its phase
+    agent_state = {
+        "phase": phase,
+        "mode": mode,
+        "task": task_desc,
+        "parent_session": session_id,
+    }
+    agent_set_state(agent_id, agent_state)
 
     # Log and track
     # DISABLED: No longer logging subagent starts to file
@@ -95,9 +106,9 @@ def main():
 
     elif mode == "iterate-tdd":
         # In iterate-tdd mode - check phase for specific handling
-        if phase == "orchestrate":
-            # Subagent spawned by orchestrator
-            message_suffix = " (iterate-tdd/orchestrate)"
+        if agent_type == "implementer" and phase in ("orchestrate", "test_writing", "implement"):
+            # Subagent spawned by orchestrator for implementation work
+            message_suffix = f" (iterate-tdd/{phase})"
             additional_context.append(f"""
 ## SUBAGENT WORKFLOW CONTEXT
 
@@ -106,6 +117,8 @@ def main():
 **Spawned by:** Orchestrator
 
 ### TDD Workflow (Follow This Order)
+
+**YOU CANNOT SKIP PHASES.** You MUST follow this exact sequence:
 
 1. **TEST_WRITING** - Write failing tests first
    - These tests define what success looks like

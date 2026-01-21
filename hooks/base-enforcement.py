@@ -26,18 +26,28 @@ except ImportError:
 
 # Tools that require an active workflow (normalized names - no mcp__router__ prefix)
 EDITING_TOOLS = {
+    # Native editing tools
     "Edit", "Write", "NotebookEdit",
+    # MCP native tools
     "native__write_file",
     "native__edit_file",
+    # Serena text manipulation tools
     "serena__create_text_file",
     "serena__replace_content",
+    "serena__replace_symbol_body",
+    "serena__insert_after_symbol",
+    "serena__insert_before_symbol",
+    # Legacy MCP plugin format (with mcp__plugin prefix)
     "mcp__plugin_serena_serena__create_text_file",
     "mcp__plugin_serena_serena__replace_content",
+    "mcp__plugin_serena_serena__replace_symbol_body",
+    "mcp__plugin_serena_serena__insert_after_symbol",
+    "mcp__plugin_serena_serena__insert_before_symbol",
 }
 
 
 def is_any_workflow_active() -> bool:
-    """Check if any workflow is currently active via MCP router."""
+    """Check if any workflow is currently active via state server."""
     # Check known workflows via workflow_client
     # workflow_client handles connection errors gracefully (returns False)
     if workflow_is_active("iterate"):
