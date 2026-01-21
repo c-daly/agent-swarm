@@ -10,6 +10,8 @@ import json
 import sys
 import subprocess
 from pathlib import Path
+from lib.stores.compression import compress_old_sessions
+
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 CHARTS_SCRIPT = SCRIPTS_DIR / "charts.py"
 STATE_DIR = Path(__file__).parent.parent / ".state"
@@ -107,6 +109,20 @@ def check_memory_write_needed(input_data):
 
     return {"needed": False}
 
+
+def compress_old_session_files():
+    """Compress session JSONL files older than 24 hours."""
+    sessions_dir = STATE_DIR / "sessions"
+    if not sessions_dir.exists():
+        return {"compressed": 0}
+
+    try:
+        count = compress_old_sessions(sessions_dir, max_age_hours=24)
+        return {"compressed": count}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def main():
     """Session end hook entry point."""
 
@@ -127,6 +143,11 @@ def main():
 
     if result.get("path"):
         message += f"\n   {result['path']}"
+
+    # Compress old session files
+    compression_result = compress_old_session_files()
+    if compression_result.get("compressed", 0) > 0:
+        message += f"\n📦 Compressed {compression_result['compressed']} old session file(s)"
 
     # Append memory suggestion if needed
     if memory_check.get("needed"):
