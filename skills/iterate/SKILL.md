@@ -287,6 +287,18 @@ Even for a single task:
 Task(description="Implement module A", subagent_type="agent-swarm:implementer", prompt="...")
 ```
 
+**Non-blocking monitoring:** Use `TaskOutput` with `block=false` to check agent status without waiting. The orchestrator continues working while agents run in background.
+
+```python
+# Good: non-blocking check
+result = TaskOutput(task_id=agent_id, block=False, timeout=1000)
+if result.status == "completed":
+    # Process result
+
+# Bad: blocking wait
+result = TaskOutput(task_id=agent_id, block=True, timeout=120000)  # DON'T DO THIS
+```
+
 ## Subagent Prompting
 
 When spawning implementer agents, your prompt must include:
@@ -294,6 +306,14 @@ When spawning implementer agents, your prompt must include:
 1. **Architectural context** - How the component fits in the system design
 2. **Constraints** - What NOT to do and why (prevent logical-but-wrong fixes)
 3. **Design intent** - The "why" behind existing code/restrictions
+4. **TDD instruction** - Agents must write tests FIRST, then implement
+
+**IMPORTANT:** Every implementer prompt MUST include:
+```
+**TDD:** Write tests FIRST that specify the expected behavior, then implement code to make tests pass, then verify all tests pass.
+```
+
+One agent handles the complete TDD cycle. Do NOT spawn separate agents for test-writing and implementation.
 
 **Example prompt structure:**
 ```
@@ -302,6 +322,8 @@ When spawning implementer agents, your prompt must include:
 **Constraint:** Do NOT [specific thing to avoid] because [reason].
 
 **Task:** [Specific work to do]
+
+**TDD:** Write tests FIRST that specify the expected behavior, then implement code to make tests pass, then verify all tests pass.
 
 **Verification:** [How to verify the fix is correct]
 ```
@@ -408,6 +430,32 @@ After each agent completes:
 4. If issues found: `python3 lib/iterate_workflow.py review 0` then `advance`
 5. If clean: `python3 lib/iterate_workflow.py review 1` then `advance`
 
+## Orchestrator Progress Output
+
+The orchestrator MUST provide informative output during workflow execution:
+
+### After spawning agents:
+```
+[SPAWNED] {count} agent(s) for: {task_summaries}
+```
+
+### After agent completion:
+```
+[COMPLETE] {agent_description}: {brief_result_summary}
+```
+
+### Before phase transitions:
+```
+[PHASE] {current_phase} → {next_phase} | Reason: {reason}
+```
+
+### On task queue updates:
+```
+[QUEUE] {pending_count} pending, {in_progress_count} in progress, {completed_count} completed
+```
+
+This output helps users understand workflow progress and aids debugging.
+
 ## Exit Conditions
 
 | Condition | Trigger |
@@ -426,3 +474,6 @@ After each agent completes:
 - Bypass test verification
 - Do implementation work yourself (ALWAYS spawn agents)
 - Spawn agents sequentially (use ONE message block for parallel execution)
+- Split TDD across multiple agents (one agent = complete TDD cycle: test → implement → verify)
+- Use blocking TaskOutput calls (orchestrator spawns and monitors, doesn't wait)
+- Spawn agents without informative progress output
