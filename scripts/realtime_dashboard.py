@@ -785,33 +785,45 @@ def generate_dashboard():
             errorEl.className = 'big-number ' + (errorRate > 10 ? 'error' : errorRate > 5 ? 'warning' : 'success');
             document.getElementById('totalErrors').textContent = (totals.errors || 0) + ' total errors';
 
-            // Calculate trend from historical_timeline (daily data)
+            // Calculate trend using 7-day moving average comparison
             const timeline = data.historical_timeline || [];
             const trendEl = document.getElementById('trendIndicator');
             const trendDetailsEl = document.getElementById('trendDetails');
             
-            if (timeline.length >= 2) {
-                // Compare recent days vs older days
-                const half = Math.floor(timeline.length / 2);
-                const olderDays = timeline.slice(0, half);
-                const recentDays = timeline.slice(half);
+            if (timeline.length >= 7) {
+                // 7-day moving average: compare last 7 days vs previous 7 days
+                const recent7 = timeline.slice(-7);
+                const previous7 = timeline.slice(-14, -7);
+                
+                const recentAvg = recent7.reduce((sum, d) => sum + (d.tokens || 0), 0) / recent7.length;
+                
+                if (previous7.length >= 7) {
+                    const previousAvg = previous7.reduce((sum, d) => sum + (d.tokens || 0), 0) / previous7.length;
+                    const changePct = previousAvg ? ((recentAvg - previousAvg) / previousAvg * 100) : 0;
 
-                const olderAvg = olderDays.reduce((sum, d) => sum + (d.tokens || 0), 0) / olderDays.length;
-                const recentAvg = recentDays.reduce((sum, d) => sum + (d.tokens || 0), 0) / recentDays.length;
-
-                const changePct = olderAvg ? ((recentAvg - olderAvg) / olderAvg * 100) : 0;
-
-                if (changePct < -10) {
-                    trendEl.className = 'trend down';
-                    trendEl.textContent = '↓ ' + Math.abs(changePct).toFixed(0) + '% decrease';
-                } else if (changePct > 10) {
-                    trendEl.className = 'trend up';
-                    trendEl.textContent = '↑ ' + changePct.toFixed(0) + '% increase';
+                    if (changePct < -10) {
+                        trendEl.className = 'trend down';
+                        trendEl.textContent = '↓ ' + Math.abs(changePct).toFixed(0) + '% decrease';
+                    } else if (changePct > 10) {
+                        trendEl.className = 'trend up';
+                        trendEl.textContent = '↑ ' + changePct.toFixed(0) + '% increase';
+                    } else {
+                        trendEl.className = 'trend stable';
+                        trendEl.textContent = '→ Stable';
+                    }
+                    trendDetailsEl.textContent = '7-day moving avg: ' + Math.round(recentAvg).toLocaleString() + ' tokens/day';
                 } else {
+                    // Not enough data for comparison, just show current average
                     trendEl.className = 'trend stable';
-                    trendEl.textContent = '→ Stable';
+                    trendEl.textContent = '→ ' + Math.round(recentAvg).toLocaleString() + '/day';
+                    trendDetailsEl.textContent = '7-day avg (need 14 days for trend)';
                 }
-                trendDetailsEl.textContent = 'Comparing ' + timeline.length + ' days of data';
+            } else if (timeline.length >= 2) {
+                // Less than 7 days - use simple comparison of available data
+                const recentAvg = timeline.slice(-Math.ceil(timeline.length/2)).reduce((sum, d) => sum + (d.tokens || 0), 0) / Math.ceil(timeline.length/2);
+                trendEl.className = 'trend stable';
+                trendEl.textContent = '→ ' + Math.round(recentAvg).toLocaleString() + '/day';
+                trendDetailsEl.textContent = 'Need 7+ days for trend';
             } else if (timeline.length === 1) {
                 trendEl.className = 'trend stable';
                 trendEl.textContent = '→ First day';
@@ -1263,23 +1275,24 @@ def generate_dashboard():
                 });
             }
 
-            // Check trend
-            if (events.length >= 10) {
-                const half = Math.floor(events.length / 2);
-                const firstTokens = events.slice(0, half).reduce((sum, e) => sum + (e.response_size || e.tokens_est || 0), 0) / half;
-                const secondTokens = events.slice(half).reduce((sum, e) => sum + (e.response_size || e.tokens_est || 0), 0) / (events.length - half);
-                const changePct = firstTokens ? ((secondTokens - firstTokens) / firstTokens * 100) : 0;
+            // Check trend using rolling window (last 50 events vs previous 50)
+            if (events.length >= 100) {
+                const recent50 = events.slice(-50);
+                const previous50 = events.slice(-100, -50);
+                const recentAvg = recent50.reduce((sum, e) => sum + (e.response_size || e.tokens_est || 0), 0) / 50;
+                const previousAvg = previous50.reduce((sum, e) => sum + (e.response_size || e.tokens_est || 0), 0) / 50;
+                const changePct = previousAvg ? ((recentAvg - previousAvg) / previousAvg * 100) : 0;
 
                 if (changePct < -10) {
                     recs.push({
                         priority: 'success',
-                        issue: 'Token usage trending DOWN by ' + Math.abs(changePct).toFixed(0) + '%',
+                        issue: 'Token usage trending DOWN by ' + Math.abs(changePct).toFixed(0) + '% (50-event moving avg)',
                         action: 'Token-saving measures are working! Keep it up.'
                     });
                 } else if (changePct > 10) {
                     recs.push({
                         priority: 'high',
-                        issue: 'Token usage trending UP by ' + changePct.toFixed(0) + '%',
+                        issue: 'Token usage trending UP by ' + changePct.toFixed(0) + '% (50-event moving avg)',
                         action: 'Review recent changes - optimization measures may not be working'
                     });
                 }
