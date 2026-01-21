@@ -82,21 +82,15 @@ def migrate_v1_to_v2(v1_data: dict) -> dict:
     print("Migrating aggregates...")
     agg = v1_data.get("aggregates", {})
     
-    # by_tool
-    v2_data["aggregates"]["all_time"]["calls"]["by_tool"] = {}
-    for tool, stats in agg.get("by_tool", {}).items():
-        v2_data["aggregates"]["all_time"]["calls"]["by_tool"][tool] = {
-            "count": stats.get("count", 0),
-            "errors": stats.get("errors", 0)
-        }
-    
-    # by_backend
-    v2_data["aggregates"]["all_time"]["calls"]["by_backend"] = {}
-    for backend, stats in agg.get("by_backend", {}).items():
-        v2_data["aggregates"]["all_time"]["calls"]["by_backend"][backend] = {
-            "count": stats.get("count", 0),
-            "errors": stats.get("errors", 0)
-        }
+    # by_tool - v2 schema stores direct integers (tool name → count)
+    v2_data["aggregates"]["all_time"]["calls"]["by_tool"] = {
+        tool: stats.get("count", 0) for tool, stats in agg.get("by_tool", {}).items()
+    }
+
+    # by_backend - v2 schema stores direct integers (backend name → count)
+    v2_data["aggregates"]["all_time"]["calls"]["by_backend"] = {
+        backend: stats.get("count", 0) for backend, stats in agg.get("by_backend", {}).items()
+    }
     
     # totals
     totals = agg.get("totals", {})

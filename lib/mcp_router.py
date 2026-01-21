@@ -386,7 +386,7 @@ class MCPRouter:
         self._lock = Lock()
         self._servers: dict[str, ServerConfig] = {}
         self._connections: dict[str, subprocess.Popen] = {}  # Live backend processes
-        self._backend_locks: dict[str, Lock] = {}  # Per-backend locks
+        self._backend_locks: dict[str, RLock] = {}  # Per-backend locks
 
         # Shadow cache for workflow state (survives backend respawns)
         self._workflow_state_cache: dict[str, dict] = {}

@@ -3,9 +3,8 @@
 
 import json
 import subprocess
-import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+
 
 
 def run_hook(tool_name: str, tool_input: dict) -> dict:
