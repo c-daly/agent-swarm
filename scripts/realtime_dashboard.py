@@ -10,10 +10,18 @@ Usage:
 """
 
 import sys
+import json
 from pathlib import Path
 
+# Add project root and lib to path for service imports
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(project_root / "lib"))
+
+from lib.telemetry_service import TelemetryService
+
 STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
-TELEMETRY_FILE = STATE_DIR / "telemetry.json"
+TELEMETRY_FILE = STATE_DIR / "telemetry.json"  # Keep for fallback
 METRICS_HISTORY_FILE = STATE_DIR / "metrics_history.json"
 DASHBOARD_FILE = STATE_DIR / "realtime_dashboard.html"
 
@@ -585,6 +593,18 @@ def generate_dashboard():
                 });
             }
 
+            // Recalculate totals from filtered daily_summaries
+            if (currentFilters.timeRange !== 'all' && filtered.daily_summaries) {
+                const newTotals = { calls: 0, tokens: 0, errors: 0 };
+                Object.values(filtered.daily_summaries).forEach(summary => {
+                    newTotals.calls += summary.calls || 0;
+                    newTotals.tokens += summary.tokens || 0;
+                    newTotals.errors += summary.errors || 0;
+                });
+                filtered.aggregates = filtered.aggregates || {};
+                filtered.aggregates.totals = newTotals;
+            }
+
             return filtered;
         }
 
@@ -620,6 +640,48 @@ def generate_dashboard():
             if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
             if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
             return n.toString();
+        }
+
+        // Normalize v3 telemetry schema (DuckDB-based)
+        function normalizeV3Data(data) {
+            if (!data) return data;
+            if (data.schema_version !== 3) return data;
+
+            const agg = data.aggregates || {};
+            
+            // Build normalized structure
+            data.aggregates.totals = {
+                calls: agg.total_calls || 0,
+                tokens: agg.total_tokens || 0,
+                sessions: agg.total_sessions || 0,
+                errors: 0
+            };
+            
+            // by_tool already in correct format: {tool: {count, tokens}}
+            data.aggregates.by_tool = agg.by_tool || {};
+            
+            // by_agent_type -> subagents
+            data.aggregates.subagents = agg.by_agent_type || {};
+            
+            // Empty placeholders for features v3 doesn't have yet
+            data.aggregates.by_backend = {};
+            
+            // Use summarization stats from API (router tracks these)
+            const summ = agg.summarization || {};
+            data.aggregates.summarization = {
+                offered: summ.offered || 0,
+                accepted: summ.offered || 0,  // Router always accepts summaries
+                rejected: 0,
+                full_content_requests: summ.full_requested || 0,
+                tokens_before: 0,
+                tokens_after: 0
+            };
+            data.daily_summaries = {};
+            data.historical_timeline = [];
+            data.sessions = [];
+            data.sequences = {};
+            
+            return data;
         }
 
         // Normalize v2 telemetry schema to v1 format for backward compatibility
@@ -785,33 +847,45 @@ def generate_dashboard():
             errorEl.className = 'big-number ' + (errorRate > 10 ? 'error' : errorRate > 5 ? 'warning' : 'success');
             document.getElementById('totalErrors').textContent = (totals.errors || 0) + ' total errors';
 
-            // Calculate trend from historical_timeline (daily data)
+            // Calculate trend using 7-day moving average comparison
             const timeline = data.historical_timeline || [];
             const trendEl = document.getElementById('trendIndicator');
             const trendDetailsEl = document.getElementById('trendDetails');
             
-            if (timeline.length >= 2) {
-                // Compare recent days vs older days
-                const half = Math.floor(timeline.length / 2);
-                const olderDays = timeline.slice(0, half);
-                const recentDays = timeline.slice(half);
+            if (timeline.length >= 7) {
+                // 7-day moving average: compare last 7 days vs previous 7 days
+                const recent7 = timeline.slice(-7);
+                const previous7 = timeline.slice(-14, -7);
+                
+                const recentAvg = recent7.reduce((sum, d) => sum + (d.tokens || 0), 0) / recent7.length;
+                
+                if (previous7.length >= 7) {
+                    const previousAvg = previous7.reduce((sum, d) => sum + (d.tokens || 0), 0) / previous7.length;
+                    const changePct = previousAvg ? ((recentAvg - previousAvg) / previousAvg * 100) : 0;
 
-                const olderAvg = olderDays.reduce((sum, d) => sum + (d.tokens || 0), 0) / olderDays.length;
-                const recentAvg = recentDays.reduce((sum, d) => sum + (d.tokens || 0), 0) / recentDays.length;
-
-                const changePct = olderAvg ? ((recentAvg - olderAvg) / olderAvg * 100) : 0;
-
-                if (changePct < -10) {
-                    trendEl.className = 'trend down';
-                    trendEl.textContent = '↓ ' + Math.abs(changePct).toFixed(0) + '% decrease';
-                } else if (changePct > 10) {
-                    trendEl.className = 'trend up';
-                    trendEl.textContent = '↑ ' + changePct.toFixed(0) + '% increase';
+                    if (changePct < -10) {
+                        trendEl.className = 'trend down';
+                        trendEl.textContent = '↓ ' + Math.abs(changePct).toFixed(0) + '% decrease';
+                    } else if (changePct > 10) {
+                        trendEl.className = 'trend up';
+                        trendEl.textContent = '↑ ' + changePct.toFixed(0) + '% increase';
+                    } else {
+                        trendEl.className = 'trend stable';
+                        trendEl.textContent = '→ Stable';
+                    }
+                    trendDetailsEl.textContent = '7-day moving avg: ' + Math.round(recentAvg).toLocaleString() + ' tokens/day';
                 } else {
+                    // Not enough data for comparison, just show current average
                     trendEl.className = 'trend stable';
-                    trendEl.textContent = '→ Stable';
+                    trendEl.textContent = '→ ' + Math.round(recentAvg).toLocaleString() + '/day';
+                    trendDetailsEl.textContent = '7-day avg (need 14 days for trend)';
                 }
-                trendDetailsEl.textContent = 'Comparing ' + timeline.length + ' days of data';
+            } else if (timeline.length >= 2) {
+                // Less than 7 days - use simple comparison of available data
+                const recentAvg = timeline.slice(-Math.ceil(timeline.length/2)).reduce((sum, d) => sum + (d.tokens || 0), 0) / Math.ceil(timeline.length/2);
+                trendEl.className = 'trend stable';
+                trendEl.textContent = '→ ' + Math.round(recentAvg).toLocaleString() + '/day';
+                trendDetailsEl.textContent = 'Need 7+ days for trend';
             } else if (timeline.length === 1) {
                 trendEl.className = 'trend stable';
                 trendEl.textContent = '→ First day';
@@ -1251,11 +1325,11 @@ def generate_dashboard():
                 });
             }
 
-            // Check subagent usage
+            // Check subagent usage (skip if 100% - means we only have subagent data, not a problem)
             const subagents = agg.subagents || {};
             const subagentTokens = Object.values(subagents).reduce((sum, s) => sum + (s.tokens || 0), 0);
             const subagentPct = (totals.tokens || totals.tokens_est) ? (subagentTokens / (totals.tokens || totals.tokens_est)) * 100 : 0;
-            if (subagentPct > 70) {
+            if (subagentPct > 70 && subagentPct < 100) {
                 recs.push({
                     priority: 'medium',
                     issue: 'Subagents account for ' + subagentPct.toFixed(0) + '% of tokens',
@@ -1263,23 +1337,24 @@ def generate_dashboard():
                 });
             }
 
-            // Check trend
-            if (events.length >= 10) {
-                const half = Math.floor(events.length / 2);
-                const firstTokens = events.slice(0, half).reduce((sum, e) => sum + (e.response_size || e.tokens_est || 0), 0) / half;
-                const secondTokens = events.slice(half).reduce((sum, e) => sum + (e.response_size || e.tokens_est || 0), 0) / (events.length - half);
-                const changePct = firstTokens ? ((secondTokens - firstTokens) / firstTokens * 100) : 0;
+            // Check trend using rolling window (last 50 events vs previous 50)
+            if (events.length >= 100) {
+                const recent50 = events.slice(-50);
+                const previous50 = events.slice(-100, -50);
+                const recentAvg = recent50.reduce((sum, e) => sum + (e.response_size || e.tokens_est || 0), 0) / 50;
+                const previousAvg = previous50.reduce((sum, e) => sum + (e.response_size || e.tokens_est || 0), 0) / 50;
+                const changePct = previousAvg ? ((recentAvg - previousAvg) / previousAvg * 100) : 0;
 
                 if (changePct < -10) {
                     recs.push({
                         priority: 'success',
-                        issue: 'Token usage trending DOWN by ' + Math.abs(changePct).toFixed(0) + '%',
+                        issue: 'Token usage trending DOWN by ' + Math.abs(changePct).toFixed(0) + '% (50-event moving avg)',
                         action: 'Token-saving measures are working! Keep it up.'
                     });
                 } else if (changePct > 10) {
                     recs.push({
                         priority: 'high',
-                        issue: 'Token usage trending UP by ' + changePct.toFixed(0) + '%',
+                        issue: 'Token usage trending UP by ' + changePct.toFixed(0) + '% (50-event moving avg)',
                         action: 'Review recent changes - optimization measures may not be working'
                     });
                 }
@@ -1302,7 +1377,7 @@ def generate_dashboard():
 
         async function refresh() {
             const rawData = await fetchTelemetry();
-            const data = normalizeV2Data(rawData);
+            const data = normalizeV2Data(normalizeV3Data(rawData));
             allTelemetryData = data;
 
             if (!filtersPopulated && data) {
@@ -1399,10 +1474,92 @@ def serve_dashboard(port: int = 8765):
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
 
-                if TELEMETRY_FILE.exists():
-                    data = TELEMETRY_FILE.read_text()
-                else:
-                    data = json.dumps({"events": [], "aggregates": {}})
+                try:
+                    # Query DuckDB via TelemetryService
+                    service = TelemetryService(data_dir=str(STATE_DIR))
+                    store = service._store
+                    
+                    # Get recent events
+                    events = []
+                    recent = store.conn.execute("""
+                        SELECT timestamp, tool, backend, status, duration_ms,
+                               COALESCE(input_tokens, 0) as input_tokens,
+                               COALESCE(output_tokens, 0) as output_tokens,
+                               session_id
+                        FROM events
+                        ORDER BY timestamp DESC
+                        LIMIT 500
+                    """).fetchall()
+                    for row in recent:
+                        events.append({
+                            "ts": str(row[0]),
+                            "tool": row[1],
+                            "backend": row[2] or "native",
+                            "status": row[3] or "success",
+                            "duration_ms": row[4] or 0,
+                            "tokens": (row[5] or 0) + (row[6] or 0),
+                            "session_id": row[7],
+                        })
+                    
+                    # Get aggregates
+                    totals = store.conn.execute("""
+                        SELECT 
+                            COUNT(*) as calls,
+                            SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) as tokens,
+                            COUNT(DISTINCT session_id) as sessions
+                        FROM events
+                    """).fetchone()
+                    
+                    # Get by_tool breakdown
+                    by_tool_rows = store.conn.execute("""
+                        SELECT tool,
+                               COUNT(*) as count,
+                               SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) as tokens
+                        FROM events
+                        GROUP BY tool
+                        ORDER BY tokens DESC
+                    """).fetchall()
+                    by_tool = {row[0]: {"count": row[1], "tokens": row[2]} for row in by_tool_rows}
+                    
+                    # Get by_subagent breakdown (agent_type)
+                    by_subagent_rows = store.conn.execute("""
+                        SELECT COALESCE(e.agent_type, at.agent_type, 'main') as agent_type,
+                               COUNT(*) as count,
+                               SUM(COALESCE(e.input_tokens, 0) + COALESCE(e.output_tokens, 0)) as tokens
+                        FROM events e
+                        LEFT JOIN agent_types at ON e.agent_id = at.agent_id
+                        GROUP BY agent_type
+                        ORDER BY tokens DESC
+                    """).fetchall()
+                    by_subagent = {row[0]: {"count": row[1], "tokens": row[2]} for row in by_subagent_rows}
+                    
+                    # Get summarization stats from telemetry.json (router tracks these)
+                    summarization_stats = {"offered": 0, "full_requested": 0}
+                    if TELEMETRY_FILE.exists():
+                        try:
+                            telem_data = json.loads(TELEMETRY_FILE.read_text())
+                            summarization_stats = telem_data.get("summarization", summarization_stats)
+                        except Exception:
+                            pass
+                    
+                    data = json.dumps({
+                        "events": events,
+                        "schema_version": 3,
+                        "aggregates": {
+                            "total_calls": totals[0] if totals else 0,
+                            "total_tokens": totals[1] if totals else 0,
+                            "total_sessions": totals[2] if totals else 0,
+                            "by_tool": by_tool,
+                            "by_agent_type": by_subagent,
+                            "summarization": summarization_stats,
+                        }
+                    })
+                except Exception as e:
+                    # Fallback to JSON file if DuckDB fails
+                    if TELEMETRY_FILE.exists():
+                        data = TELEMETRY_FILE.read_text()
+                    else:
+                        data = json.dumps({"events": [], "aggregates": {}})
 
                 self.wfile.write(data.encode())
 

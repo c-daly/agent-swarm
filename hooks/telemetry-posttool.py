@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
 
 from stores.events import ToolCallEvent
-from stores.jsonl_writer import JSONLWriter
+from telemetry_service import TelemetryService
 
 from telemetry_schema_v2 import (
     load_telemetry_v2,
@@ -321,32 +321,53 @@ def main():
     if len(telemetry["events"]) > MAX_EVENTS:
         telemetry["events"] = telemetry["events"][-MAX_EVENTS:]
     
-    # === Telemetry v3: Write to session JSONL ===
+    # === Telemetry v3: Write to DuckDB via TelemetryService ===
     try:
-        jsonl_dir = Path.home() / ".claude/plugins/agent-swarm/.state/sessions"
-        writer = JSONLWriter(data_dir=str(jsonl_dir))
+        state_dir = Path.home() / ".claude/plugins/agent-swarm/.state"
+        service = TelemetryService(data_dir=str(state_dir))
         
-        v3_event = ToolCallEvent(
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            session_id=session_id,
-            agent_id=os.environ.get("CLAUDE_AGENT_ID", session_id),
-            tool=tool_name,
-            backend=backend,
-            duration_ms=duration_ms,
-            status="error" if is_error else "success",
-            error_type=error_msg[:100] if is_error else None,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cache_read_tokens=cache_read,
-            cache_creation_tokens=cache_create,
-            agent_type=subagent_type if subagent_type else None,
-            task_summary=request_data.get("task_summary"),
-            workflow_id=os.environ.get("WORKFLOW_ID"),
-            workflow_phase=os.environ.get("WORKFLOW_PHASE"),
-        )
-        writer.write(v3_event)
+        # Check for summary state from mcp-summarizer hook
+        was_summarized = False
+        original_size = None
+        summary_size = None
+        summary_state_file = state_dir / "last_summary.json"
+        if summary_state_file.exists():
+            try:
+                import time
+                summary_state = json.loads(summary_state_file.read_text())
+                # Only use if recent (within 5 seconds) and matches tool
+                if (time.time() - summary_state.get("timestamp", 0) < 5 and 
+                    summary_state.get("tool_name") == tool_name):
+                    was_summarized = True
+                    original_size = summary_state.get("original_size")
+                    summary_size = summary_state.get("summary_size")
+                    # Clear the state file after reading
+                    summary_state_file.unlink()
+            except:
+                pass
+        
+        event_data = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "session_id": session_id,
+            "agent_id": os.environ.get("CLAUDE_AGENT_ID", session_id),
+            "tool": tool_name,
+            "backend": backend,
+            "duration_ms": duration_ms,
+            "status": "error" if is_error else "success",
+            "error_type": error_msg[:100] if is_error else None,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cache_read_tokens": cache_read,
+            "cache_creation_tokens": cache_create,
+            "agent_type": subagent_type if subagent_type else None,
+            "workflow_id": os.environ.get("WORKFLOW_ID"),
+            "was_summarized": was_summarized,
+            "original_size": original_size,
+            "summary_size": summary_size,
+        }
+        service.insert_event(event_data)
     except Exception:
-        # Don't fail the hook if v3 writing fails
+        # Don't fail the hook if telemetry writing fails
         pass
     
     # Save v2 telemetry

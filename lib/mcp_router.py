@@ -390,6 +390,10 @@ class MCPRouter:
 
         # Shadow cache for workflow state (survives backend respawns)
         self._workflow_state_cache: dict[str, dict] = {}
+        # Counter for generating unique content IDs
+        self._content_id_counter = 0
+        # Storage for content that can be retrieved by ID (for two-step content retrieval)
+        self._content_store: dict[str, Any] = {}
 
         # Initialize summarizer (decide provider once at startup)
         self._llm_call: Callable[[str], str] = self._init_summarizer(summarizer, summarizer_model)
@@ -813,6 +817,20 @@ class MCPRouter:
             # Keep last 100 events
             if len(self.telemetry._socket_events) > 100:
                 self.telemetry._socket_events = self.telemetry._socket_events[-100:]
+
+    def store_content(self, content: Any) -> str:
+        """Store content and return a unique content_id."""
+        self._content_id_counter += 1
+        content_id = f"content_{self._content_id_counter}"
+        self._content_store[content_id] = content
+        return content_id
+
+    def get_full_content(self, content_id: str) -> dict:
+        """Retrieve stored content by ID. Returns error dict if not found."""
+        if content_id in self._content_store:
+            content = self._content_store.pop(content_id)  # Remove after retrieval (one-time use)
+            return {"content": content}
+        return {"error": f"Content not found for ID: {content_id}"}
 
     def get_socket_stats(self) -> dict:
         """Get current socket connection statistics.
@@ -1553,6 +1571,13 @@ def start_stdio_server(router: MCPRouter):
                             break
                     if not destination:
                         result = {"content": [{"type": "text", "text": f"Error: Unknown backend prefix: {prefix}"}], "isError": True}
+                    elif "content_id" in args:
+                        # Two-step retrieval: return full content for given content_id
+                        full_result = router.get_full_content(args["content_id"])
+                        if "error" in full_result:
+                            result = {"content": [{"type": "text", "text": f"Error: {full_result['error']}"}], "isError": True}
+                        else:
+                            result = {"content": [{"type": "text", "text": json.dumps(full_result)}]}
                     else:
                         response = router.route(destination, actual_tool, args)
                         # Return {summary, full} envelope so Claude can read summary first

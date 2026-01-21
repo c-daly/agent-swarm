@@ -25,23 +25,23 @@ from lib.stores.interfaces import (
 
 
 class DuckDBStore(AnalyticsStore, TraceStore):
-    """DuckDB implementation querying JSONL telemetry files directly.
+    """DuckDB implementation with persistent storage for telemetry events.
 
-    This store creates an in-memory DuckDB connection and sets up views
-    over JSONL files using glob patterns. Queries execute against the
-    raw files without requiring data import or ETL.
+    This store connects to a persistent DuckDB file and stores events
+    directly in tables with indexes for efficient querying.
 
     Attributes:
-        data_dir: Path to directory containing JSONL telemetry files.
+        data_dir: Path to directory containing the DuckDB database.
+        db_path: Path to the DuckDB database file.
         conn: DuckDB connection instance.
     """
 
-    def __init__(self, data_dir: str) -> None:
-        """Initialize DuckDB store with data directory.
+    def __init__(self, data_dir: str, db_name: str = "telemetry.duckdb") -> None:
+        """Initialize DuckDB store with persistent database.
 
         Args:
-            data_dir: Path to directory containing session JSONL files.
-                      Files are expected to match pattern **/*.jsonl
+            data_dir: Path to directory for the DuckDB database file.
+            db_name: Name of the DuckDB database file.
 
         Raises:
             ImportError: If duckdb package is not installed.
@@ -52,43 +52,94 @@ class DuckDBStore(AnalyticsStore, TraceStore):
             )
 
         self.data_dir = Path(data_dir)
-        self.conn = duckdb.connect(":memory:")
-        self._setup_views()
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.db_path = self.data_dir / db_name
+        self.conn = duckdb.connect(str(self.db_path))
+        self._setup_tables()
 
-    def _setup_views(self) -> None:
-        """Create views over JSONL files for querying."""
-        import glob as glob_module
-
-        # Build list of patterns that have matching files
-        # Use recursive glob to find files in subdirectories
-        patterns = []
-        jsonl_pattern = str(self.data_dir / "**" / "*.jsonl")
-        gz_pattern = str(self.data_dir / "**" / "*.jsonl.gz")
-
-        if glob_module.glob(jsonl_pattern, recursive=True):
-            patterns.append(jsonl_pattern)
-        if glob_module.glob(gz_pattern, recursive=True):
-            patterns.append(gz_pattern)
-
-        if not patterns:
-            # No files found, create empty view
-            self.conn.execute("""
-                CREATE OR REPLACE VIEW events AS
-                SELECT NULL as timestamp WHERE false
-            """)
-            return
-
-        # Create main events view from all JSONL files (raw and gzipped)
-        patterns_sql = ", ".join(f"'{p}'" for p in patterns)
-        self.conn.execute(f"""
-            CREATE OR REPLACE VIEW events AS
-            SELECT * FROM read_json_auto(
-                [{patterns_sql}],
-                format='newline_delimited',
-                ignore_errors=true,
-                union_by_name=true
+    def _setup_tables(self) -> None:
+        """Create tables for persistent event storage."""
+        # Create main events table (replaces JSONL files)
+        self.conn.execute("""
+            CREATE SEQUENCE IF NOT EXISTS events_id_seq;
+        """)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS events (
+                id INTEGER PRIMARY KEY DEFAULT nextval('events_id_seq'),
+                timestamp TIMESTAMP NOT NULL,
+                session_id VARCHAR NOT NULL,
+                agent_id VARCHAR,
+                tool VARCHAR NOT NULL,
+                backend VARCHAR NOT NULL,
+                duration_ms INTEGER NOT NULL,
+                status VARCHAR NOT NULL,
+                input_tokens INTEGER DEFAULT 0,
+                output_tokens INTEGER DEFAULT 0,
+                cache_read_tokens INTEGER DEFAULT 0,
+                cache_creation_tokens INTEGER DEFAULT 0,
+                agent_type VARCHAR,
+                workflow_id VARCHAR,
+                error_type VARCHAR,
+                -- Summarization fields (for future capture)
+                was_summarized BOOLEAN DEFAULT FALSE,
+                original_size INTEGER,
+                summary_size INTEGER
             )
         """)
+
+        # Create indexes for common queries
+        self.conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp)
+        """)
+        self.conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id)
+        """)
+        self.conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_events_tool ON events(tool)
+        """)
+
+        # Create agent_types table for tracking subagent types
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS agent_types (
+                agent_id VARCHAR PRIMARY KEY,
+                agent_type VARCHAR NOT NULL,
+                registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+
+    def insert_event(self, event: dict) -> None:
+        """Insert a single telemetry event into the events table.
+
+        Args:
+            event: Dictionary with event data. Expected keys match ToolCallEvent fields.
+        """
+        self.conn.execute("""
+            INSERT INTO events (
+                timestamp, session_id, agent_id, tool, backend,
+                duration_ms, status, input_tokens, output_tokens,
+                cache_read_tokens, cache_creation_tokens, agent_type,
+                workflow_id, error_type, was_summarized, original_size, summary_size
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, [
+            event.get("timestamp"),
+            event.get("session_id"),
+            event.get("agent_id"),
+            event.get("tool"),
+            event.get("backend"),
+            event.get("duration_ms", 0),
+            event.get("status", "success"),
+            event.get("input_tokens", 0),
+            event.get("output_tokens", 0),
+            event.get("cache_read_tokens", 0),
+            event.get("cache_creation_tokens", 0),
+            event.get("agent_type"),
+            event.get("workflow_id"),
+            event.get("error_type"),
+            event.get("was_summarized", False),
+            event.get("original_size"),
+            event.get("summary_size"),
+        ])
 
     def get_daily_summary(self, day: date) -> Optional[DaySummary]:
         """Retrieve aggregated metrics for a specific day.
@@ -434,19 +485,42 @@ class DuckDBStore(AnalyticsStore, TraceStore):
             for r in result
         ]
 
+
+    def register_agent_type(self, agent_id: str, agent_type: str) -> None:
+        """Register an agent's type for telemetry queries.
+
+        Called when Task spawns a subagent. Stored in DuckDB for JOINs.
+        """
+        self.conn.execute("""
+            INSERT OR REPLACE INTO agent_types (agent_id, agent_type, registered_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+        """, [agent_id, agent_type])
+
+    def get_agent_type(self, agent_id: str) -> Optional[str]:
+        """Lookup agent type by agent_id."""
+        result = self.conn.execute(
+            "SELECT agent_type FROM agent_types WHERE agent_id = ?",
+            [agent_id]
+        ).fetchone()
+        return result[0] if result else None
+
     def get_token_spend_by_agent_type(self) -> list[dict]:
         """Get token spend grouped by agent type.
+
+        Uses agent_type column from events table, falling back to
+        agent_types table lookup for historical data, then to 'main'.
 
         Returns:
             List of dicts with agent_type, total_tokens, and sessions.
         """
         result = self.conn.execute("""
             SELECT
-                COALESCE(agent_type, 'main') as agent_type_name,
-                SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) as total_tokens,
-                COUNT(DISTINCT session_id) as sessions
-            FROM events
-            GROUP BY COALESCE(agent_type, 'main')
+                COALESCE(e.agent_type, at.agent_type, 'main') as agent_type_name,
+                SUM(COALESCE(e.input_tokens, 0) + COALESCE(e.output_tokens, 0)) as total_tokens,
+                COUNT(DISTINCT e.session_id) as sessions
+            FROM events e
+            LEFT JOIN agent_types at ON e.agent_id = at.agent_id
+            GROUP BY agent_type_name
             ORDER BY total_tokens DESC
         """).fetchall()
         return [

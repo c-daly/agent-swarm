@@ -72,3 +72,14 @@ class TelemetryService:
             List of ToolSummary records ordered by call count descending.
         """
         return self._store.get_tool_summaries(limit=limit)
+
+    def insert_event(self, event: dict) -> None:
+        """Insert a telemetry event into the store.
+
+        Args:
+            event: Dictionary with event data matching ToolCallEvent fields.
+                   Required: timestamp, session_id, tool, backend, duration_ms, status
+                   Optional: agent_id, input_tokens, output_tokens, cache_read_tokens,
+                            cache_creation_tokens, agent_type, workflow_id, error_type
+        """
+        self._store.insert_event(event)

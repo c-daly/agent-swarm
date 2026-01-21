@@ -172,6 +172,17 @@ def main():
         print(json.dumps({}))
         return
 
+    # Write summary state for telemetry hook to read
+    summary_state_file = Path.home() / ".claude/plugins/agent-swarm/.state/last_summary.json"
+    import time
+    summary_state = {
+        "tool_name": tool_name,
+        "original_size": len(content),
+        "summary_size": len(summary),
+        "timestamp": time.time()
+    }
+    summary_state_file.write_text(json.dumps(summary_state))
+
     # Output via additionalContext (shows as system-reminder)
     summary_text = f"📋 MCP Summary ({len(content):,}→{len(summary)} chars): {summary}"
     output = {

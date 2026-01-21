@@ -67,11 +67,28 @@ def _load_telemetry_v3():
         by_tool[ts.tool_name] = {
             "count": ts.call_count,
             "errors": 0,  # Not tracked in current schema
-            "tokens": 0,  # Token data is per-event, not in ToolSummary
+            "tokens": 0,  # Will be populated below
             "duration_ms": int(ts.avg_duration_ms * ts.call_count),
         }
         totals["calls"] += ts.call_count
         totals["duration_ms"] += int(ts.avg_duration_ms * ts.call_count)
+    
+    # Query for tokens per tool from events
+    try:
+        tool_token_results = _duckdb_store.conn.execute("""
+            SELECT tool, 
+                   SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) as tokens,
+                   SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as errors
+            FROM events
+            WHERE tool IS NOT NULL
+            GROUP BY tool
+        """).fetchall()
+        for row in tool_token_results:
+            if row[0] in by_tool:
+                by_tool[row[0]]["tokens"] = row[1] or 0
+                by_tool[row[0]]["errors"] = row[2] or 0
+    except Exception:
+        pass
     
     # Query for backend breakdown directly from events
     try:
@@ -102,7 +119,8 @@ def _load_telemetry_v3():
         recent = _duckdb_store.conn.execute("""
             SELECT timestamp, tool, backend, status, duration_ms,
                    COALESCE(input_tokens, 0) as input_tokens,
-                   COALESCE(output_tokens, 0) as output_tokens
+                   COALESCE(output_tokens, 0) as output_tokens,
+                   session_id
             FROM events
             ORDER BY timestamp DESC
             LIMIT 1000
@@ -117,6 +135,8 @@ def _load_telemetry_v3():
                 "duration_ms": row[4] or 0,
                 "input_tokens": row[5],
                 "output_tokens": row[6],
+                "tokens_est": row[5] + row[6],  # Total for charts expecting 'tokens_est'
+                "session_id": row[7],
             })
     except Exception as e:
         print(f"⚠️  Error fetching events: {e}", file=sys.stderr)
@@ -146,6 +166,7 @@ def _load_telemetry_v3():
                 "errors": row[2],
                 "input_tokens": row[3] or 0,
                 "output_tokens": row[4] or 0,
+                "tokens": (row[3] or 0) + (row[4] or 0),  # Total for charts expecting 'tokens'
                 "cache_read": row[5] or 0,
                 "cache_create": row[6] or 0,
                 "duration_ms": row[7] or 0,
@@ -1082,32 +1103,64 @@ def chart_token_impact():
     return None
 
 def chart_subagents(session_filter=None):
-    """Chart session token usage (uses telemetry.json, works with v1 and v2 schema)."""
+    """Chart subagent token usage by type.
+    
+    Uses DuckDB for v3 data, falls back to telemetry.json for v1/v2.
+    """
     from datetime import datetime, timedelta, timezone
 
-    # EST timezone offset (UTC-5)
-    EST = timezone(timedelta(hours=-5))
+    # Try v3 DuckDB first
+    if _duckdb_store:
+        try:
+            results = _duckdb_store.get_token_spend_by_agent_type()
+            if results:
+                # Filter out 'main' - we only want subagent types
+                subagent_results = [r for r in results if r["agent_type"] != "main"]
+                if subagent_results:
+                    # Extract type name (remove prefix if present)
+                    processed = {}
+                    for r in subagent_results:
+                        type_name = r["agent_type"].split(':')[-1] if ':' in r["agent_type"] else r["agent_type"]
+                        if type_name in processed:
+                            processed[type_name]["tokens"] += r["total_tokens"]
+                            processed[type_name]["count"] += r["sessions"]
+                        else:
+                            processed[type_name] = {"tokens": r["total_tokens"], "count": r["sessions"]}
+                    
+                    sorted_results = sorted(processed.items(), key=lambda x: -x[1]["tokens"])
+                    labels = [name for name, _ in sorted_results]
+                    values = [data["tokens"] for _, data in sorted_results]
+                    
+                    data = {"label": "Tokens", "values": values}
+                    path = generate_html_chart(
+                        "Subagent Token Usage by Type",
+                        "bar",
+                        data,
+                        labels,
+                        "subagents.html"
+                    )
+                    print(f"✅ Chart generated: {path}")
+                    return path
+        except Exception as e:
+            print(f"⚠️  DuckDB query failed, falling back to v1/v2: {e}")
 
+    # Fall back to telemetry.json (v1/v2)
     telemetry = load_telemetry()
     if telemetry is None:
         print("⚠️  No telemetry data found")
         return None
     
-    # load_telemetry() normalizes v2→v1, so subagents is already populated
     subagents = telemetry.get("aggregates", {}).get("subagents", {})
-
     if not subagents:
         print("⚠️  No subagent data found in telemetry")
         return None
 
-    # Extract type name (remove prefix if present) and collect data
+    # Extract type name and collect data
     results = {}
     for agent_type, data in subagents.items():
         type_name = agent_type.split(':')[-1] if ':' in agent_type else agent_type
         tokens = data.get("tokens", 0)
         count = data.get("count", 0)
-
-        # Accumulate if type already exists (for renamed types)
         if type_name in results:
             results[type_name]["tokens"] += tokens
             results[type_name]["count"] += count
@@ -1118,25 +1171,18 @@ def chart_subagents(session_filter=None):
         print("⚠️  No subagent data to chart")
         return None
 
-    # Sort by tokens and prepare for chart
     sorted_results = sorted(results.items(), key=lambda x: -x[1]["tokens"])
     labels = [name for name, _ in sorted_results]
     values = [data["tokens"] for _, data in sorted_results]
 
-    data = {
-        "label": "Estimated Tokens",
-        "values": values
-    }
-
-    title = "Subagent Token Usage by Type"
+    data = {"label": "Estimated Tokens", "values": values}
     path = generate_html_chart(
-        title,
+        "Subagent Token Usage by Type",
         "bar",
         data,
         labels,
         "subagents.html"
     )
-
     print(f"✅ Chart generated: {path}")
     return path
 
@@ -2013,7 +2059,10 @@ def chart_error_timeline():
     def get_range_data(hours):
         if hours == 0:  # All time
             return all_sorted
-        return all_sorted[-hours:] if len(all_sorted) >= hours else all_sorted
+        # Filter by actual time, not just last N items
+        now = datetime.now()
+        cutoff = (now - timedelta(hours=hours)).strftime("%Y-%m-%dT%H")
+        return [(k, v) for k, v in all_sorted if k >= cutoff]
 
     # Prepare session data
     session_labels = list(session_data.keys())
