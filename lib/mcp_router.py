@@ -390,6 +390,8 @@ class MCPRouter:
 
         # Shadow cache for workflow state (survives backend respawns)
         self._workflow_state_cache: dict[str, dict] = {}
+        # Counter for generating unique content IDs
+        self._content_id_counter = 0
 
         # Initialize summarizer (decide provider once at startup)
         self._llm_call: Callable[[str], str] = self._init_summarizer(summarizer, summarizer_model)
@@ -1553,6 +1555,13 @@ def start_stdio_server(router: MCPRouter):
                             break
                     if not destination:
                         result = {"content": [{"type": "text", "text": f"Error: Unknown backend prefix: {prefix}"}], "isError": True}
+                    elif "content_id" in args:
+                        # Two-step retrieval: return full content for given content_id
+                        full_result = router.get_full_content(args["content_id"])
+                        if "error" in full_result:
+                            result = {"content": [{"type": "text", "text": f"Error: {full_result['error']}"}], "isError": True}
+                        else:
+                            result = {"content": [{"type": "text", "text": json.dumps(full_result)}]}
                     else:
                         response = router.route(destination, actual_tool, args)
                         # Return {summary, full} envelope so Claude can read summary first
