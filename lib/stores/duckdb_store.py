@@ -60,13 +60,14 @@ class DuckDBStore(AnalyticsStore, TraceStore):
         import glob as glob_module
 
         # Build list of patterns that have matching files
+        # Use recursive glob to find files in subdirectories
         patterns = []
-        jsonl_pattern = str(self.data_dir / "*.jsonl")
-        gz_pattern = str(self.data_dir / "*.jsonl.gz")
+        jsonl_pattern = str(self.data_dir / "**" / "*.jsonl")
+        gz_pattern = str(self.data_dir / "**" / "*.jsonl.gz")
 
-        if glob_module.glob(jsonl_pattern):
+        if glob_module.glob(jsonl_pattern, recursive=True):
             patterns.append(jsonl_pattern)
-        if glob_module.glob(gz_pattern):
+        if glob_module.glob(gz_pattern, recursive=True):
             patterns.append(gz_pattern)
 
         if not patterns:
