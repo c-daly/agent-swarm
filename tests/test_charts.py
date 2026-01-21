@@ -12,9 +12,15 @@ from lib.charts import (
     render_dashboard,
     _format_confidence,
     _render_bar,
+    get_token_spend_chart,
+    get_agent_token_chart,
+    get_cache_efficiency_chart,
+    get_tool_latency_chart,
+    get_error_rate_chart,
 )
 from lib.telemetry_service import TelemetryService
 from lib.stores.interfaces import DaySummary, ToolSummary, AnalyticsStore
+from lib.stores.duckdb_store import DuckDBStore
 from lib.stores.validation import ValidationResult
 
 
@@ -331,3 +337,161 @@ class TestRenderDashboard:
 
         # Verify our mock store was used
         assert mock_store.get_daily_summary.called
+
+
+class TestGetTokenSpendChart:
+    """Tests for get_token_spend_chart JSON endpoint."""
+
+    def test_returns_list_of_dicts(self):
+        """Should return list of dicts with day, total_tokens, moving_avg."""
+        mock_store = Mock(spec=DuckDBStore)
+        mock_store.get_token_spend_by_day.return_value = [
+            {"day": "2025-01-15", "total_tokens": 10000, "moving_avg_7d": 8000},
+            {"day": "2025-01-16", "total_tokens": 12000, "moving_avg_7d": 9000},
+        ]
+
+        result = get_token_spend_chart(mock_store, days=30)
+
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert result[0]["day"] == "2025-01-15"
+        assert result[0]["total_tokens"] == 10000
+        mock_store.get_token_spend_by_day.assert_called_once_with(days=30)
+
+    def test_handles_empty_data(self):
+        """Should return empty list when no data exists."""
+        mock_store = Mock(spec=DuckDBStore)
+        mock_store.get_token_spend_by_day.return_value = []
+
+        result = get_token_spend_chart(mock_store)
+
+        assert result == []
+
+    def test_default_days_parameter(self):
+        """Should default to 30 days."""
+        mock_store = Mock(spec=DuckDBStore)
+        mock_store.get_token_spend_by_day.return_value = []
+
+        get_token_spend_chart(mock_store)
+
+        mock_store.get_token_spend_by_day.assert_called_once_with(days=30)
+
+
+class TestGetAgentTokenChart:
+    """Tests for get_agent_token_chart JSON endpoint."""
+
+    def test_returns_list_by_agent_type(self):
+        """Should return list of dicts with agent_type and total_tokens."""
+        mock_store = Mock(spec=DuckDBStore)
+        mock_store.get_token_spend_by_agent_type.return_value = [
+            {"agent_type": "Explore", "total_tokens": 50000, "sessions": 10},
+            {"agent_type": "main", "total_tokens": 30000, "sessions": 5},
+        ]
+
+        result = get_agent_token_chart(mock_store)
+
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert result[0]["agent_type"] == "Explore"
+        assert result[0]["total_tokens"] == 50000
+
+    def test_handles_empty_data(self):
+        """Should return empty list when no data exists."""
+        mock_store = Mock(spec=DuckDBStore)
+        mock_store.get_token_spend_by_agent_type.return_value = []
+
+        result = get_agent_token_chart(mock_store)
+
+        assert result == []
+
+
+class TestGetCacheEfficiencyChart:
+    """Tests for get_cache_efficiency_chart JSON endpoint."""
+
+    def test_returns_cache_trend_data(self):
+        """Should return list of dicts with day and cache_pct."""
+        mock_store = Mock(spec=DuckDBStore)
+        mock_store.get_cache_efficiency_trend.return_value = [
+            {"day": "2025-01-15", "cached": 5000, "total_input": 10000, "cache_pct": 50.0},
+        ]
+
+        result = get_cache_efficiency_chart(mock_store, days=7)
+
+        assert isinstance(result, list)
+        assert result[0]["cache_pct"] == 50.0
+        mock_store.get_cache_efficiency_trend.assert_called_once_with(days=7)
+
+    def test_handles_empty_data(self):
+        """Should return empty list when no cache data."""
+        mock_store = Mock(spec=DuckDBStore)
+        mock_store.get_cache_efficiency_trend.return_value = []
+
+        result = get_cache_efficiency_chart(mock_store)
+
+        assert result == []
+
+
+class TestGetToolLatencyChart:
+    """Tests for get_tool_latency_chart JSON endpoint."""
+
+    def test_returns_latency_by_backend(self):
+        """Should return list of dicts with backend, avg_latency, p95."""
+        mock_store = Mock(spec=DuckDBStore)
+        mock_store.get_tool_latency_by_backend.return_value = [
+            {"backend": "native", "avg_latency": 50.5, "p95": 150.0},
+            {"backend": "serena", "avg_latency": 200.0, "p95": 500.0},
+        ]
+
+        result = get_tool_latency_chart(mock_store)
+
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert result[0]["backend"] == "native"
+        assert result[0]["avg_latency"] == 50.5
+
+    def test_handles_empty_data(self):
+        """Should return empty list when no latency data."""
+        mock_store = Mock(spec=DuckDBStore)
+        mock_store.get_tool_latency_by_backend.return_value = []
+
+        result = get_tool_latency_chart(mock_store)
+
+        assert result == []
+
+
+class TestGetErrorRateChart:
+    """Tests for get_error_rate_chart JSON endpoint."""
+
+    def test_returns_error_rates_by_tool(self):
+        """Should return list of dicts with tool, errors, error_pct."""
+        mock_store = Mock(spec=DuckDBStore)
+        mock_store.get_error_rate_by_tool.return_value = [
+            {"tool": "Bash", "total_calls": 100, "errors": 5, "error_pct": 5.0},
+            {"tool": "Read", "total_calls": 200, "errors": 2, "error_pct": 1.0},
+        ]
+
+        result = get_error_rate_chart(mock_store, limit=10)
+
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert result[0]["tool"] == "Bash"
+        assert result[0]["error_pct"] == 5.0
+        mock_store.get_error_rate_by_tool.assert_called_once_with(limit=10)
+
+    def test_handles_empty_data(self):
+        """Should return empty list when no error data."""
+        mock_store = Mock(spec=DuckDBStore)
+        mock_store.get_error_rate_by_tool.return_value = []
+
+        result = get_error_rate_chart(mock_store)
+
+        assert result == []
+
+    def test_default_limit(self):
+        """Should default to 20 tools."""
+        mock_store = Mock(spec=DuckDBStore)
+        mock_store.get_error_rate_by_tool.return_value = []
+
+        get_error_rate_chart(mock_store)
+
+        mock_store.get_error_rate_by_tool.assert_called_once_with(limit=20)

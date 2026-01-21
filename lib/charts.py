@@ -5,9 +5,12 @@ Uses TelemetryService as the data source for validated metrics.
 """
 
 from datetime import date, timedelta
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from lib.telemetry_service import TelemetryService
+
+if TYPE_CHECKING:
+    from lib.stores.duckdb_store import DuckDBStore
 
 
 def _format_confidence(confidence: float) -> str:
@@ -225,3 +228,99 @@ def render_dashboard(
     ]
 
     return "\n".join(sections)
+
+
+# -----------------------------------------------------------------------------
+# JSON Chart Endpoints (Telemetry v3)
+# -----------------------------------------------------------------------------
+
+def get_token_spend_chart(
+    store: "DuckDBStore",
+    days: int = 30,
+) -> list[dict]:
+    """Get token spend data for charting.
+
+    Returns daily token totals with 7-day moving average,
+    suitable for line chart visualization.
+
+    Args:
+        store: DuckDBStore instance with chart query methods.
+        days: Number of days to look back (default 30).
+
+    Returns:
+        List of dicts with keys: day, total_tokens, moving_avg_7d.
+        Empty list if no data exists.
+    """
+    return store.get_token_spend_by_day(days=days)
+
+
+def get_agent_token_chart(store: "DuckDBStore") -> list[dict]:
+    """Get token spend by agent type for charting.
+
+    Returns token totals grouped by agent type (main, Explore, etc.),
+    suitable for pie/bar chart visualization.
+
+    Args:
+        store: DuckDBStore instance with chart query methods.
+
+    Returns:
+        List of dicts with keys: agent_type, total_tokens, sessions.
+        Empty list if no data exists.
+    """
+    return store.get_token_spend_by_agent_type()
+
+
+def get_cache_efficiency_chart(
+    store: "DuckDBStore",
+    days: int = 30,
+) -> list[dict]:
+    """Get cache efficiency trend for charting.
+
+    Returns daily cache hit percentages,
+    suitable for line chart visualization.
+
+    Args:
+        store: DuckDBStore instance with chart query methods.
+        days: Number of days to look back (default 30).
+
+    Returns:
+        List of dicts with keys: day, cached, total_input, cache_pct.
+        Empty list if no data exists.
+    """
+    return store.get_cache_efficiency_trend(days=days)
+
+
+def get_tool_latency_chart(store: "DuckDBStore") -> list[dict]:
+    """Get tool latency by backend for charting.
+
+    Returns average and P95 latency per backend,
+    suitable for bar chart visualization.
+
+    Args:
+        store: DuckDBStore instance with chart query methods.
+
+    Returns:
+        List of dicts with keys: backend, avg_latency, p95.
+        Empty list if no data exists.
+    """
+    return store.get_tool_latency_by_backend()
+
+
+def get_error_rate_chart(
+    store: "DuckDBStore",
+    limit: int = 20,
+) -> list[dict]:
+    """Get error rates by tool for charting.
+
+    Returns error percentages per tool, ordered by error rate descending,
+    suitable for bar chart visualization.
+
+    Args:
+        store: DuckDBStore instance with chart query methods.
+        limit: Maximum number of tools to return (default 20).
+
+    Returns:
+        List of dicts with keys: tool, total_calls, errors, error_pct.
+        Empty list if no data exists.
+    """
+    return store.get_error_rate_by_tool(limit=limit)
