@@ -57,15 +57,35 @@ class DuckDBStore(AnalyticsStore, TraceStore):
 
     def _setup_views(self) -> None:
         """Create views over JSONL files for querying."""
-        jsonl_pattern = str(self.data_dir / "**" / "*.jsonl")
+        import glob as glob_module
 
-        # Create main events view from all JSONL files
+        # Build list of patterns that have matching files
+        patterns = []
+        jsonl_pattern = str(self.data_dir / "*.jsonl")
+        gz_pattern = str(self.data_dir / "*.jsonl.gz")
+
+        if glob_module.glob(jsonl_pattern):
+            patterns.append(jsonl_pattern)
+        if glob_module.glob(gz_pattern):
+            patterns.append(gz_pattern)
+
+        if not patterns:
+            # No files found, create empty view
+            self.conn.execute("""
+                CREATE OR REPLACE VIEW events AS
+                SELECT NULL as timestamp WHERE false
+            """)
+            return
+
+        # Create main events view from all JSONL files (raw and gzipped)
+        patterns_sql = ", ".join(f"'{p}'" for p in patterns)
         self.conn.execute(f"""
             CREATE OR REPLACE VIEW events AS
             SELECT * FROM read_json_auto(
-                '{jsonl_pattern}',
+                [{patterns_sql}],
                 format='newline_delimited',
-                ignore_errors=true
+                ignore_errors=true,
+                union_by_name=true
             )
         """)
 
@@ -393,4 +413,131 @@ class DuckDBStore(AnalyticsStore, TraceStore):
                 project_path=row[7],
             )
             for row in results
+        ]
+
+    # -------------------------------------------------------------------------
+    # Chart Query Methods (Telemetry v3)
+    # -------------------------------------------------------------------------
+
+    def get_token_spend_by_day(self, days: int = 30) -> list[dict]:
+        """Get daily token spend with 7-day moving average.
+
+        Args:
+            days: Number of days to look back.
+
+        Returns:
+            List of dicts with day, total_tokens, and moving_avg_7d.
+        """
+        result = self.conn.execute(f"""
+            SELECT
+                DATE(timestamp) as day,
+                SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) as total_tokens,
+                AVG(SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0))) OVER (
+                    ORDER BY DATE(timestamp) ROWS 6 PRECEDING
+                ) as moving_avg_7d
+            FROM events
+            WHERE timestamp >= CURRENT_DATE - INTERVAL '{days} days'
+            GROUP BY DATE(timestamp)
+            ORDER BY day
+        """).fetchall()
+        return [
+            {"day": str(r[0]), "total_tokens": r[1], "moving_avg_7d": r[2]}
+            for r in result
+        ]
+
+    def get_token_spend_by_agent_type(self) -> list[dict]:
+        """Get token spend grouped by agent type.
+
+        Returns:
+            List of dicts with agent_type, total_tokens, and sessions.
+        """
+        result = self.conn.execute("""
+            SELECT
+                COALESCE(agent_type, 'main') as agent_type,
+                SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) as total_tokens,
+                COUNT(DISTINCT session_id) as sessions
+            FROM events
+            GROUP BY agent_type
+            ORDER BY total_tokens DESC
+        """).fetchall()
+        return [
+            {"agent_type": r[0], "total_tokens": r[1], "sessions": r[2]}
+            for r in result
+        ]
+
+    def get_cache_efficiency_trend(self, days: int = 30) -> list[dict]:
+        """Get cache efficiency percentage over time.
+
+        Args:
+            days: Number of days to look back.
+
+        Returns:
+            List of dicts with day, cached, total_input, and cache_pct.
+        """
+        result = self.conn.execute(f"""
+            SELECT
+                DATE(timestamp) as day,
+                SUM(COALESCE(cache_read_tokens, 0)) as cached,
+                SUM(COALESCE(input_tokens, 0)) as total_input,
+                ROUND(
+                    100.0 * SUM(COALESCE(cache_read_tokens, 0)) /
+                    NULLIF(SUM(COALESCE(input_tokens, 0)), 0),
+                    1
+                ) as cache_pct
+            FROM events
+            WHERE timestamp >= CURRENT_DATE - INTERVAL '{days} days'
+            GROUP BY DATE(timestamp)
+            ORDER BY day
+        """).fetchall()
+        return [
+            {"day": str(r[0]), "cached": r[1], "total_input": r[2], "cache_pct": r[3]}
+            for r in result
+        ]
+
+    def get_tool_latency_by_backend(self) -> list[dict]:
+        """Get average and P95 latency per backend.
+
+        Returns:
+            List of dicts with backend, avg_latency, and p95.
+        """
+        result = self.conn.execute("""
+            SELECT
+                backend,
+                ROUND(AVG(duration_ms), 2) as avg_latency,
+                ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms), 2) as p95
+            FROM events
+            WHERE duration_ms > 0
+            GROUP BY backend
+        """).fetchall()
+        return [
+            {"backend": r[0], "avg_latency": r[1], "p95": r[2]}
+            for r in result
+        ]
+
+    def get_error_rate_by_tool(self, limit: int = 20) -> list[dict]:
+        """Get error percentage per tool.
+
+        Args:
+            limit: Maximum number of tools to return.
+
+        Returns:
+            List of dicts with tool, total_calls, errors, and error_pct.
+        """
+        result = self.conn.execute(f"""
+            SELECT
+                tool,
+                COUNT(*) as total_calls,
+                SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as errors,
+                ROUND(
+                    100.0 * SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) / COUNT(*),
+                    1
+                ) as error_pct
+            FROM events
+            GROUP BY tool
+            ORDER BY error_pct DESC
+            LIMIT {limit}
+        """).fetchall()
+        return [
+            {"tool": r[0], "total_calls": r[1], "errors": r[2], "error_pct": r[3]}
+            for r in result
         ]
