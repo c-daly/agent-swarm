@@ -679,7 +679,17 @@ def generate_dashboard():
             data.daily_summaries = {};
             data.historical_timeline = [];
             data.sessions = [];
-            data.sequences = {};
+            
+            // Compute sequences.summary_effectiveness from summarization data
+            const offered = summ.offered || 0;
+            const fullRequested = summ.full_requested || 0;
+            data.sequences = {
+                summary_effectiveness: {
+                    drill_down_rate: offered > 0 ? fullRequested / offered : null,
+                    offered: offered,
+                    full_requested: fullRequested
+                }
+            };
             
             return data;
         }
