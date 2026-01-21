@@ -56,8 +56,8 @@ def main():
     agent_type = input_data.get("agentType", "unknown")
     task_desc = input_data.get("task", "implementation task")
 
-    # Generate unique agent ID for this subagent
-    agent_id = f"sub-{uuid.uuid4().hex[:8]}"
+    # Use Claude Code's agentId if provided, otherwise generate one
+    agent_id = input_data.get("agentId") or f"sub-{uuid.uuid4().hex[:8]}"
 
     # Load all state from state server
     session_state = load_session_state()
