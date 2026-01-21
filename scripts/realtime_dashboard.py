@@ -1122,12 +1122,19 @@ def generate_dashboard():
             const sequences = agg.sequences || data.sequences || {};
             const effectiveness = sequences.summary_effectiveness || {};
             
-            // Drill-down rate
-            const drillDownRate = effectiveness.drill_down_rate || 0;
+            // Drill-down rate (only show % if we have summarization data)
+            const summarization = agg.summarization || {};
+            const offered = summarization.offered || 0;
+            const drillDownRate = effectiveness.drill_down_rate;
             const drillDownEl = document.getElementById('drillDownRate');
             if (drillDownEl) {
-                drillDownEl.textContent = (drillDownRate * 100).toFixed(0) + '%';
-                drillDownEl.className = 'big-number ' + (drillDownRate > 0.5 ? 'warning' : 'success');
+                if (offered > 0 && drillDownRate !== undefined && drillDownRate !== null) {
+                    drillDownEl.textContent = (drillDownRate * 100).toFixed(0) + '%';
+                    drillDownEl.className = 'big-number ' + (drillDownRate > 0.5 ? 'warning' : 'success');
+                } else {
+                    drillDownEl.textContent = 'N/A';
+                    drillDownEl.className = 'big-number';
+                }
             }
             
             // Full retrievals
@@ -1137,9 +1144,7 @@ def generate_dashboard():
                 fullRetrievalsEl.textContent = fullRetrievals + ' full retrievals';
             }
 
-            // Update summarization card (from v2 normalized data)
-            const summarization = agg.summarization || {};
-            const offered = summarization.offered || 0;
+            // Update summarization card (from v2 normalized data - reuse summarization/offered from above)
             const accepted = summarization.accepted || 0;
             const fullContentRequests = summarization.full_content_requests || 0;
             const tokensBefore = summarization.tokens_before || 0;
