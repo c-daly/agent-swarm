@@ -326,25 +326,10 @@ def main():
         state_dir = Path.home() / ".claude/plugins/agent-swarm/.state"
         service = TelemetryService(data_dir=str(state_dir))
         
-        # Check for summary state from mcp-summarizer hook
+        # Summary tracking (mcp-summarizer hook removed in router refactor)
         was_summarized = False
         original_size = None
         summary_size = None
-        summary_state_file = state_dir / "last_summary.json"
-        if summary_state_file.exists():
-            try:
-                import time
-                summary_state = json.loads(summary_state_file.read_text())
-                # Only use if recent (within 5 seconds) and matches tool
-                if (time.time() - summary_state.get("timestamp", 0) < 5 and 
-                    summary_state.get("tool_name") == tool_name):
-                    was_summarized = True
-                    original_size = summary_state.get("original_size")
-                    summary_size = summary_state.get("summary_size")
-                    # Clear the state file after reading
-                    summary_state_file.unlink()
-            except:
-                pass
         
         event_data = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
