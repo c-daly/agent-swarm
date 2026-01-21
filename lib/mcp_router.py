@@ -392,6 +392,8 @@ class MCPRouter:
         self._workflow_state_cache: dict[str, dict] = {}
         # Counter for generating unique content IDs
         self._content_id_counter = 0
+        # Storage for content that can be retrieved by ID (for two-step content retrieval)
+        self._content_store: dict[str, Any] = {}
 
         # Initialize summarizer (decide provider once at startup)
         self._llm_call: Callable[[str], str] = self._init_summarizer(summarizer, summarizer_model)
@@ -815,6 +817,20 @@ class MCPRouter:
             # Keep last 100 events
             if len(self.telemetry._socket_events) > 100:
                 self.telemetry._socket_events = self.telemetry._socket_events[-100:]
+
+    def store_content(self, content: Any) -> str:
+        """Store content and return a unique content_id."""
+        self._content_id_counter += 1
+        content_id = f"content_{self._content_id_counter}"
+        self._content_store[content_id] = content
+        return content_id
+
+    def get_full_content(self, content_id: str) -> dict:
+        """Retrieve stored content by ID. Returns error dict if not found."""
+        if content_id in self._content_store:
+            content = self._content_store.pop(content_id)  # Remove after retrieval (one-time use)
+            return {"content": content}
+        return {"error": f"Content not found for ID: {content_id}"}
 
     def get_socket_stats(self) -> dict:
         """Get current socket connection statistics.
