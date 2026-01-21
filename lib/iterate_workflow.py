@@ -22,6 +22,12 @@ _state_dir_override = os.environ.get("ITERATE_STATE_DIR")
 STATE_DIR = Path(_state_dir_override) if _state_dir_override else Path.home() / ".claude/plugins/agent-swarm/.state"
 LOG_FILE = STATE_DIR / "iterate.log"
 
+# Ensure lib is in path for workflow_client import (needed when run standalone)
+import sys
+lib_dir = Path(__file__).parent
+if str(lib_dir) not in sys.path:
+    sys.path.insert(0, str(lib_dir))
+
 # Import workflow client for state management via MCP router
 import workflow_client
 
@@ -303,6 +309,11 @@ def start(
         "max_iterations": max_iterations,
         "mode": "iterate-tdd",
         "workflow_invoked": True,
+        # Orchestration tracking (survives compaction)
+        "task_queue": [],           # Tasks to be done
+        "active_agents": {},        # agent_id -> {description, type, spawned_at}
+        "completed_tasks": [],      # Finished task descriptions
+        # Test/review results
         "tests_passed": None,
         "lint_passed": None,
         "coverage_ok": None,

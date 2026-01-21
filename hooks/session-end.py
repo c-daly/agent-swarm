@@ -10,7 +10,10 @@ import json
 import sys
 import subprocess
 from pathlib import Path
-from lib.stores.compression import compress_old_sessions
+
+# Add lib to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
+from stores.compression import compress_old_sessions
 
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 CHARTS_SCRIPT = SCRIPTS_DIR / "charts.py"

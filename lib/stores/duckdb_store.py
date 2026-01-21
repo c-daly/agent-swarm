@@ -107,35 +107,29 @@ class DuckDBStore(AnalyticsStore, TraceStore):
                 FROM events
                 WHERE timestamp::DATE = '{day_str}'::DATE
             ),
-            assistant_stats AS (
+            event_stats AS (
                 SELECT
-                    COUNT(DISTINCT sessionId) as sessions,
+                    COUNT(DISTINCT session_id) as sessions,
                     COALESCE(SUM(
-                        COALESCE(message.usage.input_tokens, 0) +
-                        COALESCE(message.usage.output_tokens, 0)
-                    ), 0) as total_tokens
-                FROM day_events
-                WHERE type = 'assistant'
-            ),
-            tool_stats AS (
-                SELECT
+                        COALESCE(input_tokens, 0) +
+                        COALESCE(output_tokens, 0)
+                    ), 0) as total_tokens,
                     COUNT(*) as tool_calls,
                     0 as cache_hits
                 FROM day_events
-                WHERE type = 'tool_use'
             )
             SELECT
                 '{day_str}'::DATE as date,
-                COALESCE(a.sessions, 0) as sessions,
-                COALESCE(a.total_tokens, 0) as total_tokens,
-                COALESCE(t.tool_calls, 0) as tool_calls,
-                COALESCE(t.cache_hits, 0) as cache_hits,
+                COALESCE(e.sessions, 0) as sessions,
+                COALESCE(e.total_tokens, 0) as total_tokens,
+                COALESCE(e.tool_calls, 0) as tool_calls,
+                COALESCE(e.cache_hits, 0) as cache_hits,
                 0.0 as cache_ratio,
                 0 as summarizations_offered,
                 0 as summarizations_accepted,
                 0.0 as avg_compression_ratio,
                 0 as tokens_saved
-            FROM assistant_stats a, tool_stats t
+            FROM event_stats e
         """).fetchone()
 
         if result is None or result[1] == 0:  # No sessions means no data
@@ -171,18 +165,17 @@ class DuckDBStore(AnalyticsStore, TraceStore):
 
         results = self.conn.execute(f"""
             SELECT
-                toolName as tool_name,
+                tool as tool_name,
                 COUNT(*) as call_count,
-                COALESCE(AVG(durationMs), 0) as avg_duration_ms,
+                COALESCE(AVG(duration_ms), 0) as avg_duration_ms,
                 0 as total_response_bytes,
                 0.0 as cache_hit_rate,
                 0.0 as summarization_rate
             FROM events
-            WHERE type = 'tool_use'
-              AND timestamp::DATE >= '{start_str}'::DATE
+            WHERE timestamp::DATE >= '{start_str}'::DATE
               AND timestamp::DATE <= '{end_str}'::DATE
-              AND toolName IS NOT NULL
-            GROUP BY toolName
+              AND tool IS NOT NULL
+            GROUP BY tool
             ORDER BY call_count DESC
         """).fetchall()
 
@@ -209,16 +202,15 @@ class DuckDBStore(AnalyticsStore, TraceStore):
         """
         results = self.conn.execute(f"""
             SELECT
-                toolName as tool_name,
+                tool as tool_name,
                 COUNT(*) as call_count,
-                COALESCE(AVG(durationMs), 0) as avg_duration_ms,
+                COALESCE(AVG(duration_ms), 0) as avg_duration_ms,
                 0 as total_response_bytes,
                 0.0 as cache_hit_rate,
                 0.0 as summarization_rate
             FROM events
-            WHERE type = 'tool_use'
-              AND toolName IS NOT NULL
-            GROUP BY toolName
+            WHERE tool IS NOT NULL
+            GROUP BY tool
             ORDER BY call_count DESC
             LIMIT {limit}
         """).fetchall()
@@ -255,26 +247,26 @@ class DuckDBStore(AnalyticsStore, TraceStore):
         Returns:
             List of ToolCallRecord matching filters, ordered by timestamp desc.
         """
-        conditions = ["type = 'tool_use'"]
+        conditions = []
 
         if session_id:
-            conditions.append(f"sessionId = '{session_id}'")
+            conditions.append(f"session_id = '{session_id}'")
         if tool_name:
-            conditions.append(f"toolName LIKE '{tool_name}%'")
+            conditions.append(f"tool LIKE '{tool_name}%'")
         if start_time:
             conditions.append(f"timestamp >= '{start_time}'")
         if end_time:
             conditions.append(f"timestamp <= '{end_time}'")
 
-        where_clause = " AND ".join(conditions)
+        where_clause = " AND ".join(conditions) if conditions else "1=1"
 
         results = self.conn.execute(f"""
             SELECT
-                sessionId as session_id,
-                uuid as turn_id,
+                session_id,
+                agent_id as turn_id,
                 timestamp,
-                toolName as tool,
-                COALESCE(durationMs, 0) as duration_ms,
+                tool,
+                COALESCE(duration_ms, 0) as duration_ms,
                 0 as response_size,
                 false as is_cache_hit,
                 NULL as summary_size,
@@ -317,11 +309,11 @@ class DuckDBStore(AnalyticsStore, TraceStore):
         """
         results = self.conn.execute(f"""
             SELECT
-                sessionId as session_id,
-                uuid as turn_id,
+                session_id,
+                agent_id as turn_id,
                 timestamp,
-                toolName as tool,
-                COALESCE(durationMs, 0) as duration_ms,
+                tool,
+                COALESCE(duration_ms, 0) as duration_ms,
                 0 as response_size,
                 false as is_cache_hit,
                 NULL as summary_size,
@@ -330,8 +322,7 @@ class DuckDBStore(AnalyticsStore, TraceStore):
                 false as is_sidechain,
                 NULL as git_branch
             FROM events
-            WHERE type = 'tool_use'
-              AND sessionId = '{session_id}'
+            WHERE session_id = '{session_id}'
             ORDER BY timestamp ASC
         """).fetchall()
 
@@ -381,20 +372,17 @@ class DuckDBStore(AnalyticsStore, TraceStore):
         results = self.conn.execute(f"""
             WITH session_stats AS (
                 SELECT
-                    sessionId as session_id,
+                    session_id,
                     MIN(timestamp) as start_time,
                     MAX(timestamp) as end_time,
-                    SUM(CASE WHEN type = 'assistant' THEN
-                        COALESCE(message.usage.input_tokens, 0) +
-                        COALESCE(message.usage.output_tokens, 0)
-                    ELSE 0 END) as total_tokens,
-                    SUM(CASE WHEN type = 'tool_use' THEN 1 ELSE 0 END) as tool_calls,
+                    SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) as total_tokens,
+                    COUNT(*) as tool_calls,
                     0 as cache_hits,
                     NULL as git_branch,
                     NULL as project_path
                 FROM events
-                WHERE sessionId IS NOT NULL
-                GROUP BY sessionId
+                WHERE session_id IS NOT NULL
+                GROUP BY session_id
                 {having_clause}
             )
             SELECT * FROM session_stats

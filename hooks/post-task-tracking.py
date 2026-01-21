@@ -21,6 +21,15 @@ except ImportError:
     def log_debug(msg, **kw): pass
     class ConfigError(Exception): pass
     class StateError(Exception): pass
+
+# Import workflow client for state tracking
+try:
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
+    import workflow_client
+    HAS_WORKFLOW_CLIENT = True
+except ImportError:
+    HAS_WORKFLOW_CLIENT = False
 STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
 # DISABLED: No longer writing subagent metrics
 # SUBAGENT_METRICS = STATE_DIR / "subagent_metrics.json"
@@ -71,23 +80,21 @@ def extract_agent_info(tool_output):
     return agent_id, agent_type
 
 def track_subagent(agent_id, agent_type, prompt=""):
-    """Track a completed subagent."""
-    metrics = load_metrics()
-
-    # Create/update entry for this agent with correct schema
-    if agent_id not in metrics:
-        metrics[agent_id] = {
-            "spawned_at": datetime.now().isoformat(),
-            "agent_type": agent_type,
-            "status": "completed",
-            "prompt": prompt[:100] if prompt else "No description"
-        }
-    else:
-        # Update existing entry
-        metrics[agent_id]["status"] = "completed"
-        metrics[agent_id]["last_updated"] = datetime.now().isoformat()
-
-    save_metrics(metrics)
+    """Track a spawned subagent in workflow state."""
+    # Update workflow state (survives compaction)
+    if HAS_WORKFLOW_CLIENT:
+        try:
+            if workflow_client.workflow_is_active("iterate"):
+                agents = workflow_client.workflow_get_value("iterate", "active_agents") or {}
+                agents[agent_id] = {
+                    "description": prompt[:100] if prompt else "No description",
+                    "type": agent_type,
+                    "spawned_at": datetime.now().isoformat()
+                }
+                workflow_client.workflow_update("iterate", {"active_agents": agents})
+                log_info(f"Tracked agent {agent_id} in workflow state")
+        except Exception as e:
+            log_warning(f"Failed to update workflow state: {e}")
 
 def check_new_plugins():
     """Check for and auto-document new plugins (every 10 tool uses)."""
