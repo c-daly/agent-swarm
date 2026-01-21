@@ -356,18 +356,7 @@ def generate_dashboard():
                 <option value="all">All time</option>
             </select>
         </div>
-        <div class="filter-group">
-            <label>Tool:</label>
-            <select id="filterTool" onchange="applyFilters()">
-                <option value="all">All tools</option>
-            </select>
-        </div>
-        <div class="filter-group">
-            <label>Backend:</label>
-            <select id="filterBackend" onchange="applyFilters()">
-                <option value="all">All backends</option>
-            </select>
-        </div>
+
         <div class="chart-links">
             <a href="charts/telemetry.html" class="chart-link-btn">📡 Telemetry</a>
             <a href="charts/latency.html" class="chart-link-btn">⏱️ Latency</a>
@@ -535,9 +524,7 @@ def generate_dashboard():
 
         // Filter state
         let currentFilters = {
-            timeRange: '24h',
-            tool: 'all',
-            backend: 'all'
+            timeRange: '24h'
         };
         let allTelemetryData = null;
         let tokenChartDays = 14; // Chart-specific range
@@ -553,37 +540,12 @@ def generate_dashboard():
         }
 
         function populateFilterDropdowns(data) {
-            // Populate tools dropdown
-            const toolSelect = document.getElementById('filterTool');
-            const tools = new Set();
-            if (data.aggregates?.by_tool) {
-                Object.keys(data.aggregates.by_tool).forEach(t => tools.add(t));
-            }
-            if (data.events) {
-                data.events.forEach(e => e.tool && tools.add(e.tool));
-            }
-            const sortedTools = [...tools].sort();
-            toolSelect.innerHTML = '<option value="all">All tools</option>' +
-                sortedTools.map(t => `<option value="${t}">${t}</option>`).join('');
-
-            // Populate backends dropdown
-            const backendSelect = document.getElementById('filterBackend');
-            const backends = new Set();
-            if (data.aggregates?.by_backend) {
-                Object.keys(data.aggregates.by_backend).forEach(b => backends.add(b));
-            }
-            if (data.events) {
-                data.events.forEach(e => e.backend && backends.add(e.backend));
-            }
-            const sortedBackends = [...backends].sort();
-            backendSelect.innerHTML = '<option value="all">All backends</option>' +
-                sortedBackends.map(b => `<option value="${b}">${b}</option>`).join('');
+            // Tool/backend dropdowns removed - v2 telemetry doesn't support per-event filtering
+            // Time range dropdown is static HTML, no population needed
         }
 
         function applyFilters() {
             currentFilters.timeRange = document.getElementById('filterTimeRange').value;
-            currentFilters.tool = document.getElementById('filterTool').value;
-            currentFilters.backend = document.getElementById('filterBackend').value;
             if (allTelemetryData) {
                 updateDashboard(filterData(allTelemetryData));
             }
@@ -593,7 +555,7 @@ def generate_dashboard():
             if (!data) return data;
             const filtered = JSON.parse(JSON.stringify(data)); // Deep clone
 
-            // Time filter
+            // Time filter only (tool/backend filters removed - not supported in v2)
             const now = Date.now();
             const ranges = {
                 '1h': 60 * 60 * 1000,
@@ -604,17 +566,6 @@ def generate_dashboard():
             };
             const cutoff = now - (ranges[currentFilters.timeRange] || ranges['24h']);
             const cutoffDate = new Date(cutoff).toISOString().substring(0, 10);
-
-            // Filter events by time, tool, and backend
-            if (filtered.events) {
-                filtered.events = filtered.events.filter(e => {
-                    const ts = new Date(e.timestamp || e.ts).getTime();
-                    if (ts < cutoff) return false;
-                    if (currentFilters.tool !== 'all' && e.tool !== currentFilters.tool) return false;
-                    if (currentFilters.backend !== 'all' && e.backend !== currentFilters.backend) return false;
-                    return true;
-                });
-            }
 
             // Filter daily_summaries by date range
             if (filtered.daily_summaries && currentFilters.timeRange !== 'all') {
@@ -759,17 +710,21 @@ def generate_dashboard():
                 data.sequences = {};
             }
 
-            // Aggregate subagent data from all days
+            // Aggregate subagent/session data from all days
+            // Note: v2 schema uses by_session, not by_subagent
             if (!data.aggregates.subagents && data.days) {
                 data.aggregates.subagents = {};
                 for (const [date, dayData] of Object.entries(data.days)) {
-                    const bySubagent = dayData.calls?.by_subagent || {};
-                    for (const [subagentName, stats] of Object.entries(bySubagent)) {
-                        if (!data.aggregates.subagents[subagentName]) {
-                            data.aggregates.subagents[subagentName] = { count: 0, tokens: 0 };
+                    // Use by_session (v2 schema) - each session is essentially a subagent
+                    const bySession = dayData.by_session || {};
+                    for (const [sessionId, sessionData] of Object.entries(bySession)) {
+                        if (!data.aggregates.subagents[sessionId]) {
+                            data.aggregates.subagents[sessionId] = { count: 0, tokens: 0 };
                         }
-                        data.aggregates.subagents[subagentName].count += stats.count || 0;
-                        data.aggregates.subagents[subagentName].tokens += stats.tokens || 0;
+                        const sessionTokens = sessionData.tokens || {};
+                        const sessionCalls = sessionData.calls || {};
+                        data.aggregates.subagents[sessionId].count += sessionCalls.total || 1;
+                        data.aggregates.subagents[sessionId].tokens += (sessionTokens.input || 0) + (sessionTokens.output || 0);
                     }
                 }
             }
@@ -788,8 +743,8 @@ def generate_dashboard():
                             data.sessions.push({
                                 id: sessionId,
                                 date: date,
-                                start_time: sessionData.start_time,
-                                end_time: sessionData.end_time,
+                                start_time: sessionData.start || sessionData.start_time,
+                                end_time: sessionData.end || sessionData.end_time,
                                 tokens: (sessionTokens.input || 0) + (sessionTokens.output || 0),
                                 calls: sessionCalls.total || 0
                             });
@@ -867,11 +822,11 @@ def generate_dashboard():
                 trendDetailsEl.textContent = '';
             }
 
-            // Update tool list
+            // Update tool list - sort by call count (v2 schema doesn't have per-tool tokens)
             const byTool = agg.by_tool || {};
             const toolList = Object.entries(byTool)
                 .map(([name, data]) => ({ name, ...data }))
-                .sort((a, b) => (b.tokens || 0) - (a.tokens || 0))
+                .sort((a, b) => (b.count || 0) - (a.count || 0))
                 .slice(0, 10);
 
             const toolListEl = document.getElementById('toolList');
@@ -880,7 +835,7 @@ def generate_dashboard():
                     <div class="tool-item">
                         <div class="tool-name">${t.name}</div>
                         <div class="tool-stats">
-                            ${formatNumber(t.tokens || 0)} tokens / ${t.count || 0} calls
+                            ${formatNumber(t.count || 0)} calls
                         </div>
                     </div>
                 `).join('');
@@ -977,11 +932,19 @@ def generate_dashboard():
             const labels = recentPoints.map(p => p.label.substring(5)); // MM-DD format
             const tokenData = recentPoints.map(p => p.tokens);
             const callData = recentPoints.map(p => p.calls);
+            
+            // Calculate 7-day moving average for tokens
+            const movingAvg = tokenData.map((_, i, arr) => {
+                const start = Math.max(0, i - 6);
+                const window = arr.slice(start, i + 1);
+                return Math.round(window.reduce((a, b) => a + b, 0) / window.length);
+            });
 
             if (tokenChart) {
                 tokenChart.data.labels = labels;
                 tokenChart.data.datasets[0].data = tokenData;
-                tokenChart.data.datasets[1].data = callData;
+                tokenChart.data.datasets[1].data = movingAvg;
+                tokenChart.data.datasets[2].data = callData;
                 tokenChart.update('none');
             } else {
                 tokenChart = new Chart(ctx, {
@@ -992,11 +955,22 @@ def generate_dashboard():
                             {
                                 label: 'Tokens',
                                 data: tokenData,
-                                borderColor: '#4cc9f0',
+                                borderColor: 'rgba(76, 201, 240, 0.4)',
                                 backgroundColor: 'rgba(76, 201, 240, 0.1)',
                                 fill: true,
                                 tension: 0.3,
-                                yAxisID: 'y'
+                                yAxisID: 'y',
+                                borderWidth: 1
+                            },
+                            {
+                                label: '7-day Avg',
+                                data: movingAvg,
+                                borderColor: '#4cc9f0',
+                                backgroundColor: 'transparent',
+                                fill: false,
+                                tension: 0.4,
+                                yAxisID: 'y',
+                                borderWidth: 2
                             },
                             {
                                 label: 'Calls',
