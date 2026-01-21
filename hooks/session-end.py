@@ -25,7 +25,7 @@ def generate_dashboard():
     try:
         # First capture a snapshot of current metrics
         snapshot_result = subprocess.run(
-            ["python3", str(CHARTS_SCRIPT), "snapshot"],
+            ["poetry", "run", "python", str(CHARTS_SCRIPT), "snapshot"],
             capture_output=True,
             text=True,
             timeout=10
@@ -37,7 +37,7 @@ def generate_dashboard():
         
         # Then generate the full dashboard
         result = subprocess.run(
-            ["python3", str(CHARTS_SCRIPT), "all"],
+            ["poetry", "run", "python", str(CHARTS_SCRIPT), "all"],
             capture_output=True,
             text=True,
             timeout=30

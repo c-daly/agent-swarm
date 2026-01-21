@@ -1251,11 +1251,11 @@ def generate_dashboard():
                 });
             }
 
-            // Check subagent usage
+            // Check subagent usage (skip if 100% - means we only have subagent data, not a problem)
             const subagents = agg.subagents || {};
             const subagentTokens = Object.values(subagents).reduce((sum, s) => sum + (s.tokens || 0), 0);
             const subagentPct = (totals.tokens || totals.tokens_est) ? (subagentTokens / (totals.tokens || totals.tokens_est)) * 100 : 0;
-            if (subagentPct > 70) {
+            if (subagentPct > 70 && subagentPct < 100) {
                 recs.push({
                     priority: 'medium',
                     issue: 'Subagents account for ' + subagentPct.toFixed(0) + '% of tokens',
