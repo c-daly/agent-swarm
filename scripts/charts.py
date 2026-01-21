@@ -96,19 +96,63 @@ def _load_telemetry_v3():
     except Exception:
         pass
     
-    # Get recent events
+    # Get recent events directly from DuckDB for better coverage
     events = []
-    recent = _duckdb_store.query_tool_calls(limit=100)
-    for r in recent:
-        events.append({
-            "timestamp": r.timestamp,
-            "tool": r.tool,
-            "backend": "native",  # Not in ToolCallRecord
-            "status": "success",  # Not in ToolCallRecord
-            "duration_ms": r.duration_ms,
-            "input_tokens": 0,
-            "output_tokens": 0,
-        })
+    try:
+        recent = _duckdb_store.conn.execute("""
+            SELECT timestamp, tool, backend, status, duration_ms,
+                   COALESCE(input_tokens, 0) as input_tokens,
+                   COALESCE(output_tokens, 0) as output_tokens
+            FROM events
+            ORDER BY timestamp DESC
+            LIMIT 1000
+        """).fetchall()
+        for row in recent:
+            events.append({
+                "ts": row[0],  # Charts expect 'ts' not 'timestamp'
+                "timestamp": row[0],
+                "tool": row[1],
+                "backend": row[2] or "native",
+                "status": row[3] or "success",
+                "duration_ms": row[4] or 0,
+                "input_tokens": row[5],
+                "output_tokens": row[6],
+            })
+    except Exception as e:
+        print(f"⚠️  Error fetching events: {e}", file=sys.stderr)
+    
+    # Build daily summaries from DuckDB
+    daily_summaries = {}
+    try:
+        daily_results = _duckdb_store.conn.execute("""
+            SELECT 
+                DATE(timestamp) as day,
+                COUNT(*) as calls,
+                SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as errors,
+                SUM(COALESCE(input_tokens, 0)) as input_tokens,
+                SUM(COALESCE(output_tokens, 0)) as output_tokens,
+                SUM(COALESCE(cache_read_tokens, 0)) as cache_read,
+                SUM(COALESCE(cache_creation_tokens, 0)) as cache_create,
+                SUM(duration_ms) as duration_ms,
+                COUNT(DISTINCT session_id) as sessions
+            FROM events
+            GROUP BY DATE(timestamp)
+            ORDER BY day
+        """).fetchall()
+        for row in daily_results:
+            day_str = str(row[0])
+            daily_summaries[day_str] = {
+                "calls": row[1],
+                "errors": row[2],
+                "input_tokens": row[3] or 0,
+                "output_tokens": row[4] or 0,
+                "cache_read": row[5] or 0,
+                "cache_create": row[6] or 0,
+                "duration_ms": row[7] or 0,
+                "sessions": row[8],
+            }
+    except Exception as e:
+        print(f"⚠️  Error building daily summaries: {e}", file=sys.stderr)
     
     return {
         "events": events,
@@ -118,6 +162,8 @@ def _load_telemetry_v3():
             "totals": totals,
         },
         "days": {},  # v3 uses DuckDB queries instead
+        "daily_summaries": daily_summaries,
+        "daily_summaries_actual": daily_summaries,
         "filters": {"tools": list(by_tool.keys()), "backends": list(by_backend.keys())},
         "_v3_store": _duckdb_store,
     }
@@ -1451,12 +1497,12 @@ def chart_token_trend():
 
 def chart_realtime_telemetry():
     """Chart real-time telemetry from hook-based tracking."""
-    if not TELEMETRY_FILE.exists():
+    telemetry = load_telemetry()
+    if telemetry is None:
         print("⚠️  No telemetry data found")
         print("   Telemetry hooks track all tool calls automatically")
         return None
 
-    telemetry = json.loads(TELEMETRY_FILE.read_text())
     events = telemetry.get("events", [])
     aggregates = telemetry.get("aggregates", {})
 
