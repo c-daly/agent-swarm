@@ -117,6 +117,7 @@ def _load_telemetry_v3():
                 "duration_ms": row[4] or 0,
                 "input_tokens": row[5],
                 "output_tokens": row[6],
+                "tokens_est": row[5] + row[6],  # Total for charts expecting 'tokens_est'
             })
     except Exception as e:
         print(f"⚠️  Error fetching events: {e}", file=sys.stderr)
@@ -146,6 +147,7 @@ def _load_telemetry_v3():
                 "errors": row[2],
                 "input_tokens": row[3] or 0,
                 "output_tokens": row[4] or 0,
+                "tokens": (row[3] or 0) + (row[4] or 0),  # Total for charts expecting 'tokens'
                 "cache_read": row[5] or 0,
                 "cache_create": row[6] or 0,
                 "duration_ms": row[7] or 0,

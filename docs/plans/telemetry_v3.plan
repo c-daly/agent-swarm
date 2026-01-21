@@ -1,0 +1,671 @@
+  Telemetry v3: Event-Level Storage with DuckDB Implementation Plan
+
+  For Claude: REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+
+  Goal: Restore event-level telemetry granularity using DuckDB to query JSONL files directly, enabling rich charts and session timeline visualization.
+
+  Architecture: Enhanced hooks write events to session JSONL files with agent_type, workflow_id, and workflow_phase context. Session-end hook compresses old files. DuckDBStore queries both raw and gzipped
+  JSONL files. Charts.py uses DuckDBStore for SQL-based chart generation.
+
+  Tech Stack: Python, DuckDB (already in project), gzip, existing hooks infrastructure, existing JSONL session logs.
+
+  ---
+  Overview
+
+  The design document (enhanced_telemetry) specifies 5 work items:
+  1. Enhance telemetry hooks - Tag events with agent_type, workflow_id, workflow_phase
+  2. Add session-end compression hook - Gzip JSONL files when session closes
+  3. Extend DuckDBStore - Add query methods for the 6 charts
+  4. Update charts.py - Use DuckDBStore instead of JSON telemetry file
+  5. Build session timeline UI - Interactive narrative explorer
+
+  This plan implements items 1-4. Item 5 (timeline UI) is a separate follow-on task.
+
+  ---
+  Task 1: Add ToolCallEvent Interface
+
+  Define the event schema as a dataclass for type safety and documentation.
+
+  Files:
+  - Create: lib/stores/events.py
+  - Test: tests/stores/test_events.py
+
+  Step 1: Write the failing test
+
+  # tests/stores/test_events.py
+  """Tests for ToolCallEvent dataclass."""
+  import pytest
+  from datetime import datetime
+  from lib.stores.events import ToolCallEvent
+
+
+  def test_tool_call_event_required_fields():
+      """ToolCallEvent requires core fields."""
+      event = ToolCallEvent(
+          timestamp="2026-01-21T10:00:00Z",
+          session_id="abc123",
+          agent_id="def456",
+          tool="mcp__router__native__read_file",
+          backend="router",
+          duration_ms=150,
+          status="success",
+      )
+      assert event.tool == "mcp__router__native__read_file"
+      assert event.status == "success"
+
+
+  def test_tool_call_event_optional_fields():
+      """ToolCallEvent has optional context fields."""
+      event = ToolCallEvent(
+          timestamp="2026-01-21T10:00:00Z",
+          session_id="abc123",
+          agent_id="def456",
+          tool="Task",
+          backend="native",
+          duration_ms=5000,
+          status="success",
+          agent_type="Explore",
+          task_summary="Find error handlers",
+          workflow_id="wf-123",
+          workflow_phase="implement",
+      )
+      assert event.agent_type == "Explore"
+      assert event.workflow_phase == "implement"
+
+
+  def test_tool_call_event_to_dict():
+      """ToolCallEvent serializes to dict for JSONL."""
+      event = ToolCallEvent(
+          timestamp="2026-01-21T10:00:00Z",
+          session_id="abc123",
+          agent_id="def456",
+          tool="Read",
+          backend="native",
+          duration_ms=100,
+          status="success",
+          input_tokens=500,
+          output_tokens=200,
+      )
+      d = event.to_dict()
+      assert d["tool"] == "Read"
+      assert d["input_tokens"] == 500
+      assert "error_type" not in d  # None fields excluded
+
+  Step 2: Run test to verify it fails
+
+  Run: pytest tests/stores/test_events.py -v
+  Expected: FAIL with "ModuleNotFoundError: No module named 'lib.stores.events'"
+
+  Step 3: Write minimal implementation
+
+  # lib/stores/events.py
+  """Event schema for telemetry v3.
+
+  Defines ToolCallEvent dataclass matching the design spec.
+  All tool calls are captured with these fields for DuckDB querying.
+  """
+  from dataclasses import dataclass, asdict, field
+  from typing import Optional
+
+
+  @dataclass
+  class ToolCallEvent:
+      """A single tool call event for telemetry tracking.
+
+      Core fields are always present. Token and context fields
+      are optional and may be None if not available.
+      """
+      # Core fields (always captured)
+      timestamp: str  # ISO datetime
+      session_id: str
+      agent_id: str
+      tool: str
+      backend: str
+      duration_ms: int
+      status: str  # "success" | "error"
+
+      # Error details (only when status="error")
+      error_type: Optional[str] = None
+
+      # Token data (from message.usage when available)
+      input_tokens: int = 0
+      output_tokens: int = 0
+      cache_read_tokens: int = 0
+      cache_creation_tokens: int = 0
+
+      # Context fields (enhancement from hooks)
+      agent_type: Optional[str] = None  # From Task tool's subagent_type
+      task_summary: Optional[str] = None  # First 100 chars of task prompt
+      workflow_id: Optional[str] = None  # From workflow MCP
+      workflow_phase: Optional[str] = None  # Current phase (generic string)
+
+      def to_dict(self) -> dict:
+          """Serialize to dict, excluding None values for compact JSONL."""
+          return {k: v for k, v in asdict(self).items() if v is not None}
+
+  Step 4: Run test to verify it passes
+
+  Run: pytest tests/stores/test_events.py -v
+  Expected: PASS
+
+  Step 5: Commit
+
+  git add lib/stores/events.py tests/stores/test_events.py
+  git commit -m "feat(telemetry): add ToolCallEvent dataclass for v3 schema"
+
+  ---
+  Task 2: Create JSONL Event Writer Utility
+
+  Create a utility to append events to session JSONL files.
+
+  Files:
+  - Create: lib/stores/jsonl_writer.py
+  - Test: tests/stores/test_jsonl_writer.py
+
+  Step 1: Write the failing test
+
+  # tests/stores/test_jsonl_writer.py
+  """Tests for JSONL event writer."""
+  import pytest
+  import json
+  import tempfile
+  from pathlib import Path
+  from lib.stores.jsonl_writer import JSONLWriter
+  from lib.stores.events import ToolCallEvent
+
+
+  def test_writer_creates_file():
+      """Writer creates session file if it doesn't exist."""
+      with tempfile.TemporaryDirectory() as tmpdir:
+          writer = JSONLWriter(data_dir=tmpdir)
+          event = ToolCallEvent(
+              timestamp="2026-01-21T10:00:00Z",
+              session_id="test-session",
+              agent_id="agent-1",
+              tool="Read",
+              backend="native",
+              duration_ms=100,
+              status="success",
+          )
+          writer.write(event)
+
+          session_file = Path(tmpdir) / "session-test-session.jsonl"
+          assert session_file.exists()
+
+
+  def test_writer_appends_events():
+      """Writer appends multiple events to same file."""
+      with tempfile.TemporaryDirectory() as tmpdir:
+          writer = JSONLWriter(data_dir=tmpdir)
+
+          for i in range(3):
+              event = ToolCallEvent(
+                  timestamp=f"2026-01-21T10:0{i}:00Z",
+                  session_id="test-session",
+                  agent_id="agent-1",
+                  tool=f"Tool{i}",
+                  backend="native",
+                  duration_ms=100 + i,
+                  status="success",
+              )
+              writer.write(event)
+
+          session_file = Path(tmpdir) / "session-test-session.jsonl"
+          lines = session_file.read_text().strip().split("\n")
+          assert len(lines) == 3
+
+          # Verify JSONL format
+          for line in lines:
+              data = json.loads(line)
+              assert "tool" in data
+
+
+  def test_writer_session_path():
+      """Writer returns correct session file path."""
+      with tempfile.TemporaryDirectory() as tmpdir:
+          writer = JSONLWriter(data_dir=tmpdir)
+          path = writer.get_session_path("my-session")
+          assert path == Path(tmpdir) / "session-my-session.jsonl"
+
+  Step 2: Run test to verify it fails
+
+  Run: pytest tests/stores/test_jsonl_writer.py -v
+  Expected: FAIL with "ModuleNotFoundError"
+
+  Step 3: Write minimal implementation
+
+  # lib/stores/jsonl_writer.py
+  """JSONL writer for telemetry events.
+
+  Appends events to session-specific JSONL files for DuckDB querying.
+  """
+  import json
+  from pathlib import Path
+  from lib.stores.events import ToolCallEvent
+
+
+  class JSONLWriter:
+      """Writes ToolCallEvents to session JSONL files."""
+
+      def __init__(self, data_dir: str) -> None:
+          """Initialize writer with data directory.
+
+          Args:
+              data_dir: Directory to store session JSONL files.
+          """
+          self.data_dir = Path(data_dir)
+          self.data_dir.mkdir(parents=True, exist_ok=True)
+
+      def get_session_path(self, session_id: str) -> Path:
+          """Get path for a session's JSONL file."""
+          return self.data_dir / f"session-{session_id}.jsonl"
+
+      def write(self, event: ToolCallEvent) -> None:
+          """Append event to session JSONL file.
+
+          Creates file if it doesn't exist. Appends as newline-delimited JSON.
+          """
+          path = self.get_session_path(event.session_id)
+          with open(path, "a") as f:
+              f.write(json.dumps(event.to_dict()) + "\n")
+
+  Step 4: Run test to verify it passes
+
+  Run: pytest tests/stores/test_jsonl_writer.py -v
+  Expected: PASS
+
+  Step 5: Commit
+
+  git add lib/stores/jsonl_writer.py tests/stores/test_jsonl_writer.py
+  git commit -m "feat(telemetry): add JSONLWriter for session event files"
+
+  ---
+  Task 3: Enhance telemetry-posttool.py Hook
+
+  Modify the existing posttool hook to also write events to session JSONL using the new writer.
+
+  Files:
+  - Modify: hooks/telemetry-posttool.py (lines ~180-220)
+  - Test: tests/hooks/test_telemetry_posttool.py
+
+  Step 1: Write the failing test
+
+  # tests/hooks/test_telemetry_posttool.py
+  """Tests for enhanced telemetry-posttool hook."""
+  import pytest
+  import json
+  import tempfile
+  from pathlib import Path
+  from lib.stores.events import ToolCallEvent
+  from lib.stores.jsonl_writer import JSONLWriter
+
+
+  def test_posttool_writes_jsonl_event():
+      """PostTool hook pattern writes event to session JSONL."""
+      with tempfile.TemporaryDirectory() as tmpdir:
+          jsonl_dir = Path(tmpdir) / "sessions"
+          jsonl_dir.mkdir()
+
+          writer = JSONLWriter(data_dir=str(jsonl_dir))
+          event = ToolCallEvent(
+              timestamp="2026-01-21T10:00:00Z",
+              session_id="test-session-123",
+              agent_id="agent-abc",
+              tool="Read",
+              backend="native",
+              duration_ms=150,
+              status="success",
+              input_tokens=500,
+              output_tokens=100,
+          )
+          writer.write(event)
+
+          session_file = jsonl_dir / "session-test-session-123.jsonl"
+          assert session_file.exists()
+          data = json.loads(session_file.read_text().strip())
+          assert data["tool"] == "Read"
+          assert data["input_tokens"] == 500
+
+  Step 2: Run test to verify it passes
+
+  Run: pytest tests/hooks/test_telemetry_posttool.py -v
+  Expected: PASS
+
+  Step 3: Modify telemetry-posttool.py
+
+  Add after the existing imports (around line 15):
+
+  from lib.stores.events import ToolCallEvent
+  from lib.stores.jsonl_writer import JSONLWriter
+
+  Add before the main() function saves telemetry (around line 220, before save_telemetry_v2):
+
+      # === Telemetry v3: Write to session JSONL ===
+      jsonl_dir = Path.home() / ".claude/plugins/agent-swarm/.state/sessions"
+      writer = JSONLWriter(data_dir=str(jsonl_dir))
+
+      v3_event = ToolCallEvent(
+          timestamp=datetime.now(timezone.utc).isoformat(),
+          session_id=session_id,
+          agent_id=os.environ.get("CLAUDE_AGENT_ID", session_id),
+          tool=tool_name,
+          backend=backend,
+          duration_ms=duration_ms,
+          status="error" if is_error else "success",
+          error_type=error_msg[:100] if is_error else None,
+          input_tokens=input_tokens,
+          output_tokens=output_tokens,
+          cache_read_tokens=cache_read,
+          cache_creation_tokens=cache_create,
+          agent_type=subagent_type if subagent_type else None,
+          task_summary=request_data.get("task_summary"),
+          workflow_id=os.environ.get("WORKFLOW_ID"),
+          workflow_phase=os.environ.get("WORKFLOW_PHASE"),
+      )
+      writer.write(v3_event)
+
+  Step 4: Run test to verify it passes
+
+  Run: pytest tests/hooks/test_telemetry_posttool.py -v
+  Expected: PASS
+
+  Step 5: Commit
+
+  git add hooks/telemetry-posttool.py tests/hooks/test_telemetry_posttool.py
+  git commit -m "feat(telemetry): write events to session JSONL in posttool hook"
+
+  ---
+  Task 4: Add Session Compression Utility
+
+  Create compression utility for old session JSONL files.
+
+  Files:
+  - Create: lib/stores/compression.py
+  - Test: tests/stores/test_compression.py
+
+  Step 1: Write the failing test
+
+  # tests/stores/test_compression.py
+  """Tests for session file compression."""
+  import pytest
+  import gzip
+  import json
+  import tempfile
+  from pathlib import Path
+  from datetime import datetime
+  from lib.stores.compression import compress_old_sessions
+
+
+  def test_compress_old_sessions_skips_recent():
+      """Sessions less than 24h old are not compressed."""
+      with tempfile.TemporaryDirectory() as tmpdir:
+          sessions_dir = Path(tmpdir)
+          recent_file = sessions_dir / "session-recent.jsonl"
+          recent_file.write_text('{"tool": "Read"}\n')
+
+          compress_old_sessions(sessions_dir, max_age_hours=24)
+
+          assert recent_file.exists()
+          assert not (sessions_dir / "session-recent.jsonl.gz").exists()
+
+
+  def test_compress_old_sessions_compresses_old():
+      """Sessions older than 24h are compressed."""
+      with tempfile.TemporaryDirectory() as tmpdir:
+          sessions_dir = Path(tmpdir)
+          old_file = sessions_dir / "session-old.jsonl"
+          old_file.write_text('{"tool": "Read"}\n{"tool": "Write"}\n')
+
+          import os
+          old_time = datetime.now().timestamp() - (25 * 3600)
+          os.utime(old_file, (old_time, old_time))
+
+          compress_old_sessions(sessions_dir, max_age_hours=24)
+
+          assert not old_file.exists()
+          gz_file = sessions_dir / "session-old.jsonl.gz"
+          assert gz_file.exists()
+
+          with gzip.open(gz_file, "rt") as f:
+              lines = f.read().strip().split("\n")
+              assert len(lines) == 2
+
+  Step 2: Run test to verify it fails
+
+  Run: pytest tests/stores/test_compression.py -v
+  Expected: FAIL with "ModuleNotFoundError"
+
+  Step 3: Write compression utility
+
+  # lib/stores/compression.py
+  """Session file compression utilities.
+
+  Compresses old session JSONL files to save disk space.
+  DuckDB can query both .jsonl and .jsonl.gz transparently.
+  """
+  import gzip
+  import shutil
+  from pathlib import Path
+  from datetime import datetime
+
+
+  def compress_old_sessions(sessions_dir: Path, max_age_hours: int = 24) -> int:
+      """Compress session JSONL files older than max_age_hours.
+
+      Args:
+          sessions_dir: Directory containing session-*.jsonl files.
+          max_age_hours: Files older than this are compressed.
+
+      Returns:
+          Number of files compressed.
+      """
+      sessions_dir = Path(sessions_dir)
+      if not sessions_dir.exists():
+          return 0
+
+      compressed_count = 0
+      now = datetime.now().timestamp()
+      max_age_seconds = max_age_hours * 3600
+
+      for jsonl_file in sessions_dir.glob("*.jsonl"):
+          if jsonl_file.with_suffix(".jsonl.gz").exists():
+              continue
+
+          file_age = now - jsonl_file.stat().st_mtime
+          if file_age < max_age_seconds:
+              continue
+
+          gz_path = jsonl_file.with_suffix(".jsonl.gz")
+          with open(jsonl_file, "rb") as f_in:
+              with gzip.open(gz_path, "wb") as f_out:
+                  shutil.copyfileobj(f_in, f_out)
+
+          jsonl_file.unlink()
+          compressed_count += 1
+
+      return compressed_count
+
+  Step 4: Run test to verify it passes
+
+  Run: pytest tests/stores/test_compression.py -v
+  Expected: PASS
+
+  Step 5: Commit
+
+  git add lib/stores/compression.py tests/stores/test_compression.py
+  git commit -m "feat(telemetry): add session file compression utility"
+
+  ---
+  Task 5: Integrate Compression into session-end.py
+
+  Call the compression utility from the session-end hook.
+
+  Files:
+  - Modify: hooks/session-end.py
+
+  Step 1: Add import at top
+
+  from lib.stores.compression import compress_old_sessions
+
+  Step 2: Add compression function
+
+  def compress_old_session_files():
+      """Compress session JSONL files older than 24 hours."""
+      sessions_dir = STATE_DIR / "sessions"
+      if not sessions_dir.exists():
+          return {"compressed": 0}
+
+      try:
+          count = compress_old_sessions(sessions_dir, max_age_hours=24)
+          return {"compressed": count}
+      except Exception as e:
+          return {"error": str(e)}
+
+  Step 3: Call in main() after dashboard generation
+
+      compression_result = compress_old_session_files()
+      if compression_result.get("compressed", 0) > 0:
+          message += f"\n📦 Compressed {compression_result['compressed']} old session file(s)"
+
+  Step 4: Commit
+
+  git add hooks/session-end.py
+  git commit -m "feat(telemetry): compress old sessions on session-end"
+
+  ---
+  Task 6: Extend DuckDBStore with Chart Query Methods
+
+  Add the 5 analytical query methods to DuckDBStore.
+
+  Files:
+  - Modify: lib/stores/duckdb_store.py
+  - Test: tests/stores/test_duckdb_charts.py
+
+  Step 1: Write the failing test
+
+  # tests/stores/test_duckdb_charts.py
+  """Tests for DuckDB chart query methods."""
+  import pytest
+  import json
+  import tempfile
+  from pathlib import Path
+
+  pytest.importorskip("duckdb")
+  from lib.stores.duckdb_store import DuckDBStore
+
+
+  @pytest.fixture
+  def store_with_data():
+      """Create store with sample JSONL data."""
+      with tempfile.TemporaryDirectory() as tmpdir:
+          sessions_dir = Path(tmpdir)
+          session_file = sessions_dir / "session-test.jsonl"
+          events = [
+              {"timestamp": "2026-01-21T10:00:00Z", "session_id": "test", "agent_id": "a1",
+               "tool": "Read", "backend": "native", "duration_ms": 100, "status": "success",
+               "input_tokens": 500, "output_tokens": 200},
+              {"timestamp": "2026-01-21T10:01:00Z", "session_id": "test", "agent_id": "a1",
+               "tool": "Task", "backend": "native", "duration_ms": 5000, "status": "success",
+               "input_tokens": 10000, "output_tokens": 5000, "agent_type": "Explore"},
+              {"timestamp": "2026-01-21T10:02:00Z", "session_id": "test", "agent_id": "a1",
+               "tool": "Bash", "backend": "native", "duration_ms": 150, "status": "error"},
+          ]
+          with open(session_file, "w") as f:
+              for event in events:
+                  f.write(json.dumps(event) + "\n")
+
+          yield DuckDBStore(data_dir=str(sessions_dir))
+
+
+  def test_token_spend_by_day(store_with_data):
+      results = store_with_data.get_token_spend_by_day()
+      assert len(results) >= 1
+      assert "day" in results[0]
+
+
+  def test_token_spend_by_agent_type(store_with_data):
+      results = store_with_data.get_token_spend_by_agent_type()
+      assert len(results) >= 1
+
+
+  def test_error_rate_by_tool(store_with_data):
+      results = store_with_data.get_error_rate_by_tool()
+      bash_result = next((r for r in results if r["tool"] == "Bash"), None)
+      if bash_result:
+          assert bash_result["errors"] >= 1
+
+  Step 2: Add methods to DuckDBStore
+
+  Add these 5 methods to lib/stores/duckdb_store.py:
+
+  - get_token_spend_by_day(days=30) - Daily tokens with 7-day moving avg
+  - get_token_spend_by_agent_type() - Tokens grouped by agent_type
+  - get_cache_efficiency_trend(days=30) - Cache hit % over time
+  - get_tool_latency_by_backend() - Avg/P95 latency per backend
+  - get_error_rate_by_tool(limit=20) - Error % per tool
+
+  Step 3: Update _setup_views to handle both .jsonl and .jsonl.gz
+
+  def _setup_views(self) -> None:
+      jsonl_pattern = str(self.data_dir / "*.jsonl")
+      gz_pattern = str(self.data_dir / "*.jsonl.gz")
+
+      self.conn.execute(f"""
+          CREATE OR REPLACE VIEW events AS
+          SELECT * FROM read_json_auto(
+              ['{jsonl_pattern}', '{gz_pattern}'],
+              format='newline_delimited',
+              ignore_errors=true,
+              union_by_name=true
+          )
+      """)
+
+  Step 4: Commit
+
+  git add lib/stores/duckdb_store.py tests/stores/test_duckdb_charts.py
+  git commit -m "feat(telemetry): add chart query methods to DuckDBStore"
+
+  ---
+  Task 7: Update charts.py to Use DuckDBStore
+
+  Files:
+  - Modify: scripts/charts.py
+
+  Add v3 chart generator functions that call DuckDBStore methods and produce Chart.js HTML.
+
+  ---
+  Task 8: Capture agent_type in telemetry-pretool.py
+
+  Extract subagent_type and task_summary from Task tool input.
+
+  ---
+  Task 9: Integration Test
+
+  Create end-to-end test: write events → compress → query via DuckDB.
+
+  ---
+  Task 10: Final Verification
+
+  Run full test suite, lint, and type checks.
+
+  ---
+  Summary
+  ┌──────┬─────────────────────────────────────────────────┬───────────────────────────────┐
+  │ Task │                    Component                    │          Description          │
+  ├──────┼─────────────────────────────────────────────────┼───────────────────────────────┤
+  │ 1    │ lib/stores/events.py                            │ ToolCallEvent dataclass       │
+  ├──────┼─────────────────────────────────────────────────┼───────────────────────────────┤
+  │ 2    │ lib/stores/jsonl_writer.py                      │ JSONL event writer            │
+  ├──────┼─────────────────────────────────────────────────┼───────────────────────────────┤
+  │ 3    │ hooks/telemetry-posttool.py                     │ Write events to session JSONL │
+  ├──────┼─────────────────────────────────────────────────┼───────────────────────────────┤
+  │ 4-5  │ lib/stores/compression.py, hooks/session-end.py │ Compress old sessions         │
+  ├──────┼─────────────────────────────────────────────────┼───────────────────────────────┤
+  │ 6    │ lib/stores/duckdb_store.py                      │ 5 chart query methods         │
+  ├──────┼─────────────────────────────────────────────────┼───────────────────────────────┤
+  │ 7    │ scripts/charts.py                               │ V3 chart generators           │
+  ├──────┼─────────────────────────────────────────────────┼───────────────────────────────┤
+  │ 8    │ hooks/telemetry-pretool.py                      │ Capture agent_type context    │
+  ├──────┼─────────────────────────────────────────────────┼───────────────────────────────┤
+  │ 9-10 │ Integration tests                               │ End-to-end verification       │
+  └──────┴─────────────────────────────────────────────────┴───────────────────────────────┘
