@@ -585,6 +585,18 @@ def generate_dashboard():
                 });
             }
 
+            // Recalculate totals from filtered daily_summaries
+            if (currentFilters.timeRange !== 'all' && filtered.daily_summaries) {
+                const newTotals = { calls: 0, tokens: 0, errors: 0 };
+                Object.values(filtered.daily_summaries).forEach(summary => {
+                    newTotals.calls += summary.calls || 0;
+                    newTotals.tokens += summary.tokens || 0;
+                    newTotals.errors += summary.errors || 0;
+                });
+                filtered.aggregates = filtered.aggregates || {};
+                filtered.aggregates.totals = newTotals;
+            }
+
             return filtered;
         }
 
