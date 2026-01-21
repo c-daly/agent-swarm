@@ -15,7 +15,12 @@ import glob
 
 # Add lib to path for workflow_client and agent_recovery
 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
-from workflow_client import agent_set_state
+from workflow_client import (
+    agent_set_state,
+    workflow_is_active,
+    workflow_get_value,
+    workflow_update,
+)
 from agent_recovery import detect_failed_agent, handle_failed_agent
 
 STATE_DIR = Path.home() / ".claude" / "plugins" / "agent-swarm" / ".state"
@@ -149,6 +154,37 @@ def persist_agent_output(session_id: str, agent_type: str) -> dict:
         return failure_info
 
 
+def update_workflow_state(session_id: str, agent_type: str) -> None:
+    """Move agent from active_agents to completed_tasks in workflow state."""
+    try:
+        if not workflow_is_active("iterate"):
+            return
+        
+        # Get current active agents
+        active = workflow_get_value("iterate", "active_agents") or {}
+        
+        # Remove this agent from active
+        agent_info = active.pop(session_id, None)
+        
+        # Get completed tasks list
+        completed = workflow_get_value("iterate", "completed_tasks") or []
+        
+        # Add to completed (use description if available, else session_id)
+        if agent_info:
+            desc = agent_info.get("description", session_id)
+        else:
+            desc = f"{agent_type}:{session_id}"
+        completed.append(desc)
+        
+        # Update workflow state
+        workflow_update("iterate", {
+            "active_agents": active,
+            "completed_tasks": completed
+        })
+    except Exception:
+        pass  # Don't fail hook on workflow state errors
+
+
 def main():
     # Read hook input
     input_data = json.loads(sys.stdin.read())
@@ -164,21 +200,8 @@ def main():
     # Persist agent output to state manager and check for failures
     failure_info = persist_agent_output(session_id, agent_type)
 
-    # Log the subagent completion
-    # DISABLED: No longer logging subagent stops to file
-
-    # log_subagent_stop(agent_type, session_id, phase)
-    
-    # Decrement active agent count
-    # DISABLED: Not tracking active agents in file
-
-    # state["active_agents"] = max(0, state.get("active_agents", 0) - 1)
-    # DISABLED: Not creating state directory for session file
-
-    # STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    # DISABLED: No longer writing session state to file
-
-    # STATE_FILE.write_text(json.dumps(state, indent=2))
+    # Update workflow state - move from active_agents to completed_tasks
+    update_workflow_state(session_id, agent_type)
 
     # Build result with failure status if detected
     message = f"Subagent {agent_type} completed in phase {phase}"

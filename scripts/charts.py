@@ -26,23 +26,164 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from collections import defaultdict
 
+# Add lib to path for DuckDB store
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
 CHARTS_DIR = STATE_DIR / "charts"
 HISTORY_FILE = STATE_DIR / "metrics_history.json"
 ACTIVITY_LOG = STATE_DIR / "activity.log"
 SUBAGENT_METRICS = STATE_DIR / "subagent_metrics.json"
 TELEMETRY_FILE = STATE_DIR / "telemetry.json"
+TELEMETRY_V3_DIR = STATE_DIR / "telemetry_v3"
+
+# Try to import DuckDB store for v3 data
+_duckdb_store = None
+try:
+    from lib.stores.duckdb_store import DuckDBStore
+    if TELEMETRY_V3_DIR.exists() and any(TELEMETRY_V3_DIR.glob("**/*.jsonl")):
+        _duckdb_store = DuckDBStore(str(TELEMETRY_V3_DIR))
+        print("📊 Using v3 telemetry (DuckDB)")
+except ImportError:
+    pass
+except Exception as e:
+    print(f"⚠️  DuckDB store init failed: {e}", file=sys.stderr)
+
+
+def _load_telemetry_v3():
+    """Load telemetry from DuckDB v3 store."""
+    if _duckdb_store is None:
+        return None
+    
+    # Query aggregated data from DuckDB
+    tool_summaries = _duckdb_store.get_tool_summaries()
+    
+    # Build v1-compatible structure from v3 data
+    by_tool = {}
+    by_backend = defaultdict(lambda: {"count": 0, "errors": 0, "tokens": 0, "duration_ms": 0})
+    totals = {"calls": 0, "errors": 0, "tokens": 0, "duration_ms": 0}
+    
+    for ts in tool_summaries:
+        by_tool[ts.tool_name] = {
+            "count": ts.call_count,
+            "errors": 0,  # Not tracked in current schema
+            "tokens": 0,  # Token data is per-event, not in ToolSummary
+            "duration_ms": int(ts.avg_duration_ms * ts.call_count),
+        }
+        totals["calls"] += ts.call_count
+        totals["duration_ms"] += int(ts.avg_duration_ms * ts.call_count)
+    
+    # Query for backend breakdown directly from events
+    try:
+        backend_results = _duckdb_store.conn.execute("""
+            SELECT backend, COUNT(*) as count, 
+                   SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) as tokens,
+                   SUM(duration_ms) as duration_ms,
+                   SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as errors
+            FROM events
+            WHERE backend IS NOT NULL
+            GROUP BY backend
+        """).fetchall()
+        for row in backend_results:
+            by_backend[row[0]] = {
+                "count": row[1],
+                "tokens": row[2] or 0,
+                "duration_ms": row[3] or 0,
+                "errors": row[4] or 0,
+            }
+            totals["tokens"] += row[2] or 0
+            totals["errors"] += row[4] or 0
+    except Exception:
+        pass
+    
+    # Get recent events directly from DuckDB for better coverage
+    events = []
+    try:
+        recent = _duckdb_store.conn.execute("""
+            SELECT timestamp, tool, backend, status, duration_ms,
+                   COALESCE(input_tokens, 0) as input_tokens,
+                   COALESCE(output_tokens, 0) as output_tokens
+            FROM events
+            ORDER BY timestamp DESC
+            LIMIT 1000
+        """).fetchall()
+        for row in recent:
+            events.append({
+                "ts": row[0],  # Charts expect 'ts' not 'timestamp'
+                "timestamp": row[0],
+                "tool": row[1],
+                "backend": row[2] or "native",
+                "status": row[3] or "success",
+                "duration_ms": row[4] or 0,
+                "input_tokens": row[5],
+                "output_tokens": row[6],
+            })
+    except Exception as e:
+        print(f"⚠️  Error fetching events: {e}", file=sys.stderr)
+    
+    # Build daily summaries from DuckDB
+    daily_summaries = {}
+    try:
+        daily_results = _duckdb_store.conn.execute("""
+            SELECT 
+                CAST(timestamp AS TIMESTAMP)::DATE as day,
+                COUNT(*) as calls,
+                SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as errors,
+                SUM(COALESCE(input_tokens, 0)) as input_tokens,
+                SUM(COALESCE(output_tokens, 0)) as output_tokens,
+                SUM(COALESCE(cache_read_tokens, 0)) as cache_read,
+                SUM(COALESCE(cache_creation_tokens, 0)) as cache_create,
+                SUM(duration_ms) as duration_ms,
+                COUNT(DISTINCT session_id) as sessions
+            FROM events
+            GROUP BY CAST(timestamp AS TIMESTAMP)::DATE
+            ORDER BY day
+        """).fetchall()
+        for row in daily_results:
+            day_str = str(row[0])
+            daily_summaries[day_str] = {
+                "calls": row[1],
+                "errors": row[2],
+                "input_tokens": row[3] or 0,
+                "output_tokens": row[4] or 0,
+                "cache_read": row[5] or 0,
+                "cache_create": row[6] or 0,
+                "duration_ms": row[7] or 0,
+                "sessions": row[8],
+            }
+    except Exception as e:
+        print(f"⚠️  Error building daily summaries: {e}", file=sys.stderr)
+    
+    return {
+        "events": events,
+        "aggregates": {
+            "by_tool": by_tool,
+            "by_backend": dict(by_backend),
+            "totals": totals,
+        },
+        "days": {},  # v3 uses DuckDB queries instead
+        "daily_summaries": daily_summaries,
+        "daily_summaries_actual": daily_summaries,
+        "filters": {"tools": list(by_tool.keys()), "backends": list(by_backend.keys())},
+        "_v3_store": _duckdb_store,
+    }
 
 
 def load_telemetry():
-    """Load telemetry data with v2.0 schema support.
+    """Load telemetry data with v2.0/v3 schema support.
     
     Returns a dict with:
     - events: list of recent events (v1 compatible)
     - aggregates: dict with by_tool, by_backend, totals (v1 compatible)
     - days: dict of day data (v2 feature)
     - filters: available filter options (v2 feature)
+    - _v3_store: DuckDBStore instance if v3 data available
     """
+    # Try v3 DuckDB store first
+    if _duckdb_store is not None:
+        return _load_telemetry_v3()
+    
+    # Fall back to v1/v2 JSON file
     if not TELEMETRY_FILE.exists():
         return None
     
@@ -1356,12 +1497,12 @@ def chart_token_trend():
 
 def chart_realtime_telemetry():
     """Chart real-time telemetry from hook-based tracking."""
-    if not TELEMETRY_FILE.exists():
+    telemetry = load_telemetry()
+    if telemetry is None:
         print("⚠️  No telemetry data found")
         print("   Telemetry hooks track all tool calls automatically")
         return None
 
-    telemetry = json.loads(TELEMETRY_FILE.read_text())
     events = telemetry.get("events", [])
     aggregates = telemetry.get("aggregates", {})
 
