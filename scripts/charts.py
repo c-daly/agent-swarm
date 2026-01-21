@@ -126,7 +126,7 @@ def _load_telemetry_v3():
     try:
         daily_results = _duckdb_store.conn.execute("""
             SELECT 
-                DATE(timestamp) as day,
+                CAST(timestamp AS TIMESTAMP)::DATE as day,
                 COUNT(*) as calls,
                 SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as errors,
                 SUM(COALESCE(input_tokens, 0)) as input_tokens,
@@ -136,7 +136,7 @@ def _load_telemetry_v3():
                 SUM(duration_ms) as duration_ms,
                 COUNT(DISTINCT session_id) as sessions
             FROM events
-            GROUP BY DATE(timestamp)
+            GROUP BY CAST(timestamp AS TIMESTAMP)::DATE
             ORDER BY day
         """).fetchall()
         for row in daily_results:
