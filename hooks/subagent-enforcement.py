@@ -25,12 +25,14 @@ lib_dir = Path(__file__).parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
 try:
-    from workflow_client import workflow_get_state, agent_set_state
+    from workflow_client import workflow_get_state, agent_set_state, workflow_is_active
 except ImportError:
     def workflow_get_state(workflow_id: str) -> dict | None:
         return None
     def agent_set_state(agent_id: str, state: dict) -> dict | None:
         return None
+    def workflow_is_active(workflow_id: str) -> bool:
+        return False
 
 
 def load_session_state() -> dict:
@@ -65,9 +67,10 @@ def main():
     phase = iterate_state.get("phase") or session_state.get("phase") or "none"
     mode = iterate_state.get("mode", "")
 
-    # CRITICAL FIX: When spawning implementer in iterate-tdd from orchestrate phase,
-    # force the subagent to start in test_writing phase (not parent's orchestrate phase)
-    if mode == "iterate-tdd" and phase == "orchestrate" and agent_type == "implementer":
+    # CRITICAL FIX: When iterate workflow is active and spawning from orchestrate phase,
+    # force ALL subagent types to start in test_writing phase (TDD enforcement)
+    # Use workflow_is_active instead of checking mode (which may be empty string)
+    if workflow_is_active("iterate") and phase == "orchestrate":
         phase = "test_writing"
 
     # Store subagent state with its phase

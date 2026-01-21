@@ -249,6 +249,15 @@ def main():
     if is_error:
         day_data["calls"]["by_backend"][backend]["errors"] += 1
     
+    # Update subagent tracking
+    if subagent_type:
+        if "by_subagent" not in day_data["calls"]:
+            day_data["calls"]["by_subagent"] = {}
+        if subagent_type not in day_data["calls"]["by_subagent"]:
+            day_data["calls"]["by_subagent"][subagent_type] = {"count": 0, "tokens": 0}
+        day_data["calls"]["by_subagent"][subagent_type]["count"] += 1
+        day_data["calls"]["by_subagent"][subagent_type]["tokens"] += tokens
+    
     # Update timing stats
     update_timing_stats(day_data["timing"], duration_ms)
     

@@ -47,6 +47,7 @@ class TestSubagentStartInTestWritingPhase:
             }.get(wf_id, {})
         
         mock_workflow_client.workflow_get_state.side_effect = get_state_side_effect
+        mock_workflow_client.workflow_is_active.return_value = True
         mock_workflow_client.agent_set_state.return_value = {"success": True}
         
         # Patch workflow_client before loading the hook
@@ -80,6 +81,75 @@ class TestSubagentStartInTestWritingPhase:
             assert agent_state["mode"] == "iterate-tdd"
             assert "sub-" in agent_id
 
+    def test_explorer_subagent_gets_test_writing_phase(self):
+        """When orchestrator spawns explorer in iterate workflow, phase should be test_writing."""
+        mock_workflow_client = MagicMock()
+
+        def get_state_side_effect(wf_id):
+            return {
+                "session": {"phase": "orchestrate"},
+                "iterate": {"phase": "orchestrate", "mode": "iterate-tdd"}
+            }.get(wf_id, {})
+
+        mock_workflow_client.workflow_get_state.side_effect = get_state_side_effect
+        mock_workflow_client.workflow_is_active.return_value = True
+        mock_workflow_client.agent_set_state.return_value = {"success": True}
+
+        with patch.dict('sys.modules', {'workflow_client': mock_workflow_client}):
+            hook = load_hook_module('subagent-enforcement')
+
+            hook_input = {
+                "sessionId": "test-session-456",
+                "agentType": "explorer",
+                "task": "Explore auth module"
+            }
+
+            with patch('sys.stdin', Mock(read=lambda: json.dumps(hook_input))):
+                with patch('builtins.print') as mock_print:
+                    hook.main()
+
+            call_args = mock_workflow_client.agent_set_state.call_args[0]
+            agent_state = call_args[1]
+
+            # Explorer should also get test_writing phase when iterate is active
+            assert agent_state["phase"] == "test_writing", \
+                f"Explorer subagent must start in test_writing phase, got {agent_state['phase']}"
+
+    def test_any_agent_type_gets_test_writing_phase_when_iterate_active(self):
+        """ANY agent type spawned from orchestrate phase should get test_writing when iterate is active."""
+        mock_workflow_client = MagicMock()
+
+        def get_state_side_effect(wf_id):
+            return {
+                "session": {"phase": "orchestrate"},
+                "iterate": {"phase": "orchestrate", "mode": "iterate-tdd"}
+            }.get(wf_id, {})
+
+        mock_workflow_client.workflow_get_state.side_effect = get_state_side_effect
+        mock_workflow_client.workflow_is_active.return_value = True
+        mock_workflow_client.agent_set_state.return_value = {"success": True}
+
+        # Test with a generic/unknown agent type
+        with patch.dict('sys.modules', {'workflow_client': mock_workflow_client}):
+            hook = load_hook_module('subagent-enforcement')
+
+            hook_input = {
+                "sessionId": "test-session-789",
+                "agentType": "custom-agent",  # Not explorer or implementer
+                "task": "Custom task"
+            }
+
+            with patch('sys.stdin', Mock(read=lambda: json.dumps(hook_input))):
+                with patch('builtins.print') as mock_print:
+                    hook.main()
+
+            call_args = mock_workflow_client.agent_set_state.call_args[0]
+            agent_state = call_args[1]
+
+            # ALL agent types should get test_writing phase
+            assert agent_state["phase"] == "test_writing", \
+                f"ANY subagent type must start in test_writing phase when iterate is active, got {agent_state['phase']}"
+
 
 class TestSubagentContextEnforcesTDD:
     """Test that subagent context injection enforces TDD workflow."""
@@ -95,6 +165,7 @@ class TestSubagentContextEnforcesTDD:
             }.get(wf_id, {})
         
         mock_workflow_client.workflow_get_state.side_effect = get_state_side_effect
+        mock_workflow_client.workflow_is_active.return_value = True
         mock_workflow_client.agent_set_state.return_value = {"success": True}
         
         with patch.dict('sys.modules', {'workflow_client': mock_workflow_client}):

@@ -27,6 +27,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/implementer-only-enforcement.py",
+            "timeout": 3
+          },
+          {
+            "type": "command",
             "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/background-enforcement.py",
             "timeout": 3
           },
