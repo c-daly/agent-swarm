@@ -67,11 +67,28 @@ def _load_telemetry_v3():
         by_tool[ts.tool_name] = {
             "count": ts.call_count,
             "errors": 0,  # Not tracked in current schema
-            "tokens": 0,  # Token data is per-event, not in ToolSummary
+            "tokens": 0,  # Will be populated below
             "duration_ms": int(ts.avg_duration_ms * ts.call_count),
         }
         totals["calls"] += ts.call_count
         totals["duration_ms"] += int(ts.avg_duration_ms * ts.call_count)
+    
+    # Query for tokens per tool from events
+    try:
+        tool_token_results = _duckdb_store.conn.execute("""
+            SELECT tool, 
+                   SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) as tokens,
+                   SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as errors
+            FROM events
+            WHERE tool IS NOT NULL
+            GROUP BY tool
+        """).fetchall()
+        for row in tool_token_results:
+            if row[0] in by_tool:
+                by_tool[row[0]]["tokens"] = row[1] or 0
+                by_tool[row[0]]["errors"] = row[2] or 0
+    except Exception:
+        pass
     
     # Query for backend breakdown directly from events
     try:
