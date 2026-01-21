@@ -17,6 +17,9 @@ from pathlib import Path
 # Add lib to path for schema imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
 
+from stores.events import ToolCallEvent
+from stores.jsonl_writer import JSONLWriter
+
 from telemetry_schema_v2 import (
     load_telemetry_v2,
     save_telemetry_v2,
@@ -318,7 +321,35 @@ def main():
     if len(telemetry["events"]) > MAX_EVENTS:
         telemetry["events"] = telemetry["events"][-MAX_EVENTS:]
     
-    # Save
+    # === Telemetry v3: Write to session JSONL ===
+    try:
+        jsonl_dir = Path.home() / ".claude/plugins/agent-swarm/.state/sessions"
+        writer = JSONLWriter(data_dir=str(jsonl_dir))
+        
+        v3_event = ToolCallEvent(
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            session_id=session_id,
+            agent_id=os.environ.get("CLAUDE_AGENT_ID", session_id),
+            tool=tool_name,
+            backend=backend,
+            duration_ms=duration_ms,
+            status="error" if is_error else "success",
+            error_type=error_msg[:100] if is_error else None,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read,
+            cache_creation_tokens=cache_create,
+            agent_type=subagent_type if subagent_type else None,
+            task_summary=request_data.get("task_summary"),
+            workflow_id=os.environ.get("WORKFLOW_ID"),
+            workflow_phase=os.environ.get("WORKFLOW_PHASE"),
+        )
+        writer.write(v3_event)
+    except Exception:
+        # Don't fail the hook if v3 writing fails
+        pass
+    
+    # Save v2 telemetry
     save_telemetry_v2(telemetry, TELEMETRY_FILE)
 
     print(json.dumps({}))
