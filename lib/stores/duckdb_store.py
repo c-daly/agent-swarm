@@ -442,11 +442,11 @@ class DuckDBStore(AnalyticsStore, TraceStore):
         """
         result = self.conn.execute("""
             SELECT
-                COALESCE(agent_type, 'main') as agent_type,
+                COALESCE(agent_type, 'main') as agent_type_name,
                 SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) as total_tokens,
                 COUNT(DISTINCT session_id) as sessions
             FROM events
-            GROUP BY agent_type
+            GROUP BY COALESCE(agent_type, 'main')
             ORDER BY total_tokens DESC
         """).fetchall()
         return [
