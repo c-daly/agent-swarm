@@ -105,7 +105,7 @@ class DuckDBStore(AnalyticsStore, TraceStore):
             WITH day_events AS (
                 SELECT *
                 FROM events
-                WHERE timestamp::DATE = '{day_str}'::DATE
+                WHERE CAST(timestamp AS TIMESTAMP)::DATE = '{day_str}'::DATE
             ),
             event_stats AS (
                 SELECT
@@ -172,8 +172,8 @@ class DuckDBStore(AnalyticsStore, TraceStore):
                 0.0 as cache_hit_rate,
                 0.0 as summarization_rate
             FROM events
-            WHERE timestamp::DATE >= '{start_str}'::DATE
-              AND timestamp::DATE <= '{end_str}'::DATE
+            WHERE CAST(timestamp AS TIMESTAMP)::DATE >= '{start_str}'::DATE
+              AND CAST(timestamp AS TIMESTAMP)::DATE <= '{end_str}'::DATE
               AND tool IS NOT NULL
             GROUP BY tool
             ORDER BY call_count DESC
@@ -254,9 +254,9 @@ class DuckDBStore(AnalyticsStore, TraceStore):
         if tool_name:
             conditions.append(f"tool LIKE '{tool_name}%'")
         if start_time:
-            conditions.append(f"timestamp >= '{start_time}'")
+            conditions.append(f"CAST(timestamp AS TIMESTAMP) >= '{start_time}'::TIMESTAMP")
         if end_time:
-            conditions.append(f"timestamp <= '{end_time}'")
+            conditions.append(f"CAST(timestamp AS TIMESTAMP) <= '{end_time}'::TIMESTAMP")
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
@@ -276,7 +276,7 @@ class DuckDBStore(AnalyticsStore, TraceStore):
                 NULL as git_branch
             FROM events
             WHERE {where_clause}
-            ORDER BY timestamp DESC
+            ORDER BY CAST(timestamp AS TIMESTAMP) DESC
             LIMIT {limit}
         """).fetchall()
 
@@ -323,7 +323,7 @@ class DuckDBStore(AnalyticsStore, TraceStore):
                 NULL as git_branch
             FROM events
             WHERE session_id = '{session_id}'
-            ORDER BY timestamp ASC
+            ORDER BY CAST(timestamp AS TIMESTAMP) ASC
         """).fetchall()
 
         return [
@@ -363,9 +363,9 @@ class DuckDBStore(AnalyticsStore, TraceStore):
         conditions = []
 
         if start_date:
-            conditions.append(f"MIN(timestamp)::DATE >= '{start_date.isoformat()}'::DATE")
+            conditions.append(f"MIN(CAST(timestamp AS TIMESTAMP))::DATE >= '{start_date.isoformat()}'::DATE")
         if end_date:
-            conditions.append(f"MIN(timestamp)::DATE <= '{end_date.isoformat()}'::DATE")
+            conditions.append(f"MIN(CAST(timestamp AS TIMESTAMP))::DATE <= '{end_date.isoformat()}'::DATE")
 
         having_clause = f"HAVING {' AND '.join(conditions)}" if conditions else ""
 
@@ -373,8 +373,8 @@ class DuckDBStore(AnalyticsStore, TraceStore):
             WITH session_stats AS (
                 SELECT
                     session_id,
-                    MIN(timestamp) as start_time,
-                    MAX(timestamp) as end_time,
+                    MIN(CAST(timestamp AS TIMESTAMP)) as start_time,
+                    MAX(CAST(timestamp AS TIMESTAMP)) as end_time,
                     SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) as total_tokens,
                     COUNT(*) as tool_calls,
                     0 as cache_hits,
@@ -419,14 +419,14 @@ class DuckDBStore(AnalyticsStore, TraceStore):
         """
         result = self.conn.execute(f"""
             SELECT
-                DATE(timestamp) as day,
+                CAST(timestamp AS TIMESTAMP)::DATE as day,
                 SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) as total_tokens,
                 AVG(SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0))) OVER (
-                    ORDER BY DATE(timestamp) ROWS 6 PRECEDING
+                    ORDER BY CAST(timestamp AS TIMESTAMP)::DATE ROWS 6 PRECEDING
                 ) as moving_avg_7d
             FROM events
-            WHERE timestamp >= CURRENT_DATE - INTERVAL '{days} days'
-            GROUP BY DATE(timestamp)
+            WHERE CAST(timestamp AS TIMESTAMP) >= CURRENT_DATE - INTERVAL '{days} days'
+            GROUP BY CAST(timestamp AS TIMESTAMP)::DATE
             ORDER BY day
         """).fetchall()
         return [
@@ -465,7 +465,7 @@ class DuckDBStore(AnalyticsStore, TraceStore):
         """
         result = self.conn.execute(f"""
             SELECT
-                DATE(timestamp) as day,
+                CAST(timestamp AS TIMESTAMP)::DATE as day,
                 SUM(COALESCE(cache_read_tokens, 0)) as cached,
                 SUM(COALESCE(input_tokens, 0)) as total_input,
                 ROUND(
@@ -474,8 +474,8 @@ class DuckDBStore(AnalyticsStore, TraceStore):
                     1
                 ) as cache_pct
             FROM events
-            WHERE timestamp >= CURRENT_DATE - INTERVAL '{days} days'
-            GROUP BY DATE(timestamp)
+            WHERE CAST(timestamp AS TIMESTAMP) >= CURRENT_DATE - INTERVAL '{days} days'
+            GROUP BY CAST(timestamp AS TIMESTAMP)::DATE
             ORDER BY day
         """).fetchall()
         return [
