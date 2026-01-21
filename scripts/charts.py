@@ -79,11 +79,22 @@ def load_telemetry():
             "duration_ms": 0
         }
         
+        # Build subagents from by_session data
+        v1_subagents = {}
+        for day_key, day_data in telemetry.get("days", {}).items():
+            for session_id, session_data in day_data.get("by_session", {}).items():
+                if session_id not in v1_subagents:
+                    v1_subagents[session_id] = {"tokens": 0, "count": 0}
+                tokens = session_data.get("tokens", {})
+                calls = session_data.get("calls", {})
+                v1_subagents[session_id]["tokens"] += (tokens.get("input", 0) or 0) + (tokens.get("output", 0) or 0)
+                v1_subagents[session_id]["count"] += calls.get("total", 0) or 1
+        
         telemetry["aggregates"] = {
             "by_tool": v1_by_tool,
             "by_backend": v1_by_backend,
             "totals": v1_totals,
-            "subagents": {}
+            "subagents": v1_subagents
         }
         
         # Build daily_summaries from v2 days for backward compatibility
@@ -930,7 +941,7 @@ def chart_token_impact():
     return None
 
 def chart_subagents(session_filter=None):
-    """Chart subagent token usage by type (uses telemetry.json)."""
+    """Chart session token usage (uses telemetry.json, works with v1 and v2 schema)."""
     from datetime import datetime, timedelta, timezone
 
     # EST timezone offset (UTC-5)
@@ -940,6 +951,8 @@ def chart_subagents(session_filter=None):
     if telemetry is None:
         print("⚠️  No telemetry data found")
         return None
+    
+    # load_telemetry() normalizes v2→v1, so subagents is already populated
     subagents = telemetry.get("aggregates", {}).get("subagents", {})
 
     if not subagents:
