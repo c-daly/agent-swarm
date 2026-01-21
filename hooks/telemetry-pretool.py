@@ -40,11 +40,18 @@ def generate_request_id(tool_name: str, tool_input: dict) -> str:
     return f"req-{int(time.time() * 1000)}-{hash_part}"
 
 
-def extract_subagent_type(tool_name: str, tool_input: dict) -> str:
-    """Extract subagent type if this is a Task tool call."""
+def extract_subagent_context(tool_name: str, tool_input: dict) -> tuple[str, str]:
+    """Extract subagent type and task summary if this is a Task tool call.
+    
+    Returns:
+        tuple of (subagent_type, task_summary)
+    """
     if tool_name == "Task":
-        return tool_input.get("subagent_type", "unknown")
-    return ""
+        subagent_type = tool_input.get("subagent_type", "unknown")
+        prompt = tool_input.get("prompt", "")
+        task_summary = prompt[:100] if prompt else ""
+        return subagent_type, task_summary
+    return "", ""
 
 
 def main():
@@ -62,7 +69,7 @@ def main():
     request_id = generate_request_id(tool_name, tool_input)
 
     # Extract metadata
-    subagent_type = extract_subagent_type(tool_name, tool_input)
+    subagent_type, task_summary = extract_subagent_context(tool_name, tool_input)
 
     # Determine backend (MCP tools have prefixes)
     if tool_name.startswith("mcp__"):
@@ -78,6 +85,7 @@ def main():
         "tool": tool_name,
         "backend": backend,
         "subagent_type": subagent_type,
+        "task_summary": task_summary,
         "start_time": time.time(),
         "input_summary": str(tool_input)[:200]  # First 200 chars for debugging
     }
