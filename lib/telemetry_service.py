@@ -83,3 +83,20 @@ class TelemetryService:
                             cache_creation_tokens, agent_type, workflow_id, error_type
         """
         self._store.insert_event(event)
+
+
+    def record_content_creation(self, content_id: str) -> None:
+        """Record creation of summarized content.
+        
+        Args:
+            content_id: The unique content identifier from summarization.
+        """
+        self._store.record_content_creation(content_id)
+
+    def record_content_retrieval(self, content_id: str) -> None:
+        """Record retrieval of full content after summarization.
+        
+        Args:
+            content_id: The unique content identifier being retrieved.
+        """
+        self._store.record_content_retrieval(content_id)

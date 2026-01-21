@@ -3,9 +3,20 @@
 Stores full content in WorkflowStateService for later retrieval.
 """
 import uuid
-from typing import Any
+from typing import Any, TypedDict
 
 from lib.workflow_state_service import WorkflowStateService
+
+
+class SummarizationResult(TypedDict, total=False):
+    """Result from summarization processing.
+
+    Contains both the processed content and statistics.
+    """
+    content: Any  # The actual content to return (original or summary dict)
+    was_summarized: bool
+    original_size: int
+    summary_size: int | None  # None if not summarized
 
 
 class SummarizationService:
@@ -25,27 +36,38 @@ class SummarizationService:
         self._workflow_state = workflow_state
         self._threshold = threshold
     
-    def process(self, content: Any) -> Any:
+    def process(self, content: Any) -> SummarizationResult:
         """Process content, summarizing if over threshold.
         
         Returns:
-            Original content if under threshold, or
-            {summary, content_id, full_available} if over threshold
+            SummarizationResult with content and statistics
         """
         content_str = str(content) if not isinstance(content, str) else content
+        original_size = len(content_str)
         
-        if len(content_str) <= self._threshold:
-            return content
+        if original_size <= self._threshold:
+            return {
+                "content": content,
+                "was_summarized": False,
+                "original_size": original_size,
+                "summary_size": None,
+            }
         
         content_id = self._generate_content_id()
         self._workflow_state.store_content(content_id, content)
         
         summary = self._generate_summary(content_str)
-        
-        return {
+        summary_dict = {
             "summary": summary,
             "content_id": content_id,
             "full_available": True,
+        }
+        
+        return {
+            "content": summary_dict,
+            "was_summarized": True,
+            "original_size": original_size,
+            "summary_size": len(summary),
         }
     
     def _generate_content_id(self) -> str:
