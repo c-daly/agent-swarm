@@ -683,13 +683,15 @@ def generate_dashboard():
             // Compute sequences.summary_effectiveness from summarization data
             const offered = summ.offered || 0;
             const fullRequested = summ.full_requested || 0;
-            data.sequences = {
+            const sequencesData = {
                 summary_effectiveness: {
                     drill_down_rate: offered > 0 ? fullRequested / offered : null,
                     offered: offered,
                     full_requested: fullRequested
                 }
             };
+            data.sequences = sequencesData;
+            data.aggregates.sequences = sequencesData;
             
             return data;
         }
