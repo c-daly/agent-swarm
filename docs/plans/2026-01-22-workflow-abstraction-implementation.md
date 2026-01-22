@@ -2221,12 +2221,488 @@ git commit -m "feat: add iterate workflow V2 skeleton using base classes"
 
 ---
 
-Plan complete and saved to `docs/plans/2026-01-22-workflow-abstraction-implementation.md`.
+---
 
-**Two execution options:**
+# Part II: Permission Store & Hook Centralization
 
-1. **Subagent-Driven (this session)** - I dispatch fresh subagent per task, review between tasks, fast iteration
+> **Vision:** Move from hook-based enforcement to a centralized permission model where agents self-enforce by checking permissions before acting. Hooks become a minimal safety net rather than the primary enforcement mechanism.
 
-2. **Parallel Session (separate)** - Open new session with executing-plans, batch execution with checkpoints
+## Current State: Hook-Based Enforcement
 
-**Which approach?**
+The current system relies on 13 hooks that intercept tool calls and make allow/deny decisions:
+
+| Hook | Event | Purpose | Target State |
+|------|-------|---------|--------------|
+| `base-enforcement.py` | PreToolUse | Block Edit/Write when no workflow active | `permissions.require_workflow` |
+| `iterate-enforcement.py` | PreToolUse | Phase-based tool restrictions | `permissions.phase_rules` |
+| `background-enforcement.py` | PreToolUse | Force Task to use `run_in_background=true` | `permissions.task_constraints` |
+| `implementer-only-enforcement.py` | PreToolUse | Only implementer agents in orchestrate | `permissions.allowed_agents` |
+| `max-agents-enforcement.py` | PreToolUse | Block Task at max_agents limit | `permissions.max_agents` |
+| `workflow-state-enforcement.py` | PreToolUse | Subagents can't modify workflow state | `permissions.subagent_restrictions` |
+| `state-protection.py` | PreToolUse | Protect `.state/` directory | `permissions.protected_paths` |
+| `subagent-enforcement.py` | SubagentStart | Store agent state, inject TDD context | `workflow_state.agent_context` |
+| `verification_gates.py` | PostToolUse | Track lint/test runs | `workflow_state.verification` |
+| `post-tool-tracking.py` | PostToolUse | Log tool usage | → telemetry (MCP router) |
+| `work_seeker.py` | SessionStart | Initialize session state | → library initialization |
+| `session-start.py` | SessionStart | Initialize workflows | → library initialization |
+| `phase_model.py` | (library) | Define phase restrictions | `permissions.phase_rules` |
+
+### Problems with Hook-Based Enforcement
+
+1. **Distributed logic** - Enforcement rules scattered across 10+ hook files
+2. **Race conditions** - Hooks query state, but state may change between query and tool execution
+3. **Performance** - Each tool call triggers multiple hook processes
+4. **Opacity** - Agent doesn't know what's blocked until it tries and gets denied
+5. **Maintenance burden** - Adding a new workflow requires updating multiple hooks
+6. **Subagent confusion** - Subagents don't know their constraints until blocked
+
+---
+
+## Phase 9: Permission Store Design
+
+### Task 9.1: Design Permission Store Schema
+
+**Concept:** Store explicit permissions in workflow state. Agent reads permissions once, self-enforces. Hooks become thin verification layer.
+
+**Files:**
+- Create: `lib/permission_store.py`
+- Test: `tests/lib/test_permission_store.py`
+
+```python
+# lib/permission_store.py
+"""Permission store - centralized tool/action permissions.
+
+Stored in workflow state under the 'permissions' key.
+Agent reads permissions at session/task start and self-enforces.
+"""
+
+from dataclasses import dataclass, field
+from typing import FrozenSet, Optional
+from enum import Enum, auto
+
+
+class ToolCategory(Enum):
+    """Categories of tools for permission grouping."""
+    FILE_READ = auto()
+    FILE_WRITE = auto()
+    CODE_QUERY = auto()
+    CODE_EDIT = auto()
+    FILE_SEARCH = auto()
+    SHELL_SAFE = auto()
+    SHELL_DANGEROUS = auto()
+    WEB_RESEARCH = auto()
+    SUBAGENT = auto()
+    MEMORY = auto()
+    USER_INTERACTION = auto()
+    WORKFLOW_CONTROL = auto()  # workflow_set_state, etc.
+
+
+@dataclass
+class PhasePermissions:
+    """Permissions for a specific workflow phase."""
+    allowed_categories: FrozenSet[ToolCategory] = field(default_factory=frozenset)
+    blocked_tools: FrozenSet[str] = field(default_factory=frozenset)
+    allowed_file_patterns: FrozenSet[str] = field(default_factory=lambda: frozenset({"**/*"}))
+    blocked_file_patterns: FrozenSet[str] = field(default_factory=frozenset)
+    blocked_commands: FrozenSet[str] = field(default_factory=frozenset)  # git push, etc.
+
+
+@dataclass
+class TaskConstraints:
+    """Constraints for Task tool usage."""
+    require_background: bool = False
+    max_agents: int = 5
+    allowed_agent_types: FrozenSet[str] = field(default_factory=frozenset)
+
+
+@dataclass
+class SubagentRestrictions:
+    """Restrictions specific to subagents."""
+    can_modify_workflow_state: bool = False
+    can_modify_own_agent_state: bool = True
+    can_spawn_subagents: bool = False
+    inherits_phase: bool = True
+
+
+@dataclass
+class PermissionStore:
+    """Complete permission context for an agent."""
+
+    # Workflow context
+    workflow_active: bool = False
+    workflow_type: Optional[str] = None
+    workflow_id: Optional[str] = None
+
+    # Phase permissions
+    phase: str = "none"
+    phase_permissions: Optional[PhasePermissions] = None
+
+    # Task constraints
+    task_constraints: TaskConstraints = field(default_factory=TaskConstraints)
+
+    # Subagent context
+    is_subagent: bool = False
+    agent_id: Optional[str] = None
+    subagent_restrictions: SubagentRestrictions = field(default_factory=SubagentRestrictions)
+
+    # Protected paths (always enforced)
+    protected_paths: FrozenSet[str] = field(default_factory=lambda: frozenset({".state/", ".env"}))
+
+    # Runtime tracking
+    current_agents: int = 0
+    verification_state: dict = field(default_factory=dict)
+
+    def is_tool_allowed(self, tool_name: str, **context) -> tuple[bool, str]:
+        """Check if tool is allowed given current permissions."""
+        # Check workflow requirement
+        if not self.workflow_active and tool_name in FILE_WRITE_TOOLS:
+            return False, "No active workflow - editing blocked"
+
+        # Check phase permissions
+        if self.phase_permissions:
+            if tool_name in self.phase_permissions.blocked_tools:
+                return False, f"Tool blocked in {self.phase} phase"
+
+        # Check file patterns
+        file_path = context.get("file_path")
+        if file_path:
+            if self._is_protected_path(file_path):
+                return False, f"Path {file_path} is protected"
+
+        # Check subagent restrictions
+        if self.is_subagent:
+            if tool_name in WORKFLOW_CONTROL_TOOLS:
+                if not self.subagent_restrictions.can_modify_workflow_state:
+                    return False, "Subagents cannot modify workflow state"
+            if tool_name == "Task":
+                if not self.subagent_restrictions.can_spawn_subagents:
+                    return False, "Subagents cannot spawn additional agents"
+
+        # Check task constraints
+        if tool_name == "Task":
+            if self.current_agents >= self.task_constraints.max_agents:
+                return False, f"Max agents ({self.task_constraints.max_agents}) reached"
+
+        return True, ""
+
+    def _is_protected_path(self, path: str) -> bool:
+        """Check if path is in protected paths."""
+        return any(path.startswith(p.rstrip('/')) for p in self.protected_paths)
+
+    def to_dict(self) -> dict:
+        """Serialize to dict for storage in workflow state."""
+        return {
+            "workflow_active": self.workflow_active,
+            "workflow_type": self.workflow_type,
+            "workflow_id": self.workflow_id,
+            "phase": self.phase,
+            "phase_permissions": {
+                "blocked_tools": list(self.phase_permissions.blocked_tools if self.phase_permissions else []),
+                "allowed_file_patterns": list(self.phase_permissions.allowed_file_patterns if self.phase_permissions else []),
+                "blocked_commands": list(self.phase_permissions.blocked_commands if self.phase_permissions else []),
+            } if self.phase_permissions else None,
+            "is_subagent": self.is_subagent,
+            "agent_id": self.agent_id,
+            "protected_paths": list(self.protected_paths),
+            "current_agents": self.current_agents,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "PermissionStore":
+        """Deserialize from dict."""
+        phase_perms = data.get("phase_permissions")
+        if phase_perms:
+            phase_permissions = PhasePermissions(
+                blocked_tools=frozenset(phase_perms.get("blocked_tools", [])),
+                allowed_file_patterns=frozenset(phase_perms.get("allowed_file_patterns", [])),
+                blocked_commands=frozenset(phase_perms.get("blocked_commands", [])),
+            )
+        else:
+            phase_permissions = None
+
+        return cls(
+            workflow_active=data.get("workflow_active", False),
+            workflow_type=data.get("workflow_type"),
+            workflow_id=data.get("workflow_id"),
+            phase=data.get("phase", "none"),
+            phase_permissions=phase_permissions,
+            is_subagent=data.get("is_subagent", False),
+            agent_id=data.get("agent_id"),
+            protected_paths=frozenset(data.get("protected_paths", [".state/", ".env"])),
+            current_agents=data.get("current_agents", 0),
+        )
+
+
+# Tool constants
+FILE_WRITE_TOOLS = {"Edit", "Write", "NotebookEdit"}
+WORKFLOW_CONTROL_TOOLS = {"workflow_set_state", "workflow_update", "workflow_start", "workflow_stop"}
+```
+
+---
+
+## Phase 10: Agent Self-Enforcement Model
+
+### Task 10.1: Permission Query Library
+
+**Concept:** Agent queries permissions ONCE at task start, caches locally, and self-enforces.
+
+**Files:**
+- Create: `lib/permission_query.py`
+
+```python
+# lib/permission_query.py
+"""Permission query - agent reads permissions at task start.
+
+Usage:
+    from permission_query import get_my_permissions, am_i_allowed
+
+    permissions = get_my_permissions()
+    allowed, reason = am_i_allowed("Edit", file_path="src/main.py")
+"""
+
+from typing import Optional
+from pathlib import Path
+import sys
+
+lib_dir = Path(__file__).parent
+sys.path.insert(0, str(lib_dir))
+
+from workflow_client import workflow_get_state, agent_get_state
+from permission_store import PermissionStore
+
+
+def get_my_permissions(agent_id: Optional[str] = None) -> PermissionStore:
+    """Get permissions for current agent/session."""
+    for wf_id in ["iterate", "orchestrate", "debug", "pr_comment", "session"]:
+        state = workflow_get_state(wf_id)
+        if state and state.get("active"):
+            permissions = state.get("permissions")
+            if permissions:
+                perm_store = PermissionStore.from_dict(permissions)
+                if agent_id:
+                    perm_store.is_subagent = True
+                    perm_store.agent_id = agent_id
+                return perm_store
+
+    return PermissionStore(workflow_active=False, phase="none")
+
+
+def am_i_allowed(tool_name: str, agent_id: Optional[str] = None, **context) -> tuple[bool, str]:
+    """Quick check if tool is allowed."""
+    permissions = get_my_permissions(agent_id)
+    return permissions.is_tool_allowed(tool_name, **context)
+
+
+def format_permissions_for_prompt(permissions: PermissionStore) -> str:
+    """Format permissions as human-readable text for system prompt."""
+    lines = [
+        "## Current Permissions",
+        f"**Workflow:** {permissions.workflow_type or 'none'} ({permissions.phase} phase)",
+    ]
+
+    if permissions.phase_permissions and permissions.phase_permissions.blocked_tools:
+        lines.append(f"**BLOCKED TOOLS:** {', '.join(sorted(permissions.phase_permissions.blocked_tools))}")
+
+    if permissions.is_subagent:
+        lines.append("**SUBAGENT:** Cannot modify workflow state or spawn agents")
+
+    lines.append("**Self-Enforce:** Check permissions BEFORE attempting any tool use.")
+
+    return "\n".join(lines)
+```
+
+---
+
+## Phase 11: Hook Migration Strategy
+
+### Hooks to Eliminate
+
+| Hook | Replacement |
+|------|-------------|
+| `base-enforcement.py` | `permission_store.workflow_active` - agent self-checks |
+| `iterate-enforcement.py` | `permission_store.phase_permissions` - agent self-checks |
+| `background-enforcement.py` | `permission_store.task_constraints` - agent self-checks |
+| `implementer-only-enforcement.py` | `permission_store.task_constraints.allowed_agent_types` |
+| `max-agents-enforcement.py` | `permission_store.task_constraints.max_agents` |
+| `state-protection.py` | `permission_store.protected_paths` |
+| `work_seeker.py` | Merge into `session-init.py` |
+| `session-start.py` | Merge into `session-init.py` |
+
+### Hooks to Keep (Safety Net)
+
+| Hook | Purpose | Why Keep |
+|------|---------|----------|
+| `workflow-state-enforcement.py` | Block subagent workflow mutations | Security boundary |
+| `session-init.py` (new, consolidated) | Initialize permissions | Bootstrap |
+| `verification-safety.py` (new) | Verify tool results | Catch bugs |
+
+### Task 11.1: Create Consolidated Session Init Hook
+
+**Files:**
+- Create: `hooks/session-init.py`
+- Delete: `hooks/work_seeker.py`, `hooks/session-start.py`
+
+```python
+#!/usr/bin/env python3
+"""Consolidated session initialization.
+
+Replaces: work_seeker.py, session-start.py
+"""
+
+import json
+import sys
+from pathlib import Path
+
+lib_dir = Path(__file__).parent.parent / "lib"
+sys.path.insert(0, str(lib_dir))
+
+from workflow_client import workflow_is_active, workflow_set_state
+from permission_query import get_my_permissions, format_permissions_for_prompt
+
+
+def main():
+    input_data = json.loads(sys.stdin.read())
+
+    # Initialize session if needed
+    if not workflow_is_active("session"):
+        workflow_set_state("session", {"active": True, "phase": "none"})
+
+    permissions = get_my_permissions()
+    context = format_permissions_for_prompt(permissions)
+
+    result = {
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": context,
+        }
+    }
+    print(json.dumps(result))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+## Phase 12: Implementation Tasks
+
+### Task Execution Order
+
+| Task | Description | Dependencies |
+|------|-------------|--------------|
+| 12.1 | Create `lib/permission_store.py` with tests | None |
+| 12.2 | Create `lib/permission_query.py` with tests | 12.1 |
+| 12.3 | Integrate PermissionStore with WorkflowEngine | 12.1, Phase 1-2 |
+| 12.4 | Create `hooks/session-init.py` (consolidated) | 12.2 |
+| 12.5 | Update skills with permission awareness | 12.2 |
+| 12.6 | Minimize subagent-enforcement.py | 12.1 |
+| 12.7 | Delete obsolete hooks | 12.4, 12.6 |
+| 12.8 | Update plugin.json | 12.7 |
+| 12.9 | Integration tests | All above |
+
+### Tests for permission_store.py
+
+```python
+# tests/lib/test_permission_store.py
+import pytest
+from lib.permission_store import PermissionStore, PhasePermissions
+
+
+def test_permission_store_serialization():
+    """PermissionStore should serialize to/from dict."""
+    store = PermissionStore(
+        workflow_active=True,
+        workflow_type="iterate",
+        phase="implement",
+        phase_permissions=PhasePermissions(
+            blocked_tools=frozenset({"Bash"}),
+        ),
+    )
+
+    data = store.to_dict()
+    restored = PermissionStore.from_dict(data)
+
+    assert restored.workflow_active == store.workflow_active
+    assert restored.phase == store.phase
+
+
+def test_is_tool_allowed_no_workflow():
+    """Should block writes when no workflow active."""
+    store = PermissionStore(workflow_active=False)
+
+    allowed, _ = store.is_tool_allowed("Read")
+    assert allowed is True
+
+    allowed, _ = store.is_tool_allowed("Edit")
+    assert allowed is False
+
+
+def test_subagent_restrictions():
+    """Subagents should have restricted permissions."""
+    store = PermissionStore(
+        workflow_active=True,
+        is_subagent=True,
+    )
+
+    allowed, _ = store.is_tool_allowed("workflow_set_state")
+    assert allowed is False
+```
+
+---
+
+## Migration Checklist
+
+### Before Migration
+- [ ] All existing tests pass
+- [ ] Document current hook behavior
+- [ ] Create backup of hooks/
+
+### During Migration
+- [ ] Implement permission_store.py with tests
+- [ ] Implement permission_query.py with tests
+- [ ] Integrate with WorkflowEngine
+- [ ] Create consolidated session-init hook
+- [ ] Update skills with permission awareness
+
+### After Migration
+- [ ] Delete obsolete hooks (8 files)
+- [ ] Update plugin.json
+- [ ] Run full test suite
+- [ ] Manual testing with each workflow
+- [ ] Document new architecture
+
+---
+
+## Success Criteria
+
+1. **Fewer hooks** - From 13 to 3-4
+2. **Faster tool calls** - No hook round-trip for most decisions
+3. **Better UX** - Agent explains constraints instead of hitting walls
+4. **Easier maintenance** - Permissions defined declaratively
+5. **Self-enforcing agents** - Agent knows and respects boundaries
+
+---
+
+## Architecture Summary
+
+```
+Before (Hook-Based):
+Agent ──► Tool Call ──► Hook Process (13 hooks) ──► Allow/Deny
+
+After (Permission Store):
+Agent ◄── Permission Query ◄── Workflow State
+  │
+  ▼ Self-Enforce
+Tool Call ──► Safety Hooks (3 hooks - verification only)
+```
+
+---
+
+Plan complete.
+
+**Execution Parts:**
+- Part I (Phases 1-8): Workflow abstraction base classes
+- Part II (Phases 9-12): Permission store and hook elimination
+
+**Recommended order:** Execute Part I first (foundation), then Part II (migration)
