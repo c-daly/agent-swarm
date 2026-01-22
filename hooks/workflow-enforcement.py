@@ -86,8 +86,6 @@ def main():
         state = workflow_get_state(wf_id)
         if state and state.get("active"):
             wf = wf_class()
-            # Load existing state into engine
-            wf.engine._state = state
 
             allowed, reason = wf.is_tool_allowed(tool_name, file_path=file_path)
 
