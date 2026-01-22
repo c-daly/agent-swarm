@@ -14,13 +14,13 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Add lib to path for schema imports
-sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from stores.events import ToolCallEvent
-from telemetry_service import TelemetryService
+from lib.stores.events import ToolCallEvent  # noqa: F401 - referenced by other hooks
+from lib.telemetry_service import TelemetryService
 
-from telemetry_schema_v2 import (
+from lib.telemetry_schema_v2 import (
     load_telemetry_v2,
     save_telemetry_v2,
     ensure_day,
@@ -262,7 +262,7 @@ def main():
         day_data["calls"]["by_subagent"][subagent_type]["tokens"] += tokens
     
     # Update timing stats
-    update_timing_stats(day_data["timing"], duration_ms)
+    update_timing_stats(day_data["timing"], backend, duration_ms)
     
     # Update session tracking
     session_id = get_session_id()
