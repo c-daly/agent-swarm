@@ -16,6 +16,7 @@ Usage:
 import json
 import subprocess
 import select
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from threading import Lock, RLock
@@ -259,7 +260,8 @@ class RoutingService:
         server: ServerConfig,
         tool_name: str,
         args: dict,
-        _is_restore: bool = False
+        _is_restore: bool = False,
+        _is_retry: bool = False
     ) -> dict:
         """Forward request to target MCP server.
 
@@ -271,6 +273,7 @@ class RoutingService:
             tool_name: Tool to invoke
             args: Tool arguments
             _is_restore: Internal flag to prevent infinite recursion during state restore
+            _is_retry: Internal flag to prevent infinite recursion on connection failure
 
         Returns:
             Response dict from target server
@@ -287,8 +290,8 @@ class RoutingService:
                 if is_new_connection and server.name == "workflow" and not _is_restore:
                     self._restore_workflow_state(server.name)
 
-                # Build request
-                request_id = hash((tool_name, json.dumps(args, sort_keys=True))) & 0xFFFFFFFF
+                # Build request with UUID to avoid collisions in high-concurrency
+                request_id = str(uuid.uuid4())
 
                 if tool_name == "__list__":
                     # Special: get tool list
@@ -323,9 +326,11 @@ class RoutingService:
 
                 response_line = proc.stdout.readline()  # type: ignore[union-attr]
                 if not response_line:
-                    # Connection died, remove and retry once
+                    # Connection died, remove and retry once (if not already retrying)
                     self._connections.pop(server.name, None)
-                    return self._forward_to_server(server, tool_name, args)
+                    if _is_retry:
+                        return {"error": {"code": -32603, "message": f"Connection to {server.name} failed after retry"}}
+                    return self._forward_to_server(server, tool_name, args, _is_restore=_is_restore, _is_retry=True)
 
                 response = json.loads(response_line.strip())
 
