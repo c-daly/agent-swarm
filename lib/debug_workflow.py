@@ -221,3 +221,146 @@ class DebugWorkflow:
         state["hypothesis"] = hypothesis
         state["prediction"] = prediction
         workflow_client.workflow_set_state("debug", state)
+
+    def record_verification(self, tests_pass: bool, lint_pass: bool) -> None:
+        """Record verification results."""
+        state = self.engine.get_state() or {}
+        state["tests_pass"] = tests_pass
+        state["lint_pass"] = lint_pass
+        workflow_client.workflow_set_state("debug", state)
+
+    def stop(self) -> None:
+        """Stop the workflow."""
+        self.engine.stop()
+
+
+def is_active() -> bool:
+    """Check if debug workflow is active."""
+    return workflow_client.workflow_is_active("debug")
+
+
+def status() -> str:
+    """Get formatted status."""
+    if not is_active():
+        return "[DEBUG] Not active"
+
+    wf = DebugWorkflow()
+    state = wf.engine.get_state() or {}
+    phase = state.get("phase", "unknown")
+    task = state.get("bug_report", "")[:50]
+    iteration = state.get("iteration", 0)
+
+    return f"""[DEBUG] Active
+  Phase: {phase}
+  Task: {task}
+  Iteration: {iteration}"""
+
+
+if __name__ == "__main__":
+    import sys
+
+    def usage():
+        print("Usage: python debug_workflow.py <command> [args]")
+        print()
+        print("Commands:")
+        print("  start <bug_description>  Start debug workflow")
+        print("  status                   Show current status")
+        print("  phase                    Show current phase")
+        print("  set-phase <phase>        Manually set phase")
+        print("  triage <sev> <comp> <art> Record triage outputs")
+        print("  hypothesis <hyp> <pred>  Record hypothesis and prediction")
+        print("  verify <tests> <lint>    Record verification (1=pass, 0=fail)")
+        print("  advance                  Advance to next phase")
+        print("  stop                     Stop workflow")
+
+    COMMANDS = {"start", "status", "phase", "set-phase", "triage",
+                "hypothesis", "verify", "advance", "stop", "help"}
+
+    if len(sys.argv) < 2:
+        if is_active():
+            print(status())
+        else:
+            usage()
+        sys.exit(0)
+
+    cmd = sys.argv[1]
+
+    # Auto-start if first arg isn't a command
+    if cmd not in COMMANDS:
+        bug = " ".join(sys.argv[1:])
+        wf = DebugWorkflow()
+        wf.start(bug)
+        print(status())
+        sys.exit(0)
+
+    if cmd == "start":
+        bug = " ".join(sys.argv[2:]) if len(sys.argv) > 2 else "Unspecified bug"
+        wf = DebugWorkflow()
+        wf.start(bug)
+        print(status())
+
+    elif cmd == "status":
+        print(status())
+
+    elif cmd == "phase":
+        if is_active():
+            wf = DebugWorkflow()
+            print(wf.get_phase())
+        else:
+            print("Not active")
+
+    elif cmd == "set-phase":
+        if len(sys.argv) < 3:
+            print("Usage: set-phase <phase>")
+            sys.exit(1)
+        wf = DebugWorkflow()
+        wf.set_phase(sys.argv[2])
+        print(f"Phase set to: {sys.argv[2]}")
+
+    elif cmd == "triage":
+        if len(sys.argv) < 5:
+            print("Usage: triage <severity> <components> <artifacts>")
+            sys.exit(1)
+        wf = DebugWorkflow()
+        wf.record_triage(sys.argv[2], sys.argv[3].split(","), sys.argv[4].split(","))
+        print("Triage recorded")
+
+    elif cmd == "hypothesis":
+        if len(sys.argv) < 4:
+            print("Usage: hypothesis <hypothesis> <prediction>")
+            sys.exit(1)
+        wf = DebugWorkflow()
+        wf.record_hypothesis(sys.argv[2], sys.argv[3])
+        print("Hypothesis recorded")
+
+    elif cmd == "verify":
+        if len(sys.argv) < 4:
+            print("Usage: verify <tests_pass> <lint_pass>")
+            sys.exit(1)
+        wf = DebugWorkflow()
+        wf.record_verification(sys.argv[2] == "1", sys.argv[3] == "1")
+        print("Verification recorded")
+
+    elif cmd == "advance":
+        wf = DebugWorkflow()
+        result = wf.advance()
+        if result.success:
+            print(f"Advanced to: {result.next_phase}")
+        else:
+            if result.kickback_to:
+                print(f"Kicked back to: {result.kickback_to}")
+                print(f"Reason: {result.message}")
+            else:
+                print(f"Cannot advance: {result.message}")
+
+    elif cmd == "stop":
+        wf = DebugWorkflow()
+        wf.stop()
+        print("Workflow stopped")
+
+    elif cmd == "help":
+        usage()
+
+    else:
+        usage()
+        sys.exit(1)

@@ -150,3 +150,133 @@ class PRCommentWorkflow:
         state["articulation"] = articulation
         state["current_code_problem"] = problem
         workflow_client.workflow_set_state("pr_comment", state)
+
+    def record_verification(self, tests_pass: bool, lint_pass: bool) -> None:
+        """Record verification results."""
+        state = self.engine.get_state() or {}
+        state["tests_pass"] = tests_pass
+        state["lint_pass"] = lint_pass
+        workflow_client.workflow_set_state("pr_comment", state)
+
+    def stop(self) -> None:
+        """Stop the workflow."""
+        self.engine.stop()
+
+
+def is_active() -> bool:
+    """Check if pr_comment workflow is active."""
+    return workflow_client.workflow_is_active("pr_comment")
+
+
+def status() -> str:
+    """Get formatted status."""
+    if not is_active():
+        return "[PR-COMMENT] Not active"
+
+    wf = PRCommentWorkflow()
+    state = wf.engine.get_state() or {}
+    phase = state.get("phase", "unknown")
+    pr = state.get("pr_number", "?")
+    comment = state.get("comment", "")[:40]
+
+    return f"""[PR-COMMENT] Active
+  Phase: {phase}
+  PR: #{pr}
+  Comment: {comment}..."""
+
+
+if __name__ == "__main__":
+    import sys
+
+    def usage():
+        print("Usage: python pr_comment_workflow.py <command> [args]")
+        print()
+        print("Commands:")
+        print("  start <comment> <pr_num>  Start workflow for PR comment")
+        print("  status                    Show current status")
+        print("  phase                     Show current phase")
+        print("  set-phase <phase>         Manually set phase")
+        print("  understand <art> <prob>   Record understanding")
+        print("  verify <tests> <lint>     Record verification (1=pass, 0=fail)")
+        print("  advance                   Advance to next phase")
+        print("  stop                      Stop workflow")
+
+    COMMANDS = {"start", "status", "phase", "set-phase", "understand",
+                "verify", "advance", "stop", "help"}
+
+    if len(sys.argv) < 2:
+        if is_active():
+            print(status())
+        else:
+            usage()
+        sys.exit(0)
+
+    cmd = sys.argv[1]
+
+    if cmd == "start":
+        if len(sys.argv) < 4:
+            print("Usage: start <comment> <pr_number>")
+            sys.exit(1)
+        comment = sys.argv[2]
+        pr_num = int(sys.argv[3])
+        wf = PRCommentWorkflow()
+        wf.start(comment, pr_num)
+        print(status())
+
+    elif cmd == "status":
+        print(status())
+
+    elif cmd == "phase":
+        if is_active():
+            wf = PRCommentWorkflow()
+            print(wf.get_phase())
+        else:
+            print("Not active")
+
+    elif cmd == "set-phase":
+        if len(sys.argv) < 3:
+            print("Usage: set-phase <phase>")
+            sys.exit(1)
+        wf = PRCommentWorkflow()
+        wf.set_phase(sys.argv[2])
+        print(f"Phase set to: {sys.argv[2]}")
+
+    elif cmd == "understand":
+        if len(sys.argv) < 4:
+            print("Usage: understand <articulation> <problem>")
+            sys.exit(1)
+        wf = PRCommentWorkflow()
+        wf.record_understanding(sys.argv[2], sys.argv[3])
+        print("Understanding recorded")
+
+    elif cmd == "verify":
+        if len(sys.argv) < 4:
+            print("Usage: verify <tests_pass> <lint_pass>")
+            sys.exit(1)
+        wf = PRCommentWorkflow()
+        wf.record_verification(sys.argv[2] == "1", sys.argv[3] == "1")
+        print("Verification recorded")
+
+    elif cmd == "advance":
+        wf = PRCommentWorkflow()
+        result = wf.advance()
+        if result.success:
+            print(f"Advanced to: {result.next_phase}")
+        else:
+            if result.kickback_to:
+                print(f"Kicked back to: {result.kickback_to}")
+                print(f"Reason: {result.message}")
+            else:
+                print(f"Cannot advance: {result.message}")
+
+    elif cmd == "stop":
+        wf = PRCommentWorkflow()
+        wf.stop()
+        print("Workflow stopped")
+
+    elif cmd == "help":
+        usage()
+
+    else:
+        usage()
+        sys.exit(1)
