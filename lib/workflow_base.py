@@ -183,7 +183,6 @@ class WorkflowEngine:
             return TransitionResult(success=False, message="Workflow not active")
 
         current_phase_name = state.get("phase")
-        current_phase = self.definition.get_phase(current_phase_name)
         transition = self.definition.get_transition(current_phase_name)
 
         if not transition:

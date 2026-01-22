@@ -6,7 +6,7 @@ Used by debug, PR comment, and iterate workflows.
 
 import subprocess
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Optional
 
