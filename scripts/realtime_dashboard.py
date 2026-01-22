@@ -644,13 +644,10 @@ def generate_dashboard():
 
         // Normalize v3 telemetry schema (DuckDB-based)
         function normalizeV3Data(data) {
-            console.log('normalizeV3Data called, schema_version:', data?.schema_version);
             if (!data) return data;
             if (data.schema_version !== 3) {
-                console.log('normalizeV3Data: skipping, not v3');
                 return data;
             }
-            console.log('normalizeV3Data: processing v3 data');
 
             const agg = data.aggregates || {};
             
@@ -697,8 +694,7 @@ def generate_dashboard():
             };
             data.sequences = sequencesData;
             data.aggregates.sequences = sequencesData;
-            
-            console.log('normalizeV3Data: set sequences =', JSON.stringify(sequencesData));
+
             return data;
         }
 
@@ -1139,18 +1135,11 @@ def generate_dashboard():
             const agg = data.aggregates || {};
             const sequences = agg.sequences || data.sequences || {};
             const effectiveness = sequences.summary_effectiveness || {};
-            
-            console.log('updateSummaryEffectiveness DEBUG:');
-            console.log('  agg.sequences:', agg.sequences);
-            console.log('  data.sequences:', data.sequences);
-            console.log('  sequences:', sequences);
-            console.log('  effectiveness:', effectiveness);
-            
+
             // Drill-down rate (only show % if we have summarization data)
             const summarization = agg.summarization || {};
             const offered = summarization.offered || 0;
             const drillDownRate = effectiveness.drill_down_rate;
-            console.log('  offered:', offered, 'drillDownRate:', drillDownRate);
             const drillDownEl = document.getElementById('drillDownRate');
             if (drillDownEl) {
                 if (offered > 0 && drillDownRate !== undefined && drillDownRate !== null) {
@@ -1586,9 +1575,6 @@ def serve_dashboard(port: int = 8765):
                     })
                 except Exception as e:
                     # Fallback to JSON file if DuckDB fails
-                    print(f"DuckDB ERROR: {e}")
-                    import traceback
-                    traceback.print_exc()
                     if TELEMETRY_FILE.exists():
                         # Wrap telemetry.json in schema_version 3 format
                         telem = json.loads(TELEMETRY_FILE.read_text())
