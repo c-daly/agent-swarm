@@ -11,10 +11,9 @@ Provides:
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Callable, FrozenSet, Optional, Any
-import fnmatch
-from pathlib import Path
 
 import workflow_client
+from permission_store import PermissionStore, PhasePermissions
 
 
 class KickbackReason(Enum):
@@ -125,6 +124,35 @@ class WorkflowEngine:
         state = self.get_state()
         return state.get("active", False) if state else False
 
+    def get_permission_store(self) -> Optional[PermissionStore]:
+        """Build PermissionStore from current workflow state.
+
+        Returns:
+            PermissionStore configured for current phase, or None if not active
+        """
+        state = self.get_state()
+        if not state or not state.get("active"):
+            return None
+
+        phase_name = state.get("phase")
+        phase = self.definition.get_phase(phase_name)
+
+        # Build PhasePermissions from WorkflowPhase
+        phase_perms = None
+        if phase:
+            phase_perms = PhasePermissions(
+                blocked_tools=phase.blocked_tools,
+                allowed_file_patterns=phase.allowed_file_patterns,
+            )
+
+        return PermissionStore(
+            workflow_active=True,
+            workflow_type=self.definition.name,
+            workflow_id=self.workflow_id,
+            phase=phase_name,
+            phase_permissions=phase_perms,
+        )
+
     def is_tool_allowed(
         self,
         tool_name: str,
@@ -138,35 +166,10 @@ class WorkflowEngine:
             command: For Bash, the command string
             file_path: For Edit/Write, the target file path
         """
-        state = self.get_state()
-        if not state or not state.get("active"):
+        store = self.get_permission_store()
+        if not store:
             return True, "No active workflow"
-
-        phase_name = state.get("phase")
-        phase = self.definition.get_phase(phase_name)
-        if not phase:
-            return True, f"Unknown phase: {phase_name}"
-
-        # Check blocked list first
-        if tool_name in phase.blocked_tools:
-            return False, f"[BLOCKED] {tool_name} not allowed in {phase_name} phase"
-
-        # If allowed_tools is non-empty, tool must be in it
-        if phase.allowed_tools and tool_name not in phase.allowed_tools:
-            return False, f"[BLOCKED] {tool_name} not in allowed tools for {phase_name}"
-
-        # Check file pattern restrictions for Edit/Write
-        if file_path and tool_name in ("Edit", "Write") and phase.allowed_file_patterns:
-            path = Path(file_path)
-            allowed = any(
-                fnmatch.fnmatch(str(path), pattern) or
-                fnmatch.fnmatch(path.name, pattern)
-                for pattern in phase.allowed_file_patterns
-            )
-            if not allowed:
-                return False, f"[BLOCKED] {file_path} does not match allowed patterns for {phase_name}"
-
-        return True, ""
+        return store.is_tool_allowed(tool_name, file_path=file_path, command=command)
 
     def add_adversary_objection(self, objection: Any) -> None:
         """Add an adversary objection for current phase."""

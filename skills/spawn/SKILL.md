@@ -173,3 +173,35 @@ Subagents do NOT receive:
 - Your conversation history
 - Current phase/state (unless you tell them)
 - Other subagents' results (unless you include them)
+
+## Permission Awareness
+
+When spawning subagents within a workflow:
+
+1. **Include phase context**: Tell subagents what phase they're in and what tools are blocked
+2. **Pass workflow ID**: Include workflow ID so subagents can query permissions
+3. **Self-enforcement**: Subagents should check permissions before file operations
+
+**Example prompt with permission context:**
+```
+Implement input validation for login form.
+
+**Workflow Context:**
+- Workflow: iterate (implement phase)
+- Blocked tools: None in this phase
+- File restrictions: Only modify src/components/LoginForm.tsx
+
+**Permission check:** Use `is_tool_allowed("Edit", file_path=path)` if unsure.
+```
+
+**Programmatic check** (lib/permission_query.py):
+```python
+from permission_query import get_permissions, is_tool_allowed
+
+# Subagent checks before editing
+allowed, reason = is_tool_allowed("Edit", file_path="src/main.py")
+if not allowed:
+    print(f"Cannot edit: {reason}")
+```
+
+**Orchestrator phase**: In ORCHESTRATE phase, Edit/Write/Bash are blocked - you MUST spawn subagents for all implementation work.

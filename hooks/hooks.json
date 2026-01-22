@@ -71,11 +71,6 @@
             "type": "command",
             "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/post-task-tracking.py",
             "timeout": 3
-          },
-          {
-            "type": "command",
-            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/work_seeker.py",
-            "timeout": 3
           }
         ]
       }
@@ -123,6 +118,11 @@
             "type": "command",
             "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/session-start.py",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/session-init.py",
+            "timeout": 5
           },
           {
             "type": "command",

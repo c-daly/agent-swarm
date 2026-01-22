@@ -62,3 +62,23 @@ python3 lib/implementer_workflow.py advance
 | `done` | Verification passed |
 | `max_iterations` | 3 kickbacks |
 | `user_stopped` | Manual stop |
+
+## Permission Awareness
+
+At task start, check workflow state for active permissions:
+
+1. **Check active workflow**: `get_active_workflow_id()` returns current workflow
+2. **Get permissions**: `get_permissions(workflow_id)` returns PermissionStore
+3. **Verify tool access**: `is_tool_allowed(tool_name, **context)` before operations
+
+**Programmatic check** (lib/permission_query.py):
+```python
+from permission_query import get_permissions, is_tool_allowed
+
+# Check if Edit is allowed
+allowed, reason = is_tool_allowed("Edit", file_path="src/main.py")
+if not allowed:
+    print(f"Blocked: {reason}")
+```
+
+**Self-enforcement**: Even in `work` phase with all tools allowed, respect any file path restrictions passed by the orchestrator.
