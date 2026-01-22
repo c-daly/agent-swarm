@@ -35,15 +35,15 @@ HISTORY_FILE = STATE_DIR / "metrics_history.json"
 ACTIVITY_LOG = STATE_DIR / "activity.log"
 SUBAGENT_METRICS = STATE_DIR / "subagent_metrics.json"
 TELEMETRY_FILE = STATE_DIR / "telemetry.json"
-TELEMETRY_V3_DIR = STATE_DIR / "telemetry_v3"
+DUCKDB_FILE = STATE_DIR / "telemetry.duckdb"
 
 # Try to import DuckDB store for v3 data
 _duckdb_store = None
 try:
     from lib.stores.duckdb_store import DuckDBStore
-    if TELEMETRY_V3_DIR.exists() and any(TELEMETRY_V3_DIR.glob("**/*.jsonl")):
-        _duckdb_store = DuckDBStore(str(TELEMETRY_V3_DIR))
-        print("📊 Using v3 telemetry (DuckDB)")
+    if DUCKDB_FILE.exists():
+        _duckdb_store = DuckDBStore(str(STATE_DIR))
+        print("📊 Using DuckDB telemetry")
 except ImportError:
     pass
 except Exception as e:
@@ -281,6 +281,67 @@ def load_telemetry():
 def ensure_charts_dir():
     """Create charts directory if needed."""
     CHARTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _has_summarization_data(events: list) -> bool:
+    """Check if any events have summarization data."""
+    return any(e.get("full_size", 0) > 0 for e in events)
+
+
+def _generate_placeholder_chart(title: str, message: str, output_file: str):
+    """Generate a placeholder chart HTML for features not yet available."""
+    ensure_charts_dir()
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>{title}</title>
+    <style>
+        body {{{{
+            font-family: -apple-system, sans-serif;
+            padding: 40px;
+            background: #1a1a2e;
+            color: #eee;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 80vh;
+        }}}}
+        .placeholder {{{{
+            background: #16213e;
+            border-radius: 12px;
+            padding: 60px;
+            text-align: center;
+            max-width: 500px;
+            border: 1px solid #333;
+        }}}}
+        h1 {{{{ color: #4cc9f0; margin-bottom: 20px; }}}}
+        p {{{{ color: #888; line-height: 1.6; }}}}
+        .icon {{{{ font-size: 48px; margin-bottom: 20px; }}}}
+        .back {{{{
+            color: #4cc9f0;
+            text-decoration: none;
+            margin-top: 30px;
+            display: inline-block;
+        }}}}
+    </style>
+</head>
+<body>
+    <div class="placeholder">
+        <div class="icon">📊</div>
+        <h1>{title}</h1>
+        <p>{message}</p>
+        <a href="dashboard.html" class="back">← Back to Dashboard</a>
+    </div>
+</body>
+</html>"""
+
+    path = CHARTS_DIR / output_file
+    path.write_text(html)
+    return path
+
 
 def load_history():
     """Load historical metrics."""
@@ -2743,8 +2804,13 @@ def chart_compression_ratio():
     efficiency_events = [e for e in events if e.get("full_size", 0) > 0]
 
     if not efficiency and not efficiency_events:
-        print("⚠️  No efficiency data found (no summarized calls yet)")
-        return None
+        print("ℹ️  Summarization tracking not yet enabled")
+        return _generate_placeholder_chart(
+            "Compression Efficiency",
+            "Summarization tracking is not yet enabled. When MCP Router summarization "
+            "is active, this chart will show compression ratios and context savings.",
+            "compression_ratio.html"
+        )
 
     def calc_compression_from_events(events_list, cutoff_hours=None):
         """Calculate compression stats from events for a time range."""
@@ -2932,8 +2998,13 @@ def chart_tokens_saved():
     efficiency_events = [e for e in events if e.get("full_size", 0) > 0]
 
     if not efficiency_events:
-        print("⚠️  No efficiency events found")
-        return None
+        print("ℹ️  Summarization tracking not yet enabled")
+        return _generate_placeholder_chart(
+            "Tokens Saved",
+            "Summarization tracking is not yet enabled. When MCP Router summarization "
+            "is active, this chart will show cumulative tokens saved over time.",
+            "tokens_saved.html"
+        )
 
     def calc_savings(events_list, cutoff_hours=None):
         """Calculate cumulative savings for a time range."""
