@@ -100,6 +100,22 @@ class TestWorkflowActive:
         result = run_hook(tool)
         assert result["hookSpecificOutput"]["permissionDecision"] == "allow"
 
+    @pytest.mark.parametrize("tool", ["Edit", "Write", "NotebookEdit"])
+    def test_editing_allowed_with_pr_comment(self, tool):
+        """Editing tools allowed when pr_comment workflow is active."""
+        from lib.workflow_client import workflow_set_state
+        workflow_set_state("pr_comment", {"active": True, "phase": "fix"})
+        result = run_hook(tool)
+        assert result["hookSpecificOutput"]["permissionDecision"] == "allow"
+
+    @pytest.mark.parametrize("tool", ["Edit", "Write", "NotebookEdit"])
+    def test_editing_allowed_with_debug(self, tool):
+        """Editing tools allowed when debug workflow is active."""
+        from lib.workflow_client import workflow_set_state
+        workflow_set_state("debug", {"active": True, "phase": "fix"})
+        result = run_hook(tool)
+        assert result["hookSpecificOutput"]["permissionDecision"] == "allow"
+
     def test_inactive_workflow_still_blocks(self):
         """Workflow file exists but active=false still blocks."""
         set_iterate_active(False)

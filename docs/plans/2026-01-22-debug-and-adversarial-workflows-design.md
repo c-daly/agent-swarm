@@ -371,6 +371,7 @@ TEST_WRITING ──────────────────→ IMPLEMENT
 | **Dimension coverage** | Happy path, errors, edges, boundaries | checklist % |
 | **Specificity** | Would test catch ONLY this bug? | high/med/low |
 | **Mock fidelity** | Do mocks match real behavior? | verified/assumed |
+| **Redundancy** | Tests overlapping with existing coverage | flagged count |
 
 #### Confidence Score Output
 
@@ -380,7 +381,8 @@ Test Confidence: 73%
 ├── Mutation survival:   6/10 (60%)
 ├── Dimension coverage:  4/5  (80%)
 ├── Specificity:         medium
-└── Mock fidelity:       2 verified, 1 assumed
+├── Mock fidelity:       2 verified, 1 assumed
+└── Redundancy:          2 flagged (recommend removal)
 ```
 
 #### Gate Requirement
@@ -394,8 +396,32 @@ Tests must reach configurable minimum confidence threshold (default: 70%) before
 3. **Coverage analysis:** Check dimension coverage checklist
 4. **Specificity check:** Verify tests wouldn't pass with related-but-different bugs
 5. **Mock audit:** Flag mocks that haven't been verified against real behavior
-6. **Score calculation:** Aggregate dimensions into confidence score
-7. **Recommendation:** Pass (meets threshold), Fail (below threshold), or Conditional (close, specific improvements needed)
+6. **Redundancy analysis:** Identify tests that duplicate existing coverage
+7. **Score calculation:** Aggregate dimensions into confidence score
+8. **Recommendation:** Pass (meets threshold), Fail (below threshold), or Conditional (close, specific improvements needed)
+
+#### Redundancy Analysis (Test Explosion Prevention)
+
+**Problem:** TDD workflows can create test explosion - new tests added every iteration without checking if they're truly independent.
+
+**Adversary checks for:**
+- Tests that assert the same behavior as existing tests
+- Tests whose failure would be caught by another test
+- Tests that exercise identical code paths
+- Copy-pasted tests with minor variations that don't add coverage
+
+**Output:**
+```
+Redundancy Analysis:
+├── test_user_login_success: UNIQUE - tests auth flow
+├── test_user_login_valid: REDUNDANT - overlaps with test_user_login_success
+│   └── Recommendation: Remove or merge
+├── test_login_with_email: UNIQUE - tests email-specific path
+└── test_login_returns_token: REDUNDANT - assertion covered by test_user_login_success
+    └── Recommendation: Remove
+```
+
+**Action:** Adversary flags redundant tests for removal BEFORE adding new ones. This keeps the test suite lean and meaningful.
 
 ---
 
