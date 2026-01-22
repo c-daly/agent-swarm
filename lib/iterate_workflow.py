@@ -13,6 +13,7 @@ Flow:
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Optional
 from enum import Enum
@@ -30,6 +31,10 @@ if str(lib_dir) not in sys.path:
 
 # Import workflow client for state management via MCP router
 import workflow_client
+from workflow_base import (
+    WorkflowPhase, WorkflowDefinition, WorkflowEngine,
+    PhaseTransition, KickbackReason
+)
 
 # Map MCP tool base names to their native Claude equivalents
 # Used by is_tool_allowed() to normalize tool names for PHASE_TOOLS lookup
@@ -189,6 +194,215 @@ PHASE_BASH_WHITELIST = {
     Phase.ORCHESTRATE: {"iterate_workflow.py", "gh"},
     Phase.DONE: None,  # All commands allowed
 }
+
+# ============================================================================
+# WORKFLOW ENGINE INTEGRATION
+# ============================================================================
+
+# Define phases using WorkflowPhase for base class compatibility
+ITERATE_PHASES = {
+    "orchestrate": WorkflowPhase(
+        name="orchestrate",
+        allowed_tools=frozenset({"Read", "Task", "TodoWrite", "TaskOutput", "Glob", "Grep", "native__bash"}),
+        blocked_tools=frozenset({"Edit", "Write", "NotebookEdit", "Bash"}),
+    ),
+    "intake": WorkflowPhase(
+        name="intake",
+        allowed_tools=frozenset({"Read", "Glob", "Grep", "WebSearch", "WebFetch", "Task", "bash"}),
+        blocked_tools=frozenset({"Edit", "Write", "Bash"}),
+    ),
+    "design": WorkflowPhase(
+        name="design",
+        allowed_tools=frozenset({"Read", "Glob", "Grep", "Write", "native__bash", "Task"}),
+        blocked_tools=frozenset({"Bash"}),
+    ),
+    "test_writing": WorkflowPhase(
+        name="test_writing",
+        allowed_tools=frozenset({"Read", "Glob", "Grep", "Edit", "Write", "native__bash"}),
+        blocked_tools=frozenset({"Bash"}),
+    ),
+    "implement": WorkflowPhase(
+        name="implement",
+        allowed_tools=frozenset({"Read", "Glob", "Grep", "Edit", "Write", "native__bash"}),
+        blocked_tools=frozenset({"Bash"}),
+    ),
+    "test": WorkflowPhase(
+        name="test",
+        allowed_tools=frozenset({"Read", "Glob", "Grep", "native__bash"}),
+        blocked_tools=frozenset({"Edit", "Write", "Bash"}),
+        requires_verification=True,
+    ),
+    "review": WorkflowPhase(
+        name="review",
+        allowed_tools=frozenset({"Read", "Glob", "Grep", "Edit", "Write", "native__bash"}),
+        blocked_tools=frozenset({"Bash"}),
+    ),
+    "done": WorkflowPhase(
+        name="done",
+        allowed_tools=frozenset({"Read", "Glob", "Grep", "native__bash", "Edit", "Write", "Task"}),
+        blocked_tools=frozenset({"Bash"}),
+    ),
+}
+
+# Define transitions between phases
+ITERATE_TRANSITIONS = {
+    "intake": PhaseTransition(from_phase="intake", to_phase="design"),
+    "design": PhaseTransition(from_phase="design", to_phase="orchestrate"),
+    "test_writing": PhaseTransition(from_phase="test_writing", to_phase="implement"),
+    "implement": PhaseTransition(from_phase="implement", to_phase="test"),
+    "test": PhaseTransition(
+        from_phase="test",
+        to_phase="review",
+        kickback_map={
+            KickbackReason.TESTS_FAILED: "implement",
+            KickbackReason.LINT_FAILED: "implement",
+            KickbackReason.COVERAGE_LOW: "test_writing",
+        }
+    ),
+    "review": PhaseTransition(
+        from_phase="review",
+        to_phase="done",
+        kickback_map={
+            KickbackReason.NEW_COMMENTS: "implement",
+        }
+    ),
+}
+
+# Workflow definition for the iterate workflow
+ITERATE_DEFINITION = WorkflowDefinition(
+    name="iterate",
+    phases=ITERATE_PHASES,
+    transitions=ITERATE_TRANSITIONS,
+    initial_phase="orchestrate",
+    max_iterations=5,
+)
+
+
+class IterateWorkflow(WorkflowEngine):
+    """TDD-focused workflow engine with bash command whitelist support.
+
+    Extends WorkflowEngine with:
+    - Per-phase bash command whitelisting
+    - MCP tool name normalization
+    - Backward-compatible function signatures
+    """
+
+    def __init__(self):
+        super().__init__(ITERATE_DEFINITION, workflow_id="iterate")
+
+    def is_tool_allowed(
+        self,
+        tool_name: str,
+        command: Optional[str] = None,
+        file_path: Optional[str] = None
+    ) -> tuple[bool, str]:
+        """Check if tool is allowed in current phase with bash whitelist support.
+
+        Extends base class with:
+        - MCP tool name normalization
+        - Per-phase bash command whitelist
+        - Git commit/push coverage requirements
+        """
+        # Normalize MCP router prefix
+        if tool_name.startswith("mcp__router__"):
+            tool_name = tool_name[len("mcp__router__"):]
+
+        phase = self.get_phase()
+        if phase is None:
+            # No active workflow - block editing tools
+            if tool_name in EDITING_TOOLS:
+                return False, f"[BLOCKED] No active workflow. Start /iterate to use {tool_name}."
+            return True, "No active workflow"
+
+        # Get Phase enum for whitelist lookup
+        try:
+            phase_enum = Phase(phase)
+        except ValueError:
+            phase_enum = Phase.DONE
+
+        phase_def = self.definition.get_phase(phase)
+        if not phase_def:
+            return True, f"Unknown phase: {phase}"
+
+        # Check blocked list first
+        if tool_name in phase_def.blocked_tools:
+            return False, f"[BLOCKED] {tool_name} not allowed in {phase} phase. Run tests first."
+
+        # Check native__bash commands against per-phase whitelist
+        if tool_name == "native__bash" and command:
+            cmd_lower = command.strip().lower()
+            whitelist = PHASE_BASH_WHITELIST.get(phase_enum)
+
+            # If whitelist is None (DONE phase), all commands allowed
+            if whitelist is not None:
+                # Split on shell operators to check each part
+                parts = re.split(r'\s*(?:;|&&|\|\||&|\|)\s*', cmd_lower)
+
+                for part in parts:
+                    part = part.strip()
+                    if not part:
+                        continue
+
+                    # Get base command
+                    part_words = part.split()
+                    base_cmd = part_words[0] if part_words else ""
+
+                    # Check if allowed
+                    part_allowed = False
+                    for pattern in whitelist:
+                        if pattern == "iterate_workflow.py":
+                            if "iterate_workflow.py" in part:
+                                part_allowed = True
+                                break
+                        else:
+                            if base_cmd == pattern:
+                                part_allowed = True
+                                break
+
+                    if not part_allowed:
+                        return False, f"[BLOCKED] Command '{base_cmd}' not allowed in {phase} phase. Allowed: {', '.join(sorted(whitelist))}"
+
+            # Git commit/push coverage check for REVIEW phase
+            is_git_cmd = cmd_lower.startswith("git ") or cmd_lower == "git"
+            if is_git_cmd and phase_enum == Phase.REVIEW:
+                cmd_parts = cmd_lower.split()
+                is_commit_or_push = any(p in ["commit", "push"] for p in cmd_parts)
+                if is_commit_or_push:
+                    state = self.get_state() or {}
+                    coverage_ok = state.get("coverage_ok")
+                    if coverage_ok is None:
+                        return False, "[BLOCKED] Run tests and record coverage before commit/push"
+                    if not coverage_ok:
+                        return False, "[BLOCKED] Coverage threshold not met - cannot commit/push"
+
+        # Check if tool is allowed
+        base_tool = tool_name.split("__")[-1] if "__" in tool_name else tool_name
+        normalized_tool = MCP_TO_NATIVE.get(base_tool, base_tool)
+
+        if normalized_tool in phase_def.allowed_tools:
+            return True, ""
+        if base_tool in phase_def.allowed_tools:
+            return True, ""
+        if tool_name in phase_def.allowed_tools:
+            return True, ""
+
+        # Not in allowed tools
+        allowed_list = ", ".join(sorted(phase_def.allowed_tools))
+        return False, f"[BLOCKED] {tool_name} not in allowed tools for {phase} phase. Allowed: {allowed_list}"
+
+
+# Module-level workflow instance
+_workflow: Optional[IterateWorkflow] = None
+
+
+def _get_workflow() -> IterateWorkflow:
+    """Get or create the module-level workflow instance."""
+    global _workflow
+    if _workflow is None:
+        _workflow = IterateWorkflow()
+    return _workflow
+
+
 
 
 def _load_config() -> dict:
@@ -834,6 +1048,8 @@ EDITING_TOOLS = {"Edit", "Write", "NotebookEdit"}
 def is_tool_allowed(tool_name: str, command: str | None = None) -> tuple[bool, str]:
     """Check if a tool is allowed in current phase.
 
+    Delegates to IterateWorkflow.is_tool_allowed() to avoid logic duplication.
+
     Args:
         tool_name: Name of the tool being invoked.
         command: For Bash tool, the command string (used for git/gh blocking).
@@ -841,93 +1057,8 @@ def is_tool_allowed(tool_name: str, command: str | None = None) -> tuple[bool, s
     Returns:
         (allowed: bool, reason: str)
     """
-    # Normalize MCP router prefix once at the start
-    # mcp__router__native__bash -> native__bash
-    # mcp__router__serena__read_file -> serena__read_file
-    if tool_name.startswith("mcp__router__"):
-        tool_name = tool_name[len("mcp__router__"):]
-
-    phase = get_phase()
-    if phase is None:
-        # No active workflow - block editing tools (BUG-PHASE-MISUSE fix)
-        if tool_name in EDITING_TOOLS:
-            return False, f"[BLOCKED] No active workflow. Start /iterate to use {tool_name}."
-        return True, "No active workflow"
-
-    phase_config = PHASE_TOOLS.get(phase, PHASE_TOOLS[Phase.DONE])
-
-    if tool_name in phase_config["blocked"]:
-        return False, f"[BLOCKED] {tool_name} not allowed in {phase.value} phase. Run tests first."
-
-    # Check native__bash commands against per-phase whitelist
-    if tool_name == "native__bash" and command:
-        cmd_lower = command.strip().lower()
-        whitelist = PHASE_BASH_WHITELIST.get(phase)
-
-        # If whitelist is None (DONE phase), all commands allowed
-        if whitelist is not None:
-            # Split on shell operators to check each part of chained commands
-            # Replace operators with a common delimiter, then split
-            import re
-            parts = re.split(r'\s*(?:;|&&|\|\||&|\|)\s*', cmd_lower)
-
-            for part in parts:
-                part = part.strip()
-                if not part:
-                    continue
-
-                # Get base command (first word) of this part
-                part_words = part.split()
-                base_cmd = part_words[0] if part_words else ""
-
-                # Check if this part is allowed
-                part_allowed = False
-                for pattern in whitelist:
-                    if pattern == "iterate_workflow.py":
-                        # iterate_workflow.py can appear anywhere in command part
-                        if "iterate_workflow.py" in part:
-                            part_allowed = True
-                            break
-                    else:
-                        # Other patterns match base command
-                        if base_cmd == pattern:
-                            part_allowed = True
-                            break
-
-                if not part_allowed:
-                    return False, f"[BLOCKED] Command '{base_cmd}' not allowed in {phase.value} phase. Allowed: {', '.join(sorted(whitelist))}"
-
-        # Additional check: coverage requirement for commit/push in REVIEW
-        is_git_cmd = cmd_lower.startswith("git ") or cmd_lower == "git"
-        if is_git_cmd and phase == Phase.REVIEW:
-            cmd_parts = cmd_lower.split()
-            is_commit_or_push = any(part in ["commit", "push"] for part in cmd_parts)
-            if is_commit_or_push:
-                state = workflow_client.workflow_get_state("iterate") or {}
-                coverage_ok = state.get("coverage_ok")
-                if coverage_ok is None:
-                    return False, "[BLOCKED] Run tests and record coverage before commit/push"
-                if not coverage_ok:
-                    return False, "[BLOCKED] Coverage threshold not met - cannot commit/push"
-
-    # Allow MCP variants of allowed tools
-    base_tool = tool_name.split("__")[-1] if "__" in tool_name else tool_name
-    # Normalize to native Claude tool name via mapping
-    normalized_tool = MCP_TO_NATIVE.get(base_tool, base_tool)
-    if normalized_tool in phase_config["allowed"]:
-        return True, ""
-
-    # Also check base_tool directly (for tools like "bash" in allowed set)
-    if base_tool in phase_config["allowed"]:
-        return True, ""
-
-    # Also check if full tool_name is in allowed (for tools like native__bash)
-    if tool_name in phase_config["allowed"]:
-        return True, ""
-
-    # Block tools not explicitly allowed (allowlist-only logic)
-    allowed_list = ", ".join(sorted(phase_config["allowed"]))
-    return False, f"[BLOCKED] {tool_name} not in allowed tools for {phase.value} phase. Allowed: {allowed_list}"
+    workflow = _get_workflow()
+    return workflow.is_tool_allowed(tool_name, command=command)
 
 
 def _format_queue_status() -> Optional[str]:

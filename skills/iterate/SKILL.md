@@ -477,3 +477,25 @@ This output helps users understand workflow progress and aids debugging.
 - Split TDD across multiple agents (one agent = complete TDD cycle: test → implement → verify)
 - Use blocking TaskOutput calls (orchestrator spawns and monitors, doesn't wait)
 - Spawn agents without informative progress output
+
+## Permission Awareness
+
+At task start, check workflow state for active permissions:
+
+1. **Check active workflow**: `get_active_workflow_id()` returns current workflow
+2. **Get permissions**: `get_permissions(workflow_id)` returns PermissionStore
+3. **Verify tool access**: `is_tool_allowed(tool_name, **context)` before operations
+
+**Self-enforcement**: Do not attempt blocked operations. The phase table above shows allowed tools per phase - respect these restrictions even if hooks don't catch violations.
+
+**Programmatic check** (lib/permission_query.py):
+```python
+from permission_query import get_permissions, is_tool_allowed
+
+# Check if Edit is allowed
+allowed, reason = is_tool_allowed("Edit", file_path="src/main.py")
+if not allowed:
+    print(f"Blocked: {reason}")
+```
+
+**Subagent awareness**: When spawning subagents, include current phase in prompt so they know their tool restrictions.

@@ -20,7 +20,7 @@ import sys
 import uuid
 from pathlib import Path
 
-# Add lib to path for workflow_client
+# Add lib to path for workflow_client and permission_store
 lib_dir = Path(__file__).parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
@@ -33,6 +33,15 @@ except ImportError:
         return None
     def workflow_is_active(workflow_id: str) -> bool:
         return False
+
+try:
+    from permission_store import PermissionStore, TOOL_CATEGORIES, get_tool_category
+except ImportError:
+    # Fallback if permission_store not available
+    PermissionStore = None
+    TOOL_CATEGORIES = {}
+    def get_tool_category(name):
+        return None
 
 
 def load_session_state() -> dict:
@@ -47,69 +56,50 @@ def load_iterate_state() -> dict:
     return state if state else {}
 
 
-def main():
-    # Read hook input
-    input_data = json.loads(sys.stdin.read())
+def get_blocked_tools_for_phase(phase: str, perms_dict: dict | None) -> list[str]:
+    """Get blocked tools for a phase using PermissionStore if available.
 
-    # Extract info
-    session_id = input_data.get("sessionId", "unknown")[:8]
-    agent_type = input_data.get("agentType", "unknown")
-    task_desc = input_data.get("task", "implementation task")
+    Args:
+        phase: Current workflow phase
+        perms_dict: Permissions dict from workflow state (may contain phase_permissions)
 
-    # Use Claude Code's agentId if provided, otherwise generate one
-    agent_id = input_data.get("agentId") or f"sub-{uuid.uuid4().hex[:8]}"
+    Returns:
+        List of blocked tool names
+    """
+    blocked = []
 
-    # Load all state from state server
-    session_state = load_session_state()
-    iterate_state = load_iterate_state()
+    # Try to use PermissionStore
+    if PermissionStore and perms_dict:
+        store = PermissionStore.from_dict(perms_dict)
+        if store.phase_permissions:
+            blocked.extend(store.phase_permissions.blocked_tools)
+            # Add tools from blocked categories
+            if store.phase_permissions.allowed_categories:
+                for tool_name, category in TOOL_CATEGORIES.items():
+                    if category and category not in store.phase_permissions.allowed_categories:
+                        if tool_name not in blocked:
+                            blocked.append(tool_name)
+        return blocked
 
-    # Determine context
-    phase = iterate_state.get("phase") or session_state.get("phase") or "none"
-    mode = iterate_state.get("mode", "")
+    # Fallback to phase_model if PermissionStore not available
+    try:
+        from phase_model import get_phase_info, TOOL_CATEGORIES as PM_CATEGORIES
+        phase_info = get_phase_info(phase)
+        if phase_info:
+            blocked = list(phase_info.blocked_tools)
+            for tool, cat in PM_CATEGORIES.items():
+                if cat and cat not in phase_info.allowed_categories:
+                    if tool not in blocked:
+                        blocked.append(tool)
+    except Exception:
+        pass
 
-    # CRITICAL FIX: When iterate workflow is active and spawning from orchestrate phase,
-    # force ALL subagent types to start in test_writing phase (TDD enforcement)
-    # Use workflow_is_active instead of checking mode (which may be empty string)
-    if workflow_is_active("iterate") and phase == "orchestrate":
-        phase = "test_writing"
+    return blocked
 
-    # Store subagent state with its phase
-    agent_state = {
-        "phase": phase,
-        "mode": mode,
-        "task": task_desc,
-        "parent_session": session_id,
-    }
-    agent_set_state(agent_id, agent_state)
 
-    # Log and track
-    # DISABLED: No longer logging subagent starts to file
-
-    # log_subagent_start(agent_id, agent_type, session_id, phase)
-    # DISABLED: Not tracking active agents in file
-
-    # session_state["active_agents"] = session_state.get("active_agents", 0) + 1
-    # DISABLED: Not creating state directory for session file
-
-    # STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    # DISABLED: No longer writing session state to file
-
-    # STATE_FILE.write_text(json.dumps(session_state, indent=2))
-
-    # Build context to inject based on mode and phase
-    additional_context = []
-    message_suffix = ""
-
-    # Early exit if no phase
-    if not phase or phase == "none":
-        pass  # No context to inject
-
-    elif mode == "iterate-tdd":
-        # In iterate-tdd mode - check phase for specific handling
-        if agent_type == "implementer" and phase in ("orchestrate", "test_writing", "implement"):
-            # Subagent spawned by orchestrator for implementation work
-            message_suffix = f" (iterate-tdd/{phase})"
-            additional_context.append(f"""
+def build_tdd_context(agent_id: str, task_desc: str) -> str:
+    """Build TDD workflow context for implementer subagents."""
+    return f"""
 ## SUBAGENT WORKFLOW CONTEXT
 
 **Agent ID:** {agent_id}
@@ -155,60 +145,92 @@ When done, return a summary:
   "tests_passed": true|false
 }}
 ```
-""")
-        else:
-            # iterate-tdd but not orchestrate phase - apply phase restrictions
-            try:
-                sys.path.insert(0, str(Path.home() / ".claude/plugins/agent-swarm/lib"))
-                from phase_model import get_phase_info, TOOL_CATEGORIES
-                phase_info = get_phase_info(phase)
-                if phase_info:
-                    blocked = list(phase_info.blocked_tools)
-                    for tool, cat in TOOL_CATEGORIES.items():
-                        if cat and cat not in phase_info.allowed_categories:
-                            if tool not in blocked:
-                                blocked.append(tool)
-                    if blocked:
-                        additional_context.append(f"""
+"""
+
+
+def build_phase_restriction_context(agent_id: str, phase: str, mode: str, blocked_tools: list[str]) -> str:
+    """Build phase restriction context for subagents."""
+    if not blocked_tools:
+        return ""
+
+    mode_suffix = f" ({mode} mode)" if mode else ""
+    return f"""
 ## PHASE RESTRICTIONS (ENFORCED)
 
 **Agent ID:** {agent_id}
-**Current phase:** {phase} (iterate-tdd mode)
+**Current phase:** {phase}{mode_suffix}
 
 **BLOCKED TOOLS - DO NOT USE:**
-{chr(10).join(f'- {t}' for t in sorted(set(blocked))[:15])}
+{chr(10).join(f'- {t}' for t in sorted(set(blocked_tools))[:15])}
 
 If you need a blocked tool, STOP and report to orchestrator.
-""")
-            except Exception:
-                pass
+"""
+
+
+def main():
+    # Read hook input
+    input_data = json.loads(sys.stdin.read())
+
+    # Extract info
+    session_id = input_data.get("sessionId", "unknown")[:8]
+    agent_type = input_data.get("agentType", "unknown")
+    task_desc = input_data.get("task", "implementation task")
+
+    # Use Claude Code's agentId if provided, otherwise generate one
+    agent_id = input_data.get("agentId") or f"sub-{uuid.uuid4().hex[:8]}"
+
+    # Load all state from state server
+    session_state = load_session_state()
+    iterate_state = load_iterate_state()
+
+    # Determine context
+    phase = iterate_state.get("phase") or session_state.get("phase") or "none"
+    mode = iterate_state.get("mode", "")
+    perms_dict = iterate_state.get("permissions") or session_state.get("permissions")
+
+    # CRITICAL: When iterate workflow is active and spawning from orchestrate phase,
+    # force ALL subagent types to start in test_writing phase (TDD enforcement)
+    if workflow_is_active("iterate") and phase == "orchestrate":
+        phase = "test_writing"
+
+    # Store subagent state with its phase
+    agent_state = {
+        "phase": phase,
+        "mode": mode,
+        "task": task_desc,
+        "parent_session": session_id,
+    }
+    agent_set_state(agent_id, agent_state)
+
+    # Build context to inject based on mode and phase
+    additional_context = []
+    message_suffix = ""
+
+    # Early exit if no phase
+    if not phase or phase == "none":
+        pass  # No context to inject
+
+    elif mode == "iterate-tdd":
+        # In iterate-tdd mode
+        if agent_type == "implementer" and phase in ("orchestrate", "test_writing", "implement"):
+            # Subagent spawned by orchestrator for implementation work
+            message_suffix = f" (iterate-tdd/{phase})"
+            additional_context.append(build_tdd_context(agent_id, task_desc))
+        else:
+            # iterate-tdd but not implementer or different phase - apply phase restrictions
+            blocked_tools = get_blocked_tools_for_phase(phase, perms_dict)
+            if blocked_tools:
+                additional_context.append(
+                    build_phase_restriction_context(agent_id, phase, "iterate-tdd", blocked_tools)
+                )
 
     else:
         # Has phase but not iterate-tdd mode - apply generic restrictions
-        try:
-            sys.path.insert(0, str(Path.home() / ".claude/plugins/agent-swarm/lib"))
-            from phase_model import get_phase_info, TOOL_CATEGORIES
-            phase_info = get_phase_info(phase)
-            if phase_info:
-                blocked = list(phase_info.blocked_tools)
-                for tool, cat in TOOL_CATEGORIES.items():
-                    if cat and cat not in phase_info.allowed_categories:
-                        if tool not in blocked:
-                            blocked.append(tool)
-                if blocked:
-                    additional_context.append(f"""
-## PHASE RESTRICTIONS (ENFORCED)
-
-**Agent ID:** {agent_id}
-**Current phase:** {phase}
-
-**BLOCKED TOOLS - DO NOT USE:**
-{chr(10).join(f'- {t}' for t in sorted(set(blocked))[:15])}
-
-If you need a blocked tool, STOP and report to orchestrator.
-""")
-        except Exception:
-            pass
+        blocked_tools = get_blocked_tools_for_phase(phase, perms_dict)
+        if blocked_tools:
+            additional_context.append(
+                build_phase_restriction_context(agent_id, phase, mode, blocked_tools)
+            )
 
     result = {
         "hookSpecificOutput": {

@@ -163,3 +163,25 @@ Without root cause verification:
 - Time wasted on trial-and-error fixes
 
 This workflow forces you to **prove understanding before acting**.
+
+## Permission Awareness
+
+At task start, check workflow state for active permissions:
+
+1. **Check active workflow**: `get_active_workflow_id()` returns current workflow
+2. **Get permissions**: `get_permissions(workflow_id)` returns PermissionStore
+3. **Verify tool access**: `is_tool_allowed(tool_name, **context)` before operations
+
+**Self-enforcement**: The phase table above shows allowed/blocked tools per phase. Do not attempt blocked operations - they exist to enforce the "understand before fixing" discipline.
+
+**Programmatic check** (lib/permission_query.py):
+```python
+from permission_query import get_permissions, is_tool_allowed
+
+# Check if Edit is allowed in current phase
+allowed, reason = is_tool_allowed("Edit", file_path="src/auth.py")
+if not allowed:
+    print(f"Blocked: {reason}")  # e.g., "Edit blocked in HYPOTHESIZE phase"
+```
+
+**File restrictions**: In REPRODUCE phase, editing is limited to test files. The permission system enforces this via file path patterns.
