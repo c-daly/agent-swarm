@@ -664,13 +664,102 @@ def test_subagent_cannot_modify_workflow():
 
 ## Open Questions
 
-1. **agentId access**: Can we get this without a hook? Need to check Claude Code's MCP request format.
+1. ~~**agentId access**: Can we get this without a hook?~~ **RESOLVED**: Claude Code assigns agentId when spawning subagents and returns it in the Task result. The agentId is passed to hooks via stdin. We keep ONE minimal hook that writes agentId to `.state/request_context.json` for the router to read. No enforcement logic in the hook.
 
 2. **Schema validation**: Should we validate enforcement.json on load? JSON Schema or Pydantic?
 
 3. **Rule inheritance**: Should phases inherit from a base? Or keep them explicit?
 
 4. **Audit logging**: Should enforcement decisions be logged to a file for debugging?
+
+## Agent State Field Restrictions
+
+### Problem
+
+Subagents can call `agent_set_state(their_id, {...})` with arbitrary fields. If they can set their own `phase` field, they could bypass enforcement by claiming to be in a permissive phase.
+
+### Solution: Read-Only Fields for Subagents
+
+The orchestrator controls certain fields; subagents can only update result/status fields.
+
+**Orchestrator-controlled (read-only for agents)**:
+- `phase` - The workflow phase this agent operates in
+- `assigned_task` - The task description assigned by orchestrator
+- `workflow_id` - Which workflow this agent belongs to
+- `spawned_at` - Timestamp when agent was created
+
+**Agent-writable**:
+- `result` - Output/result of agent's work
+- `status` - Current status (running, complete, failed, blocked)
+- `error` - Error message if failed
+- `progress` - Progress indicator (percentage, step count, etc.)
+
+### Enforcement Rules Update
+
+```json
+{
+  "subagent_restrictions": {
+    "blocked_tools": ["workflow_start", "workflow_stop", "workflow_update",
+                      "workflow_set_state", "workflow_set_value"],
+    "agent_state_self_only": true,
+    "agent_state_readonly_fields": ["phase", "assigned_task", "workflow_id", "spawned_at"],
+    "agent_state_allowed_fields": ["result", "status", "error", "progress"]
+  }
+}
+```
+
+### Router Enforcement Logic
+
+```python
+def check_agent_set_state(args: dict, agent_id: str, rules: dict) -> EnforcementDecision:
+    """Validate agent_set_state calls from subagents."""
+    restrictions = rules.get("subagent_restrictions", {})
+
+    # Check self-only restriction
+    target_agent = args.get("agent_id")
+    if restrictions.get("agent_state_self_only") and target_agent != agent_id:
+        return EnforcementDecision(
+            allowed=False,
+            reason="[SUBAGENT] Can only modify own agent state"
+        )
+
+    # Check for writes to readonly fields
+    new_state = args.get("state", {})
+    readonly_fields = restrictions.get("agent_state_readonly_fields", [])
+
+    for field in readonly_fields:
+        if field in new_state:
+            return EnforcementDecision(
+                allowed=False,
+                reason=f"[SUBAGENT] Cannot modify readonly field: {field}"
+            )
+
+    return EnforcementDecision(allowed=True)
+```
+
+### Orchestrator-Agent Workflow
+
+1. Orchestrator spawns subagent via Task tool
+2. Claude Code returns assigned `agentId` in result
+3. Orchestrator initializes agent state with protected fields:
+   ```python
+   agent_set_state(agent_id, {
+       "phase": "implement",
+       "assigned_task": "Implement feature X",
+       "workflow_id": "iterate",
+       "spawned_at": "2026-01-22T10:30:00Z",
+       "status": "running"
+   })
+   ```
+4. Subagent works, can only update allowed fields:
+   ```python
+   agent_set_state(my_id, {"status": "running", "progress": 50})
+   ```
+5. Subagent completes, reports result:
+   ```python
+   agent_set_state(my_id, {"status": "complete", "result": {...}})
+   ```
+6. Orchestrator reads result and decides next steps
 
 ## Appendix: Current vs Proposed Comparison
 
