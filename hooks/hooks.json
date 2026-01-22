@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/telemetry-pretool.py",
+            "command": "cd /home/fearsidhe/.claude/plugins/agent-swarm && poetry run python3 hooks/telemetry-pretool.py",
             "timeout": 2
           },
           {
@@ -49,7 +49,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/telemetry-posttool.py",
+            "command": "cd /home/fearsidhe/.claude/plugins/agent-swarm && poetry run python3 hooks/telemetry-posttool.py",
             "timeout": 2
           },
           {
