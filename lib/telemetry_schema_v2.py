@@ -267,9 +267,15 @@ def merge_calls(target: CallData, source: CallData) -> None:
     target["total"] = target.get("total", 0) + source.get("total", 0)
     
     for tool, count in source.get("by_tool", {}).items():
+        # Handle corrupted data where count might be a dict instead of int
+        if isinstance(count, dict):
+            count = count.get("count", 0)
         target.setdefault("by_tool", {})[tool] = target.get("by_tool", {}).get(tool, 0) + count
-    
+
     for backend, count in source.get("by_backend", {}).items():
+        # Handle corrupted data where count might be a dict instead of int
+        if isinstance(count, dict):
+            count = count.get("count", 0)
         target.setdefault("by_backend", {})[backend] = target.get("by_backend", {}).get(backend, 0) + count
 
 

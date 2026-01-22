@@ -107,6 +107,16 @@ class DuckDBStore(AnalyticsStore, TraceStore):
             )
         """)
 
+        # Create content_retrievals table for tracking two-step content retrieval
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS content_retrievals (
+                content_id VARCHAR PRIMARY KEY,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                retrieved_at TIMESTAMP,
+                was_retrieved BOOLEAN DEFAULT FALSE
+            )
+        """)
+
 
     def insert_event(self, event: dict) -> None:
         """Insert a single telemetry event into the events table.
@@ -604,3 +614,35 @@ class DuckDBStore(AnalyticsStore, TraceStore):
             {"tool": r[0], "total_calls": r[1], "errors": r[2], "error_pct": r[3]}
             for r in result
         ]
+
+    # -------------------------------------------------------------------------
+    # Content Retrieval Tracking Methods
+    # -------------------------------------------------------------------------
+
+    def record_content_creation(self, content_id: str) -> None:
+        """Record creation of summarized content.
+        
+        Args:
+            content_id: The unique content identifier from summarization.
+        """
+        try:
+            self.conn.execute("""
+                INSERT INTO content_retrievals (content_id, was_retrieved)
+                VALUES (?, FALSE)
+            """, [content_id])
+        except Exception:
+            # Silently ignore duplicate key errors (content_id already exists)
+            pass
+
+    def record_content_retrieval(self, content_id: str) -> None:
+        """Record retrieval of full content after summarization.
+        
+        Args:
+            content_id: The unique content identifier being retrieved.
+        """
+        self.conn.execute("""
+            UPDATE content_retrievals
+            SET retrieved_at = CURRENT_TIMESTAMP,
+                was_retrieved = TRUE
+            WHERE content_id = ?
+        """, [content_id])

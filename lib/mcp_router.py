@@ -27,7 +27,10 @@ import socket
 from threading import Lock, RLock, Thread
 import select
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from lib.telemetry_service import TelemetryService
 
 try:
     import anthropic
@@ -146,16 +149,19 @@ class TelemetryCollector:
     def __init__(
         self,
         telemetry_file: Optional[Path] = None,
-        max_events: int = 500
+        max_events: int = 500,
+        telemetry_service: Optional['TelemetryService'] = None
     ):
         """Initialize telemetry collector.
 
         Args:
             telemetry_file: Path to write telemetry JSON
             max_events: Maximum events to keep (rolling window)
+            telemetry_service: Optional TelemetryService for DuckDB persistence
         """
         self._telemetry_file = telemetry_file or Path.home() / ".claude/plugins/agent-swarm/.state/telemetry.json"
         self._max_events = max_events
+        self._telemetry_service = telemetry_service
         self._lock = Lock()
         self._pending_requests: dict[str, tuple[str, str, dict, float]] = {}
         self._session_id = datetime.now(timezone.utc).isoformat()
@@ -240,6 +246,10 @@ class TelemetryCollector:
             # Update v2 telemetry
             self._update_v2_telemetry(event, error, full_size, summary_size, duration_ms)
 
+            # Send to TelemetryService if available (dual-write during migration)
+            if self._telemetry_service:
+                self._send_to_service(event, error_msg)
+
             # Save immediately for real-time updates
             self._save()
 
@@ -287,6 +297,47 @@ class TelemetryCollector:
         sessions = day_data.setdefault("sessions", [])
         if self._session_id not in sessions:
             sessions.append(self._session_id)
+
+    def _send_to_service(self, event: dict, error_msg: str) -> None:
+        """Send event to TelemetryService for DuckDB persistence.
+        
+        Maps TelemetryCollector event format to TelemetryService expected format.
+        
+        Args:
+            event: Event dict from track_response
+            error_msg: Error message if error occurred
+        """
+        # Map TelemetryCollector fields to TelemetryService/DuckDB schema
+        service_event = {
+            "timestamp": event["ts"],  # ts -> timestamp
+            "session_id": self._session_id,
+            "tool": event["tool"],
+            "backend": event["backend"],
+            "duration_ms": event["duration_ms"],
+            "status": event["status"],
+        }
+        
+        # Add optional fields
+        if event.get("subagent_type"):
+            service_event["agent_type"] = event["subagent_type"]  # subagent_type -> agent_type
+        
+        # Add error type if error occurred
+        if event["status"] == "error" and error_msg:
+            # Extract error type from message (simple heuristic)
+            service_event["error_type"] = error_msg.split(":")[0] if ":" in error_msg else "Error"
+        
+        # Add summarization fields if applicable
+        if event.get("full_size", 0) > 0 and event.get("summary_size", 0) > 0:
+            service_event["was_summarized"] = True
+            service_event["original_size"] = event["full_size"]
+            service_event["summary_size"] = event["summary_size"]
+        
+        # Send to service
+        try:
+            self._telemetry_service.insert_event(service_event)
+        except Exception:
+            # Don't let telemetry failures break routing
+            pass
 
     def get_summary(self) -> dict:
         """Get current telemetry summary."""

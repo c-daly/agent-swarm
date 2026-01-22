@@ -14,13 +14,13 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Add lib to path for schema imports
-sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from stores.events import ToolCallEvent
-from telemetry_service import TelemetryService
+from lib.stores.events import ToolCallEvent  # noqa: F401 - referenced by other hooks
+from lib.telemetry_service import TelemetryService
 
-from telemetry_schema_v2 import (
+from lib.telemetry_schema_v2 import (
     load_telemetry_v2,
     save_telemetry_v2,
     ensure_day,
@@ -262,7 +262,7 @@ def main():
         day_data["calls"]["by_subagent"][subagent_type]["tokens"] += tokens
     
     # Update timing stats
-    update_timing_stats(day_data["timing"], duration_ms)
+    update_timing_stats(day_data["timing"], backend, duration_ms)
     
     # Update session tracking
     session_id = get_session_id()
@@ -326,25 +326,10 @@ def main():
         state_dir = Path.home() / ".claude/plugins/agent-swarm/.state"
         service = TelemetryService(data_dir=str(state_dir))
         
-        # Check for summary state from mcp-summarizer hook
+        # Summary tracking (mcp-summarizer hook removed in router refactor)
         was_summarized = False
         original_size = None
         summary_size = None
-        summary_state_file = state_dir / "last_summary.json"
-        if summary_state_file.exists():
-            try:
-                import time
-                summary_state = json.loads(summary_state_file.read_text())
-                # Only use if recent (within 5 seconds) and matches tool
-                if (time.time() - summary_state.get("timestamp", 0) < 5 and 
-                    summary_state.get("tool_name") == tool_name):
-                    was_summarized = True
-                    original_size = summary_state.get("original_size")
-                    summary_size = summary_state.get("summary_size")
-                    # Clear the state file after reading
-                    summary_state_file.unlink()
-            except:
-                pass
         
         event_data = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
