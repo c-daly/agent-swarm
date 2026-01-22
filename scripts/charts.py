@@ -120,7 +120,10 @@ def _load_telemetry_v3():
             SELECT timestamp, tool, backend, status, duration_ms,
                    COALESCE(input_tokens, 0) as input_tokens,
                    COALESCE(output_tokens, 0) as output_tokens,
-                   session_id
+                   session_id,
+                   COALESCE(was_summarized, FALSE) as was_summarized,
+                   COALESCE(original_size, 0) as original_size,
+                   COALESCE(summary_size, 0) as summary_size
             FROM events
             ORDER BY timestamp DESC
             LIMIT 1000
@@ -137,6 +140,9 @@ def _load_telemetry_v3():
                 "output_tokens": row[6],
                 "tokens_est": row[5] + row[6],  # Total for charts expecting 'tokens_est'
                 "session_id": row[7],
+                "was_summarized": row[8],
+                "full_size": row[9],  # Maps original_size to full_size for charts
+                "summary_size": row[10],
             })
     except Exception as e:
         print(f"⚠️  Error fetching events: {e}", file=sys.stderr)
