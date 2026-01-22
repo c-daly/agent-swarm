@@ -19,6 +19,11 @@
             "type": "command",
             "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/iterate-enforcement.py",
             "timeout": 3
+          },
+          {
+            "type": "command",
+            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/workflow-state-enforcement.py",
+            "timeout": 3
           }
         ]
       },
