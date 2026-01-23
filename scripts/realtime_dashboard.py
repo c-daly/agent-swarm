@@ -698,146 +698,6 @@ def generate_dashboard():
             return data;
         }
 
-        // Normalize v2 telemetry schema to v1 format for backward compatibility
-        function normalizeV2Data(data) {
-            if (!data) return data;
-
-            // Check if already v1 format (has totals directly)
-            if (data.aggregates?.totals) return data;
-
-            // Check if v2 format (has all_time structure)
-            if (!data.aggregates?.all_time) return data;
-
-            const v2 = data.aggregates.all_time;
-            const tokens = v2.tokens || {};
-            const calls = v2.calls || {};
-            const summarization = v2.summarization || {};
-
-            // Build v1-compatible structure
-            data.aggregates.totals = {
-                calls: calls.total || 0,
-                tokens: (tokens.input || 0) + (tokens.output || 0),
-                tokens_input: tokens.input || 0,
-                tokens_output: tokens.output || 0,
-                cache_read: tokens.cache_read || 0,
-                cache_creation: tokens.cache_creation || 0,
-                errors: 0  // v2 doesn't track errors in aggregates
-            };
-
-            // Map by_tool and by_backend to top level  
-            // Convert by_tool from {tool: count} to {tool: {count, tokens, ...}}
-            const byToolV1 = {};
-            for (const [tool, count] of Object.entries(calls.by_tool || {})) {
-                byToolV1[tool] = { count: count, tokens: 0, errors: 0 };
-            }
-            data.aggregates.by_tool = byToolV1;
-            
-            // Same for by_backend
-            const byBackendV1 = {};
-            for (const [backend, count] of Object.entries(calls.by_backend || {})) {
-                byBackendV1[backend] = { count: count, tokens: 0, errors: 0 };
-            }
-            data.aggregates.by_backend = byBackendV1;
-
-            // Preserve summarization stats for effectiveness display
-            data.aggregates.summarization = {
-                offered: summarization.offered || 0,
-                accepted: summarization.accepted || 0,
-                rejected: summarization.rejected || 0,
-                full_content_requests: summarization.full_content_requests || 0,
-                tokens_before: summarization.tokens_before || 0,
-                tokens_after: summarization.tokens_after || 0
-            };
-
-            // Build daily_summaries from v2 days{} structure
-            if (!data.daily_summaries && data.days) {
-                data.daily_summaries = {};
-                for (const [date, dayData] of Object.entries(data.days)) {
-                    const dayTokens = dayData.tokens || {};
-                    const dayCalls = dayData.calls || {};
-                    data.daily_summaries[date] = {
-                        calls: dayCalls.total || 0,
-                        tokens: (dayTokens.input || 0) + (dayTokens.output || 0),
-                        errors: 0,
-                        duration_ms: 0
-                    };
-                }
-            }
-
-            // Build historical_timeline from days for charts
-            if (!data.historical_timeline && data.days) {
-                data.historical_timeline = Object.entries(data.days)
-                    .map(([date, dayData]) => ({
-                        date: date,
-                        calls: dayData.calls?.total || 0,
-                        tokens: (dayData.tokens?.input || 0) + (dayData.tokens?.output || 0),
-                        errors: 0
-                    }))
-                    .sort((a, b) => a.date.localeCompare(b.date));
-            }
-
-            // v2 doesn't have events array - mark as empty
-            if (!data.events) {
-                data.events = [];
-            }
-
-            // Empty placeholders for features v2 doesn't support
-            if (!data.sequences) {
-                data.sequences = {};
-            }
-
-            // Aggregate subagent/session data from all days
-            // Note: v2 schema uses by_session, not by_subagent
-            if (!data.aggregates.subagents && data.days) {
-                data.aggregates.subagents = {};
-                for (const [date, dayData] of Object.entries(data.days)) {
-                    // Use by_session (v2 schema) - each session is essentially a subagent
-                    const bySession = dayData.by_session || {};
-                    for (const [sessionId, sessionData] of Object.entries(bySession)) {
-                        if (!data.aggregates.subagents[sessionId]) {
-                            data.aggregates.subagents[sessionId] = { count: 0, tokens: 0 };
-                        }
-                        const sessionTokens = sessionData.tokens || {};
-                        const sessionCalls = sessionData.calls || {};
-                        data.aggregates.subagents[sessionId].count += sessionCalls.total || 1;
-                        data.aggregates.subagents[sessionId].tokens += (sessionTokens.input || 0) + (sessionTokens.output || 0);
-                    }
-                }
-            }
-            if (!data.aggregates.subagents) {
-                data.aggregates.subagents = {};
-            }
-
-            // Build sessions array from days[*].by_session
-            if (!data.sessions && data.days) {
-                data.sessions = [];
-                for (const [date, dayData] of Object.entries(data.days)) {
-                    if (dayData.by_session) {
-                        for (const [sessionId, sessionData] of Object.entries(dayData.by_session)) {
-                            const sessionTokens = sessionData.tokens || {};
-                            const sessionCalls = sessionData.calls || {};
-                            data.sessions.push({
-                                id: sessionId,
-                                date: date,
-                                start_time: sessionData.start || sessionData.start_time,
-                                end_time: sessionData.end || sessionData.end_time,
-                                tokens: (sessionTokens.input || 0) + (sessionTokens.output || 0),
-                                calls: sessionCalls.total || 0
-                            });
-                        }
-                    }
-                }
-                // Sort by start_time descending (most recent first)
-                data.sessions.sort((a, b) => {
-                    const timeA = a.start_time ? new Date(a.start_time).getTime() : 0;
-                    const timeB = b.start_time ? new Date(b.start_time).getTime() : 0;
-                    return timeB - timeA;
-                });
-            }
-
-            return data;
-        }
-
         function updateDashboard(data) {
             if (!data) {
                 document.getElementById('totalCalls').textContent = 'No data';
@@ -1396,7 +1256,7 @@ def generate_dashboard():
 
         async function refresh() {
             const rawData = await fetchTelemetry();
-            const data = normalizeV2Data(normalizeV3Data(rawData));
+            const data = normalizeV3Data(rawData);
             allTelemetryData = data;
 
             if (!filtersPopulated && data) {
@@ -1552,14 +1412,22 @@ def serve_dashboard(port: int = 8765):
                     """).fetchall()
                     by_subagent = {row[0]: {"count": row[1], "tokens": row[2]} for row in by_subagent_rows}
                     
-                    # Get summarization stats from telemetry.json (router tracks these)
+                    # Get summarization stats from DuckDB content_retrievals table
                     summarization_stats = {"offered": 0, "full_requested": 0}
-                    if TELEMETRY_FILE.exists():
-                        try:
-                            telem_data = json.loads(TELEMETRY_FILE.read_text())
-                            summarization_stats = telem_data.get("summarization", summarization_stats)
-                        except Exception:
-                            pass
+                    try:
+                        summ_result = conn.execute("""
+                            SELECT 
+                                COUNT(*) as offered,
+                                SUM(CASE WHEN was_retrieved THEN 1 ELSE 0 END) as full_requested
+                            FROM content_retrievals
+                        """).fetchone()
+                        if summ_result:
+                            summarization_stats = {
+                                "offered": summ_result[0] or 0,
+                                "full_requested": summ_result[1] or 0
+                            }
+                    except Exception:
+                        pass  # Table might not exist in older DBs
                     
                     data = json.dumps({
                         "events": events,
@@ -1574,25 +1442,20 @@ def serve_dashboard(port: int = 8765):
                         }
                     })
                 except Exception as e:
-                    # Fallback to JSON file if DuckDB fails
-                    if TELEMETRY_FILE.exists():
-                        # Wrap telemetry.json in schema_version 3 format
-                        telem = json.loads(TELEMETRY_FILE.read_text())
-                        summarization = telem.get("summarization", {"offered": 0, "full_requested": 0})
-                        data = json.dumps({
-                            "events": [],
-                            "schema_version": 3,
-                            "aggregates": {
-                                "total_calls": 0,
-                                "total_tokens": 0,
-                                "total_sessions": 0,
-                                "by_tool": {},
-                                "by_agent_type": {},
-                                "summarization": summarization,
-                            }
-                        })
-                    else:
-                        data = json.dumps({"events": [], "schema_version": 3, "aggregates": {"summarization": {"offered": 0, "full_requested": 0}}})
+                    # Return error response when DuckDB fails (no JSON fallback)
+                    data = json.dumps({
+                        "events": [],
+                        "schema_version": 3,
+                        "aggregates": {
+                            "total_calls": 0,
+                            "total_tokens": 0,
+                            "total_sessions": 0,
+                            "by_tool": {},
+                            "by_agent_type": {},
+                            "summarization": {"offered": 0, "full_requested": 0},
+                        },
+                        "error": f"DuckDB query failed: {str(e)}"
+                    })
 
                 self.wfile.write(data.encode())
 

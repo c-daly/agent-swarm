@@ -2,7 +2,7 @@
 """PostToolUse telemetry hook - completes tracking for ALL tool calls.
 
 Pairs with telemetry-pretool.py to record duration and status.
-Writes to centralized telemetry.json using v2.0 unified schema.
+Writes to DuckDB via TelemetryService (v3 telemetry).
 
 Extracts ACTUAL token usage from transcript when available.
 """
@@ -20,21 +20,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from lib.stores.events import ToolCallEvent  # noqa: F401 - referenced by other hooks
 from lib.telemetry_service import TelemetryService
 
-from lib.telemetry_schema_v2 import (
-    load_telemetry_v2,
-    save_telemetry_v2,
-    ensure_day,
-    update_timing_stats,
-    recompute_aggregates,
-    update_filter_options,
-    default_token_data,
-    default_call_data,
-)
-
 # Shared state files
 PENDING_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/telemetry_pending.json"
 LATEST_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/telemetry_latest.json"
-TELEMETRY_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/telemetry.json"
 
 # Token estimates by tool type (conservative estimates)
 TOKEN_ESTIMATES = {
@@ -71,8 +59,6 @@ SUBAGENT_TOKEN_ESTIMATES = {
     "feature-dev:code-reviewer": 30000,
     "feature-dev:code-architect": 50000,
 }
-
-MAX_EVENTS = 500
 
 
 def extract_tokens_from_transcript(transcript_path: str) -> dict | None:
@@ -203,124 +189,19 @@ def main():
     actual_tokens = extract_tokens_from_transcript(transcript_path)
 
     if actual_tokens:
-        tokens = actual_tokens["total"]
-        tokens_source = "jsonl"
         input_tokens = actual_tokens["input_tokens"]
         output_tokens = actual_tokens["output_tokens"]
         cache_read = actual_tokens["cache_read_input_tokens"]
         cache_create = actual_tokens["cache_creation_input_tokens"]
     else:
-        tokens = estimate_tokens(tool_name, subagent_type)
-        tokens_source = "router"
         input_tokens = 0
         output_tokens = 0
         cache_read = 0
         cache_create = 0
 
-    # Load v2.0 telemetry
-    telemetry = load_telemetry_v2(TELEMETRY_FILE)
-    
-    # Get today's date key
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    
-    # Ensure day exists
-    ensure_day(telemetry, today)
-    day_data = telemetry["days"][today]
-    
     backend = request_data.get("backend", "unknown")
-    
-    # Update day-level tokens (no summary wrapper in v2 schema)
-    day_data["tokens"]["input"] += input_tokens
-    day_data["tokens"]["output"] += output_tokens
-    day_data["tokens"]["cache_read"] += cache_read
-    day_data["tokens"]["cache_creation"] += cache_create
-    if tokens_source == "jsonl":
-        day_data["tokens"]["source"] = "jsonl"
-    
-    # Update day-level calls
-    day_data["calls"]["total"] += 1
-    
-    if tool_name not in day_data["calls"]["by_tool"]:
-        day_data["calls"]["by_tool"][tool_name] = {"count": 0, "errors": 0}
-    day_data["calls"]["by_tool"][tool_name]["count"] += 1
-    if is_error:
-        day_data["calls"]["by_tool"][tool_name]["errors"] += 1
-    
-    if backend not in day_data["calls"]["by_backend"]:
-        day_data["calls"]["by_backend"][backend] = {"count": 0, "errors": 0}
-    day_data["calls"]["by_backend"][backend]["count"] += 1
-    if is_error:
-        day_data["calls"]["by_backend"][backend]["errors"] += 1
-    
-    # Update subagent tracking
-    if subagent_type:
-        if "by_subagent" not in day_data["calls"]:
-            day_data["calls"]["by_subagent"] = {}
-        if subagent_type not in day_data["calls"]["by_subagent"]:
-            day_data["calls"]["by_subagent"][subagent_type] = {"count": 0, "tokens": 0}
-        day_data["calls"]["by_subagent"][subagent_type]["count"] += 1
-        day_data["calls"]["by_subagent"][subagent_type]["tokens"] += tokens
-    
-    # Update timing stats
-    update_timing_stats(day_data["timing"], backend, duration_ms)
-    
-    # Update session tracking
     session_id = get_session_id()
-    if session_id not in day_data["sessions"]:
-        day_data["sessions"].append(session_id)
-    
-    if session_id not in day_data["by_session"]:
-        day_data["by_session"][session_id] = {
-            "tokens": default_token_data(),
-            "calls": default_call_data(),
-            "start_time": datetime.now(timezone.utc).isoformat(),
-            "end_time": None
-        }
-    
-    session = day_data["by_session"][session_id]
-    session["tokens"]["input"] += input_tokens
-    session["tokens"]["output"] += output_tokens
-    session["tokens"]["cache_read"] += cache_read
-    session["tokens"]["cache_creation"] += cache_create
-    if tokens_source == "jsonl":
-        session["tokens"]["source"] = "jsonl"
-    
-    session["calls"]["total"] += 1
-    if tool_name not in session["calls"]["by_tool"]:
-        session["calls"]["by_tool"][tool_name] = {"count": 0, "errors": 0}
-    session["calls"]["by_tool"][tool_name]["count"] += 1
-    if is_error:
-        session["calls"]["by_tool"][tool_name]["errors"] += 1
-    
-    session["end_time"] = datetime.now(timezone.utc).isoformat()
-    
-    # Recompute rolling aggregates
-    recompute_aggregates(telemetry)
-    
-    # Update filter options
-    update_filter_options(telemetry)
-    
-    # Keep legacy events array for backward compatibility
-    if "events" not in telemetry:
-        telemetry["events"] = []
-    
-    event = {
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "session_id": session_id,
-        "tool": tool_name,
-        "backend": backend,
-        "duration_ms": duration_ms,
-        "status": "error" if is_error else "success",
-        "tokens": tokens,
-        "tokens_source": tokens_source,
-        "subagent_type": subagent_type,
-        "error_msg": error_msg
-    }
-    
-    telemetry["events"].append(event)
-    if len(telemetry["events"]) > MAX_EVENTS:
-        telemetry["events"] = telemetry["events"][-MAX_EVENTS:]
-    
+
     # === Telemetry v3: Write to DuckDB via TelemetryService ===
     try:
         state_dir = Path.home() / ".claude/plugins/agent-swarm/.state"
@@ -354,9 +235,6 @@ def main():
     except Exception:
         # Don't fail the hook if telemetry writing fails
         pass
-    
-    # Save v2 telemetry
-    save_telemetry_v2(telemetry, TELEMETRY_FILE)
 
     print(json.dumps({}))
 
