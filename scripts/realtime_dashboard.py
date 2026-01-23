@@ -1415,7 +1415,7 @@ def serve_dashboard(port: int = 8765):
                     # Get summarization stats from DuckDB content_retrievals table
                     summarization_stats = {"offered": 0, "full_requested": 0}
                     try:
-                        summ_result = conn.execute("""
+                        summ_result = store.conn.execute("""
                             SELECT 
                                 COUNT(*) as offered,
                                 SUM(CASE WHEN was_retrieved THEN 1 ELSE 0 END) as full_requested
