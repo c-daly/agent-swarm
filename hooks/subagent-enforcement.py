@@ -124,6 +124,11 @@ def build_tdd_context(agent_id: str, task_desc: str, group: str = "default") -> 
 **Group/PR:** {group}
 **Spawned by:** Orchestrator
 
+### Tools Available
+
+Use standard Claude Code tools: `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`.
+Serena symbolic tools are also available: `mcp__plugin_serena_serena__*`
+
 ### TDD Workflow (Follow This Order)
 
 **YOU CANNOT SKIP PHASES.** You MUST follow this exact sequence:
@@ -164,13 +169,13 @@ def build_test_writing_context(agent_id: str, task_desc: str, group: str) -> str
 
 **Goal:** Write failing tests that define expected behavior.
 
-1. Read task requirements
-2. Write test file(s) that will fail (red)
+**Steps:**
+1. Read task requirements and existing code patterns
+2. Write test file(s) that will fail (red phase of TDD)
 3. Verify tests fail: `pytest <test_file> -x`
-4. When done, advance:
-   ```bash
-   python3 lib/iterate_workflow.py advance
-   ```
+4. When done, advance: `python3 lib/iterate_workflow.py advance`
+
+**DO NOT skip to implementation. Tests MUST exist and FAIL before proceeding.**
 """
 
 
@@ -181,13 +186,13 @@ def build_implement_context(agent_id: str, task_desc: str, group: str) -> str:
 
 **Goal:** Write minimal code to make tests pass.
 
-1. Check side-effects before changes (`find_referencing_symbols`)
+**Steps:**
+1. Check side-effects before changes with `mcp__plugin_serena_serena__find_referencing_symbols`
 2. Follow existing code patterns
 3. Run tests frequently: `pytest <test_file> -x`
-4. When tests pass, advance:
-   ```bash
-   python3 lib/iterate_workflow.py advance
-   ```
+4. When tests pass, advance: `python3 lib/iterate_workflow.py advance`
+
+**Write only what's needed to make tests pass. No extra features.**
 """
 
 
@@ -196,20 +201,14 @@ def build_test_context(agent_id: str, task_desc: str, group: str) -> str:
     return f"""
 ## TEST PHASE
 
-**Goal:** Full verification - tests, lint, coverage.
+**Goal:** Full verification - tests, lint, coverage. NO EDITING in this phase.
 
+**Steps:**
 1. Run full test suite: `pytest`
 2. Run linter: `ruff check .`
 3. Check coverage: `pytest --cov`
-4. Record results (REQUIRED before advance):
-   ```bash
-   # Args: tests_passed lint_passed coverage_ok (1=pass, 0=fail)
-   python3 lib/iterate_workflow.py test 1 1 1
-   ```
-5. Advance (will kick back if results failed):
-   ```bash
-   python3 lib/iterate_workflow.py advance
-   ```
+4. Record results: `python3 lib/iterate_workflow.py test 1 1 1` (args: tests lint coverage, 1=pass 0=fail)
+5. Advance: `python3 lib/iterate_workflow.py advance`
 
 **Kickbacks:** Tests/lint fail → IMPLEMENT | Coverage low → TEST_WRITING
 """
@@ -221,41 +220,14 @@ def build_review_context(agent_id: str, task_desc: str, group: str) -> str:
 ## REVIEW PHASE
 
 **Goal:** Git workflow - branch, commit, PR, gated push.
+**Group:** {group} | **Branch:** feature/{group}
 
-**Group:** {group}
-**Branch:** feature/{group}
-
-### 1. Check/create branch
-```bash
-git branch --list "feature/{group}" || git checkout -b "feature/{group}"
-```
-If branch exists: `git checkout "feature/{group}"`
-
-### 2. Create PR if first task in group
-```bash
-gh pr list --head "feature/{group}" --json number --jq '.[0].number'
-```
-If no PR exists:
-```bash
-gh pr create --title "{group}" --body "Implementation tasks" --draft
-```
-
-### 3. Commit changes
-```bash
-git add -A
-git commit -m "{task_desc}"
-```
-
-### 4. Gated push (defers if other group tasks pending)
-```bash
-python3 scripts/iterate_state.py push --pr={group}
-```
-
-### 5. Record and advance
-```bash
-python3 lib/iterate_workflow.py review 1
-python3 lib/iterate_workflow.py advance
-```
+**Steps:**
+1. Check/create branch: `git checkout -b "feature/{group}"` or `git checkout "feature/{group}"`
+2. Create PR if first task: `gh pr create --title "{group}" --body "Implementation tasks" --draft`
+3. Commit: `git add -A && git commit -m "{task_desc}"`
+4. Gated push: `python3 scripts/iterate_state.py push --pr={group}`
+5. Record and advance: `python3 lib/iterate_workflow.py review 1 && python3 lib/iterate_workflow.py advance`
 """
 
 

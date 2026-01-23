@@ -2,44 +2,22 @@
 
 **You are a subagent spawned by the orchestrator.**
 
-## Environment Restrictions
+## Tools Available
 
-This environment has enforcement hooks. When blocked:
+Native Claude Code tools (`Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`) are NOT available to subagents.
 
-### Shell Commands (CRITICAL)
-The `Bash` tool does NOT exist in this environment. You MUST use:
-```
-mcp__router__native__bash
-```
+**Use these MCP router tools instead:**
 
-**Example usage:**
-```
-mcp__router__native__bash with parameters:
-  command: "python3 /tmp/my_script.py"
-  cwd: "/home/fearsidhe/.claude/plugins/agent-swarm"  (optional)
-```
+| Operation | Tool |
+|-----------|------|
+| Run commands | `mcp__plugin_agent-swarm_router__native__bash` |
+| Read files | `mcp__plugin_agent-swarm_router__native__read_file` |
+| Write files | `mcp__plugin_agent-swarm_router__native__write_file` |
+| Edit files | `mcp__plugin_agent-swarm_router__native__edit_file` |
+| Find files | `mcp__plugin_agent-swarm_router__native__glob` |
+| Search content | `mcp__plugin_agent-swarm_router__native__grep` |
 
-If you try to use `Bash`, it will fail. Always use the full tool name `mcp__router__native__bash`.
-
-### Git/GitHub Commands
-Use the wrapper script:
-```bash
-python3 /home/fearsidhe/projects/LOGOS/apollo/docs/scratch/scripts/gh_wrapper.py git status
-python3 /home/fearsidhe/projects/LOGOS/apollo/docs/scratch/scripts/gh_wrapper.py gh run list
-```
-
-### When Bash is Blocked
-Create a script with Write tool, then report the script path for manual execution:
-```python
-# Write to /tmp/my_script.py, then say:
-# "Created script at /tmp/my_script.py - run: python3 /tmp/my_script.py"
-```
-
-### When Read Limit Exceeded
-- Spawn a subagent for the read operation
-- Or create a batch script that reads and summarizes
-
----
+Serena tools: use `mcp__plugin_agent-swarm_router__serena__*` versions.
 
 ## CRITICAL: Token Efficiency Rules
 
@@ -47,11 +25,11 @@ You MUST follow these constraints to avoid wasting tokens:
 
 ### File Reading Limits
 - **MAX 5 file reads** before you must write a batch script
-- Use `Write(/tmp/batch_read.py)` + `Bash(python3 /tmp/batch_read.py)` for multiple files
-- **NO cat/head/tail via Bash** - use Read tool only
+- Use write + bash to create and run scripts for multiple files
+- **NO cat/head/tail** - use the read_file tool only
 
 ### Search Limits
-- **MAX 5 searches** (Grep/Glob) before you must batch
+- **MAX 5 searches** before you must batch
 - Use scripts with `from mcp_bridge import native_grep, native_glob`
 - Process results in script, return summary only
 
@@ -80,13 +58,11 @@ You have access to multiple memory systems. Use them strategically to avoid repe
 ### Before Starting Your Task
 
 1. **Check Serena memories** (project-specific learnings):
-   - `mcp__router__serena__list_memories` to see available memories
-   - `mcp__router__serena__read_memory` if a memory name matches your task
+   - `mcp__plugin_agent-swarm_router__serena__list_memories` to see available memories
+   - `mcp__plugin_agent-swarm_router__serena__read_memory` if a memory name matches your task
 
 2. **Check knowledge graph** (structured facts/relations):
    - `mcp__memory__search_nodes(query='<topic>')` to find relevant nodes
-
-3. **Search previous work** via episodic memory if needed
 
 ### After Completing Your Task
 
@@ -96,7 +72,7 @@ If you learned something useful, record it:
 2. **Pitfalls found** - What didn't work or caused issues?
 3. **Key decisions** - What choices did you make and why?
 
-Use `mcp__router__serena__write_memory` to persist significant learnings.
+Use `mcp__plugin_agent-swarm_router__serena__write_memory` to persist significant learnings.
 
 ### When to Use Memory
 

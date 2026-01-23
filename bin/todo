@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+"""Simple CLI todo list tool for tracking tasks."""
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+from typing import Optional
+
+# Default storage location
+DEFAULT_STORAGE = Path.home() / ".claude/plugins/agent-swarm/.state/user_tasks.json"
+
+# Status symbols
+SYMBOLS = {
+    "pending": "\u25cb",      # circle
+    "in_progress": "\u25b6",  # arrow
+    "done": "\u2713",         # checkmark
+}
+
+
+def get_storage_path() -> Path:
+    """Get the storage file path, respecting TODO_STORAGE_PATH env var."""
+    env_path = os.environ.get("TODO_STORAGE_PATH")
+    if env_path:
+        return Path(env_path)
+    return DEFAULT_STORAGE
+
+
+def load_tasks() -> dict:
+    """Load tasks from JSON storage."""
+    storage = get_storage_path()
+    if not storage.exists():
+        return {"tasks": [], "next_id": 1}
+    
+    with open(storage) as f:
+        return json.load(f)
+
+
+def save_tasks(data: dict) -> None:
+    """Save tasks to JSON storage."""
+    storage = get_storage_path()
+    storage.parent.mkdir(parents=True, exist_ok=True)
+    
+    with open(storage, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def find_task(data: dict, task_id: int) -> Optional[dict]:
+    """Find a task by ID."""
+    for task in data["tasks"]:
+        if task["id"] == task_id:
+            return task
+    return None
+
+
+def cmd_add(args) -> int:
+    """Add a new task."""
+    data = load_tasks()
+    
+    task = {
+        "id": data.get("next_id", 1),
+        "description": args.description,
+        "status": "pending",
+    }
+    
+    data["tasks"].append(task)
+    data["next_id"] = task["id"] + 1
+    save_tasks(data)
+    
+    print(f"Added task [{task['id']}]: {task['description']}")
+    return 0
+
+
+def cmd_list(args) -> int:
+    """List all tasks."""
+    data = load_tasks()
+    
+    if not data["tasks"]:
+        print("No tasks. Use 'todo add \"task\"' to add one.")
+        return 0
+    
+    for task in data["tasks"]:
+        symbol = SYMBOLS.get(task["status"], "?")
+        print(f"[{task['id']}] {symbol} {task['description']}")
+    
+    return 0
+
+
+def cmd_done(args) -> int:
+    """Mark a task as complete."""
+    data = load_tasks()
+    task = find_task(data, args.id)
+    
+    if not task:
+        print(f"Task {args.id} not found", file=sys.stderr)
+        return 1
+    
+    task["status"] = "done"
+    save_tasks(data)
+    print(f"Marked task [{task['id']}] as done")
+    return 0
+
+
+def cmd_start(args) -> int:
+    """Mark a task as in-progress."""
+    data = load_tasks()
+    task = find_task(data, args.id)
+    
+    if not task:
+        print(f"Task {args.id} not found", file=sys.stderr)
+        return 1
+    
+    task["status"] = "in_progress"
+    save_tasks(data)
+    print(f"Started task [{task['id']}]")
+    return 0
+
+
+def cmd_remove(args) -> int:
+    """Remove a task."""
+    data = load_tasks()
+    task = find_task(data, args.id)
+    
+    if not task:
+        print(f"Task {args.id} not found", file=sys.stderr)
+        return 1
+    
+    data["tasks"] = [t for t in data["tasks"] if t["id"] != args.id]
+    save_tasks(data)
+    print(f"Removed task [{args.id}]")
+    return 0
+
+
+def cmd_clear(args) -> int:
+    """Remove all completed tasks."""
+    data = load_tasks()
+    
+    before = len(data["tasks"])
+    data["tasks"] = [t for t in data["tasks"] if t["status"] != "done"]
+    after = len(data["tasks"])
+    
+    save_tasks(data)
+    removed = before - after
+    print(f"Cleared {removed} completed task(s)")
+    return 0
+
+
+def main() -> int:
+    """Main entry point."""
+    parser = argparse.ArgumentParser(
+        prog="todo",
+        description="Simple CLI todo list for tracking tasks",
+    )
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+    
+    # add command
+    add_parser = subparsers.add_parser("add", help="Add a new task")
+    add_parser.add_argument("description", help="Task description")
+    add_parser.set_defaults(func=cmd_add)
+    
+    # list command
+    list_parser = subparsers.add_parser("list", help="List all tasks")
+    list_parser.set_defaults(func=cmd_list)
+    
+    # done command
+    done_parser = subparsers.add_parser("done", help="Mark task as complete")
+    done_parser.add_argument("id", type=int, help="Task ID")
+    done_parser.set_defaults(func=cmd_done)
+    
+    # start command
+    start_parser = subparsers.add_parser("start", help="Mark task as in-progress")
+    start_parser.add_argument("id", type=int, help="Task ID")
+    start_parser.set_defaults(func=cmd_start)
+    
+    # remove command
+    remove_parser = subparsers.add_parser("remove", help="Remove a task")
+    remove_parser.add_argument("id", type=int, help="Task ID")
+    remove_parser.set_defaults(func=cmd_remove)
+    
+    # clear command
+    clear_parser = subparsers.add_parser("clear", help="Remove all completed tasks")
+    clear_parser.set_defaults(func=cmd_clear)
+    
+    args = parser.parse_args()
+    
+    if not args.command:
+        parser.print_help()
+        return 1
+    
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
