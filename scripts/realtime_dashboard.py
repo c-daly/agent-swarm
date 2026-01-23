@@ -1432,18 +1432,39 @@ def serve_dashboard(port: int = 8765):
                     summarization_stats = {"offered": 0, "full_requested": 0}
                     try:
                         summ_result = store.conn.execute("""
-                            SELECT 
+                            SELECT
                                 COUNT(*) as offered,
                                 SUM(CASE WHEN was_retrieved THEN 1 ELSE 0 END) as full_requested
                             FROM content_retrievals
                         """).fetchone()
-                        if summ_result:
+                        if summ_result and summ_result[0] > 0:
                             summarization_stats = {
                                 "offered": summ_result[0] or 0,
                                 "full_requested": summ_result[1] or 0
                             }
                     except Exception:
                         pass  # Table might not exist in older DBs
+
+                    # Fallback: merge summarization from v2 telemetry.json if DuckDB has none
+                    if summarization_stats["offered"] == 0 and TELEMETRY_FILE.exists():
+                        try:
+                            v2_data = json.loads(TELEMETRY_FILE.read_text())
+                            # Sum summarization.offered from all days
+                            days = v2_data.get("days", {})
+                            total_offered = 0
+                            total_tokens_saved = 0
+                            for day_data in days.values():
+                                summ = day_data.get("summarization", {})
+                                total_offered += summ.get("offered", 0)
+                                total_tokens_saved += summ.get("tokens_saved", 0)
+                            if total_offered > 0:
+                                summarization_stats = {
+                                    "offered": total_offered,
+                                    "full_requested": 0,  # v2 didn't track this
+                                    "tokens_saved": total_tokens_saved
+                                }
+                        except Exception:
+                            pass
                     
                     data = json.dumps({
                         "events": events,
