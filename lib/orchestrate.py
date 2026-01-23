@@ -301,8 +301,10 @@ def handle_worker_completion(worker_id: str, success: bool, result: Optional[dic
             queue.mark_complete(task_id, result)
             print(f"[ORCHESTRATE] Task {task_id} completed successfully")
         else:
-            queue.mark_failed(task_id, result.get("error", "Unknown error") if result else "Unknown error")
-            print(f"[ORCHESTRATE] Task {task_id} failed")
+            error = result.get("error", "Unknown error") if result else "Unknown error"
+            will_retry = queue.retry_or_escalate(task_id, error)
+            if not will_retry:
+                print(f"[ORCHESTRATE] Task {task_id} requires manual intervention", file=sys.stderr)
 
         save_queue(queue)
 

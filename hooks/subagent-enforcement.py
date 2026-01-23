@@ -114,13 +114,14 @@ def get_blocked_tools_for_phase(phase: str, perms_dict: dict | None) -> list[str
     return blocked
 
 
-def build_tdd_context(agent_id: str, task_desc: str) -> str:
+def build_tdd_context(agent_id: str, task_desc: str, group: str = "default") -> str:
     """Build TDD workflow context for implementer subagents."""
     return f"""
 ## SUBAGENT WORKFLOW CONTEXT
 
 **Agent ID:** {agent_id}
 **Task:** {task_desc}
+**Group/PR:** {group}
 **Spawned by:** Orchestrator
 
 ### TDD Workflow (Follow This Order)
@@ -128,20 +129,11 @@ def build_tdd_context(agent_id: str, task_desc: str) -> str:
 **YOU CANNOT SKIP PHASES.** You MUST follow this exact sequence:
 
 1. **TEST_WRITING** - Write failing tests first
-   - These tests define what success looks like
-   - Tests should fail initially (no implementation yet)
-
 2. **IMPLEMENT** - Write code to make tests pass
-   - Focus on making tests pass, nothing more
-   - Keep implementation minimal
+3. **TEST** - Run tests, lint, coverage and record results
+4. **REVIEW** - Git workflow (branch/PR/commit/push)
 
-3. **TEST** - Run tests and verify
-   - All tests must pass
-   - Check linting/type checking if applicable
-
-4. **REVIEW** - Self-review before completion
-   - Check for obvious issues
-   - Ensure code matches requirements
+Phase-specific instructions are injected when you enter each phase.
 
 ### Important Notes
 
@@ -163,6 +155,117 @@ When done, return a summary:
 }}
 ```
 """
+
+
+def build_test_writing_context(agent_id: str, task_desc: str, group: str) -> str:
+    """Context injected when entering TEST_WRITING phase."""
+    return f"""
+## TEST_WRITING PHASE
+
+**Goal:** Write failing tests that define expected behavior.
+
+1. Read task requirements
+2. Write test file(s) that will fail (red)
+3. Verify tests fail: `pytest <test_file> -x`
+4. When done, advance:
+   ```bash
+   python3 lib/iterate_workflow.py advance
+   ```
+"""
+
+
+def build_implement_context(agent_id: str, task_desc: str, group: str) -> str:
+    """Context injected when entering IMPLEMENT phase."""
+    return f"""
+## IMPLEMENT PHASE
+
+**Goal:** Write minimal code to make tests pass.
+
+1. Check side-effects before changes (`find_referencing_symbols`)
+2. Follow existing code patterns
+3. Run tests frequently: `pytest <test_file> -x`
+4. When tests pass, advance:
+   ```bash
+   python3 lib/iterate_workflow.py advance
+   ```
+"""
+
+
+def build_test_context(agent_id: str, task_desc: str, group: str) -> str:
+    """Context injected when entering TEST phase."""
+    return f"""
+## TEST PHASE
+
+**Goal:** Full verification - tests, lint, coverage.
+
+1. Run full test suite: `pytest`
+2. Run linter: `ruff check .`
+3. Check coverage: `pytest --cov`
+4. Record results (REQUIRED before advance):
+   ```bash
+   # Args: tests_passed lint_passed coverage_ok (1=pass, 0=fail)
+   python3 lib/iterate_workflow.py test 1 1 1
+   ```
+5. Advance (will kick back if results failed):
+   ```bash
+   python3 lib/iterate_workflow.py advance
+   ```
+
+**Kickbacks:** Tests/lint fail → IMPLEMENT | Coverage low → TEST_WRITING
+"""
+
+
+def build_review_context(agent_id: str, task_desc: str, group: str) -> str:
+    """Context injected when entering REVIEW phase."""
+    return f"""
+## REVIEW PHASE
+
+**Goal:** Git workflow - branch, commit, PR, gated push.
+
+**Group:** {group}
+**Branch:** feature/{group}
+
+### 1. Check/create branch
+```bash
+git branch --list "feature/{group}" || git checkout -b "feature/{group}"
+```
+If branch exists: `git checkout "feature/{group}"`
+
+### 2. Create PR if first task in group
+```bash
+gh pr list --head "feature/{group}" --json number --jq '.[0].number'
+```
+If no PR exists:
+```bash
+gh pr create --title "{group}" --body "Implementation tasks" --draft
+```
+
+### 3. Commit changes
+```bash
+git add -A
+git commit -m "{task_desc}"
+```
+
+### 4. Gated push (defers if other group tasks pending)
+```bash
+python3 scripts/iterate_state.py push --pr={group}
+```
+
+### 5. Record and advance
+```bash
+python3 lib/iterate_workflow.py review 1
+python3 lib/iterate_workflow.py advance
+```
+"""
+
+
+# Map phases to their context builders
+PHASE_CONTEXT_BUILDERS = {
+    "test_writing": build_test_writing_context,
+    "implement": build_implement_context,
+    "test": build_test_context,
+    "review": build_review_context,
+}
 
 
 def build_phase_restriction_context(agent_id: str, phase: str, mode: str, blocked_tools: list[str]) -> str:
@@ -237,10 +340,18 @@ def main():
 
     elif mode == "iterate-tdd":
         # In iterate-tdd mode
-        if agent_type == "implementer" and phase in ("orchestrate", "test_writing", "implement"):
+        # Extract group from iterate state or default
+        group = iterate_state.get("current_group") or iterate_state.get("pr_id") or "default"
+
+        if agent_type == "implementer" and phase in ("orchestrate", "test_writing", "implement", "test", "review"):
             # Subagent spawned by orchestrator for implementation work
             message_suffix = f" (iterate-tdd/{phase})"
-            additional_context.append(build_tdd_context(agent_id, task_desc))
+            additional_context.append(build_tdd_context(agent_id, task_desc, group))
+
+            # Add phase-specific context if we have a builder for this phase
+            if phase in PHASE_CONTEXT_BUILDERS:
+                phase_builder = PHASE_CONTEXT_BUILDERS[phase]
+                additional_context.append(phase_builder(agent_id, task_desc, group))
         else:
             # iterate-tdd but not implementer or different phase - apply phase restrictions
             blocked_tools = get_blocked_tools_for_phase(phase, perms_dict)
