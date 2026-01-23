@@ -292,3 +292,130 @@ def list_agents() -> list[str]:
         return []
     except WorkflowClientError:
         return []
+
+
+# ─────────────────────────────────────────────────────────────────
+# Generic Tool Calling (no prefix)
+# ─────────────────────────────────────────────────────────────────
+
+def list_tools() -> list[dict]:
+    """Get list of all available tools from the router.
+
+    Returns:
+        List of tool definitions with names, descriptions, and schemas.
+        Returns empty list if router is unavailable.
+    """
+    _log("list_tools", "ENTER")
+
+    try:
+        port = _get_router_port()
+    except WorkflowClientError as e:
+        _log("list_tools", f"EXCEPTION getting port: {e}", "ERROR")
+        return []
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(30.0)
+            s.connect(("127.0.0.1", port))
+
+            request = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/list",
+                "params": {}
+            }
+
+            s.sendall(json.dumps(request).encode() + b"\n")
+
+            data = b""
+            while b"\n" not in data:
+                chunk = s.recv(8192)
+                if not chunk:
+                    break
+                data += chunk
+
+            if not data:
+                _log("list_tools", "No response from router", "ERROR")
+                return []
+
+            response = json.loads(data.decode().strip())
+
+            if "error" in response:
+                _log("list_tools", f"Error: {response['error']}", "ERROR")
+                return []
+
+            result = response.get("result", {})
+            tools = result.get("tools", [])
+            _log("list_tools", f"EXIT: success, {len(tools)} tools")
+            return tools
+
+    except Exception as e:
+        _log("list_tools", f"EXCEPTION: {e}", "ERROR")
+        return []
+
+
+def call_tool(tool_name: str, arguments: dict) -> Any:
+    """Call any router tool by its full name (no prefix added).
+
+    Args:
+        tool_name: Full tool name (e.g., "serena__find_symbol", "native__bash")
+        arguments: Tool arguments dict
+
+    Returns:
+        The result from the tool call.
+    """
+    _log(f"call_tool:{tool_name}", f"ENTER: arguments={arguments}")
+
+    try:
+        port = _get_router_port()
+    except WorkflowClientError as e:
+        _log(f"call_tool:{tool_name}", f"EXCEPTION getting port: {e}", "ERROR")
+        return None
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(30.0)  # Longer timeout for general tools
+
+            s.connect(("127.0.0.1", port))
+
+            request = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": tool_name,  # No prefix - use as-is
+                    "arguments": arguments
+                }
+            }
+
+            s.sendall(json.dumps(request).encode() + b"\n")
+
+            data = b""
+            while b"\n" not in data:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+
+            if not data:
+                return None
+
+            response = json.loads(data.decode().strip())
+            
+            if "error" in response:
+                _log(f"call_tool:{tool_name}", f"Error: {response['error']}", "ERROR")
+                return None
+
+            result = response.get("result", {})
+            content = result.get("content", [])
+            if content and content[0].get("type") == "text":
+                text = content[0].get("text", "")
+                try:
+                    return json.loads(text)
+                except json.JSONDecodeError:
+                    return text
+            return result
+
+    except Exception as e:
+        _log(f"call_tool:{tool_name}", f"EXCEPTION: {e}", "ERROR")
+        return None

@@ -789,7 +789,22 @@ class MCPRouter:
             _router_log("socket", f"{log_prefix} Parsed request: method={method} id={request_id}")
 
             # Route the request (same logic as stdio)
-            if method == "tools/call":
+            if method == "tools/list":
+                # Return all available tools from all backends
+                tools = self._list_all_tools_for_socket()
+                result = {"tools": tools}
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": result
+                }
+                response_bytes = json.dumps(response).encode() + b"\n"
+                client.sendall(response_bytes)
+                duration_ms = int((time.time() - start_time) * 1000)
+                _router_log("socket", f"{log_prefix} COMPLETE tools/list duration={duration_ms}ms tools_count={len(tools)}")
+                return
+
+            elif method == "tools/call":
                 tool_name = params.get("name", "")
                 args = params.get("arguments", {})
                 _router_log("socket", f"{log_prefix} ROUTE tool={tool_name} args_keys={list(args.keys())}")
@@ -974,6 +989,53 @@ class MCPRouter:
                 }
                 for s in self._servers.values()
             ]
+
+    def _list_all_tools_for_socket(self) -> list[dict]:
+        """Get all tools from all backends for socket clients.
+
+        Returns:
+            List of tool definitions with prefixed names.
+        """
+        # Router's own tools
+        all_tools = [
+            {
+                "name": "router__ping",
+                "description": "Test tool that returns a simple message",
+                "inputSchema": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "router__telemetry",
+                "description": "Get real-time telemetry data",
+                "inputSchema": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "router__telemetry_analysis",
+                "description": "Get analysis of token usage trends",
+                "inputSchema": {"type": "object", "properties": {}},
+            },
+        ]
+
+        # Get tools from all backends
+        for server in self.list_servers():
+            name = server["name"]
+            prefix = server.get("tool_prefix") or name
+
+            try:
+                response = self._forward_to_server(
+                    self._servers[name],
+                    "__list__",  # Special: triggers tools/list
+                    {}
+                )
+                if "result" in response and "tools" in response["result"]:
+                    for tool in response["result"]["tools"]:
+                        # Prefix tool name
+                        tool_copy = tool.copy()
+                        tool_copy["name"] = f"{prefix}__{tool['name']}"
+                        all_tools.append(tool_copy)
+            except Exception:
+                pass  # Skip failed backends
+
+        return all_tools
 
     # === Routing ===
 
