@@ -1401,12 +1401,13 @@ def serve_dashboard(port: int = 8765):
                     by_tool = {row[0]: {"count": row[1], "tokens": row[2]} for row in by_tool_rows}
                     
                     # Get by_subagent breakdown (agent_type)
+                    # Note: 'at' is a reserved keyword in DuckDB (AT TIME ZONE), so use 'agt' alias
                     by_subagent_rows = store.conn.execute("""
-                        SELECT COALESCE(e.agent_type, at.agent_type, 'main') as agent_type,
+                        SELECT COALESCE(e.agent_type, agt.agent_type, 'main') as agent_type,
                                COUNT(*) as count,
                                SUM(COALESCE(e.input_tokens, 0) + COALESCE(e.output_tokens, 0)) as tokens
                         FROM events e
-                        LEFT JOIN agent_types at ON e.agent_id = at.agent_id
+                        LEFT JOIN agent_types agt ON e.agent_id = agt.agent_id
                         GROUP BY agent_type
                         ORDER BY tokens DESC
                     """).fetchall()

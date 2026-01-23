@@ -523,13 +523,14 @@ class DuckDBStore(AnalyticsStore, TraceStore):
         Returns:
             List of dicts with agent_type, total_tokens, and sessions.
         """
+        # Note: 'at' is a reserved keyword in DuckDB (AT TIME ZONE), so use 'agt' alias
         result = self.conn.execute("""
             SELECT
-                COALESCE(e.agent_type, at.agent_type, 'main') as agent_type_name,
+                COALESCE(e.agent_type, agt.agent_type, 'main') as agent_type_name,
                 SUM(COALESCE(e.input_tokens, 0) + COALESCE(e.output_tokens, 0)) as total_tokens,
                 COUNT(DISTINCT e.session_id) as sessions
             FROM events e
-            LEFT JOIN agent_types at ON e.agent_id = at.agent_id
+            LEFT JOIN agent_types agt ON e.agent_id = agt.agent_id
             GROUP BY agent_type_name
             ORDER BY total_tokens DESC
         """).fetchall()

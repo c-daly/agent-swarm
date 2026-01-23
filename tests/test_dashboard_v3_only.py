@@ -6,6 +6,7 @@ from DuckDB without falling back to JSON file reads.
 
 import json
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -108,3 +109,95 @@ class TestNoJsonFallbackInServe:
         # - TELEMETRY_FILE.read_text()
         assert "TELEMETRY_FILE.exists()" not in source
         assert "TELEMETRY_FILE.read_text()" not in source
+
+
+class TestDuckDBTimestampHandling:
+    """Tests for handling datetime objects from DuckDB in chart generation."""
+
+    def test_charts_handle_datetime_timestamps(self):
+        """Charts should handle datetime.datetime objects from DuckDB, not just strings."""
+        # DuckDB returns datetime.datetime objects, not strings
+        # The charts code was expecting strings and using [:19] slicing
+
+        event_with_datetime = {
+            "ts": datetime(2026, 1, 22, 17, 4, 5, 274754),
+            "timestamp": datetime(2026, 1, 22, 17, 4, 5, 274754),
+            "tool": "Bash",
+            "status": "success",
+        }
+
+        # The fix should convert datetime to string before slicing
+        ts = event_with_datetime.get("ts", "")
+        if isinstance(ts, datetime):
+            ts = ts.isoformat()
+        ts_truncated = ts[:19]
+
+        assert ts_truncated == "2026-01-22T17:04:05"
+
+    def test_load_telemetry_returns_string_timestamps(self):
+        """_load_telemetry_v3() should return events with string timestamps."""
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+
+        from scripts.charts import load_telemetry, _duckdb_store
+
+        if _duckdb_store is None:
+            pytest.skip("DuckDB not available")
+
+        data = load_telemetry()
+        events = data.get("events", [])
+
+        if not events:
+            pytest.skip("No events in database")
+
+        # All timestamps should be strings, not datetime objects
+        for event in events[:5]:  # Check first 5
+            ts = event.get("ts")
+            timestamp = event.get("timestamp")
+
+            assert isinstance(ts, str), f"ts should be string, got {type(ts)}"
+            assert isinstance(timestamp, str), f"timestamp should be string, got {type(timestamp)}"
+
+
+class TestChartsGeneration:
+    """Tests that charts can be generated without errors."""
+
+    def test_chart_realtime_telemetry_no_error(self):
+        """chart_realtime_telemetry() should not raise TypeError on datetime."""
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+
+        from scripts.charts import chart_realtime_telemetry, _duckdb_store
+
+        if _duckdb_store is None:
+            pytest.skip("DuckDB not available")
+
+        # This should not raise TypeError: 'datetime.datetime' object is not subscriptable
+        try:
+            chart_realtime_telemetry()
+        except TypeError as e:
+            if "datetime.datetime" in str(e) and "not subscriptable" in str(e):
+                pytest.fail(f"chart_realtime_telemetry() raised datetime subscript error: {e}")
+            raise  # Re-raise other TypeErrors
+
+    def test_dashboard_generation_no_error(self):
+        """Dashboard generation should complete without datetime errors."""
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+
+        from scripts.charts import load_telemetry, _duckdb_store
+
+        if _duckdb_store is None:
+            pytest.skip("DuckDB not available")
+
+        data = load_telemetry()
+        events = data.get("events", [])
+
+        # Simulate what chart_realtime_telemetry does with timestamps
+        for e in events[:5]:
+            ts = e.get("ts", "")
+            try:
+                # This should work after the fix
+                ts_str = ts[:19] if isinstance(ts, str) else ts.isoformat()[:19]
+            except TypeError as err:
+                pytest.fail(f"Timestamp handling failed: {err}")

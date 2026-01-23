@@ -129,9 +129,11 @@ def _load_telemetry_v3():
             LIMIT 1000
         """).fetchall()
         for row in recent:
+            # Convert datetime to ISO string for chart compatibility
+            ts_str = row[0].isoformat() if hasattr(row[0], 'isoformat') else str(row[0])
             events.append({
-                "ts": row[0],  # Charts expect 'ts' not 'timestamp'
-                "timestamp": row[0],
+                "ts": ts_str,  # Charts expect 'ts' not 'timestamp'
+                "timestamp": ts_str,
                 "tool": row[1],
                 "backend": row[2] or "native",
                 "status": row[3] or "success",
