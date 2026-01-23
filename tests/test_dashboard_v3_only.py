@@ -90,6 +90,28 @@ class TestDashboardV3SchemaOnly:
                 assert "normalizeV2Data(normalizeV3Data" not in html
                 assert "normalizeV3Data(rawData)" in html
 
+    def test_normalize_v3_builds_daily_summaries_from_events(self):
+        """normalizeV3Data should build daily_summaries from events, not leave empty."""
+        from scripts.realtime_dashboard import generate_dashboard
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            dashboard_file = state_dir / "dashboard.html"
+
+            with patch('scripts.realtime_dashboard.STATE_DIR', state_dir), \
+                 patch('scripts.realtime_dashboard.DASHBOARD_FILE', dashboard_file):
+                generate_dashboard()
+
+                html = dashboard_file.read_text()
+
+                # Should build daily_summaries from events
+                assert "Build daily_summaries from events" in html
+                assert "dailySummaries[date] = { calls: 0, tokens: 0, errors: 0 }" in html
+                assert "dailySummaries[date].tokens += e.tokens || 0" in html
+
+                # Should use correct field for token counting in updateTokenChart
+                assert "e.tokens || e.response_size || e.tokens_est" in html
+
 
 class TestNoJsonFallbackInServe:
     """Tests that serve_dashboard doesn't read from JSON files."""

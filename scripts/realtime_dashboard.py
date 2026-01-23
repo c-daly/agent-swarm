@@ -678,7 +678,21 @@ def generate_dashboard():
                 tokens_before: 0,
                 tokens_after: 0
             };
-            data.daily_summaries = {};
+            // Build daily_summaries from events (v3 doesn't have pre-aggregated daily data)
+            const dailySummaries = {};
+            const events = data.events || [];
+            events.forEach(e => {
+                const date = e.ts ? e.ts.substring(0, 10) : (e.timestamp ? e.timestamp.substring(0, 10) : null);
+                if (date) {
+                    if (!dailySummaries[date]) {
+                        dailySummaries[date] = { calls: 0, tokens: 0, errors: 0 };
+                    }
+                    dailySummaries[date].calls += 1;
+                    dailySummaries[date].tokens += e.tokens || 0;
+                    if (e.status === 'error') dailySummaries[date].errors += 1;
+                }
+            });
+            data.daily_summaries = dailySummaries;
             data.historical_timeline = [];
             data.sessions = [];
             
@@ -849,7 +863,7 @@ def generate_dashboard():
                 const date = e.ts ? e.ts.substring(0, 10) : (e.timestamp ? e.timestamp.substring(0, 10) : 'unknown');
                 if (date && date !== 'unknown') {
                     if (!eventBuckets[date]) eventBuckets[date] = { tokens: 0, calls: 0 };
-                    eventBuckets[date].tokens += e.response_size || e.tokens_est || 0;
+                    eventBuckets[date].tokens += e.tokens || e.response_size || e.tokens_est || 0;
                     eventBuckets[date].calls += 1;
                 }
             });
