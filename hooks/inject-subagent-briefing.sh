@@ -1,86 +1,32 @@
 #!/bin/bash
-# Injects subagent briefing AND hierarchical context into Task tool prompts
+# Enforces that Task prompts include the subagent briefing
 # Hook: PreToolUse for Task tool
+#
+# Instead of injecting briefing (which doesn't work for Task),
+# this hook ENFORCES that the orchestrator assembled the prompt correctly.
 
 # Read input from stdin
 INPUT=$(cat)
 
-# Extract the original prompt from the tool input
-ORIGINAL_PROMPT=$(echo "$INPUT" | jq -r '.tool_input.prompt // empty')
+# Extract the prompt from the tool input
+PROMPT=$(echo "$INPUT" | jq -r '.tool_input.prompt // empty')
 
-if [ -z "$ORIGINAL_PROMPT" ]; then
-    # No prompt, just allow
+if [ -z "$PROMPT" ]; then
+    # No prompt provided - allow (Task tool will handle error)
     echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}'
     exit 0
 fi
 
-# Get plugin root and working directory
-PLUGIN_ROOT="/home/fearsidhe/.claude/plugins/agent-swarm"
-WORKING_DIR=$(echo "$INPUT" | jq -r '.cwd // "."')
-AGENT_TYPE=$(echo "$INPUT" | jq -r '.tool_input.subagent_type // "general-purpose"')
-
-# Read the briefing
-BRIEFING_FILE="$PLUGIN_ROOT/hooks/subagent-briefing.md"
-if [ -f "$BRIEFING_FILE" ]; then
-    BRIEFING=$(cat "$BRIEFING_FILE")
-else
-    BRIEFING=""
+# Check if prompt contains the briefing marker
+if echo "$PROMPT" | grep -q "SUBAGENT OPERATING PROTOCOL"; then
+    # Briefing is present - allow
+    echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}'
+    exit 0
 fi
 
-# Get hierarchical context via Python
-CONTEXT_SCRIPT="$PLUGIN_ROOT/hooks/context-injection.py"
-if [ -f "$CONTEXT_SCRIPT" ]; then
-    # Map subagent_type to agent type for context filtering
-    case "$AGENT_TYPE" in
-        "Explore") CONTEXT_AGENT="explorer" ;;
-        "Plan") CONTEXT_AGENT="architect" ;;
-        "general-purpose") CONTEXT_AGENT="implementer" ;;
-        *) CONTEXT_AGENT="$AGENT_TYPE" ;;
-    esac
-
-    HIERARCHICAL_CONTEXT=$(python3 "$CONTEXT_SCRIPT" inject "$CONTEXT_AGENT" "$WORKING_DIR" 2>/dev/null)
-else
-    HIERARCHICAL_CONTEXT=""
-fi
-
-# Build the modified prompt
-if [ -n "$HIERARCHICAL_CONTEXT" ] && [ -n "$BRIEFING" ]; then
-    MODIFIED_PROMPT="# SUBAGENT OPERATING PROTOCOL
-
-$BRIEFING
-
----
-
-$HIERARCHICAL_CONTEXT
-
----
-
-# YOUR TASK
-
-$ORIGINAL_PROMPT"
-elif [ -n "$BRIEFING" ]; then
-    MODIFIED_PROMPT="# SUBAGENT OPERATING PROTOCOL
-
-$BRIEFING
-
----
-
-# YOUR TASK
-
-$ORIGINAL_PROMPT"
-else
-    MODIFIED_PROMPT="$ORIGINAL_PROMPT"
-fi
-
-# Escape the modified prompt for JSON
-ESCAPED_PROMPT=$(echo "$MODIFIED_PROMPT" | jq -Rs .)
-
-# Output modified tool input
-echo "$INPUT" | jq --argjson prompt "$ESCAPED_PROMPT" '.tool_input.prompt = $prompt' | \
-  jq '{
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "allow",
-      modifiedToolInput: .tool_input
-    }
-  }'
+# Briefing is missing - deny with instructions
+# NOTE: "block" is IGNORED for Task tool, must use "deny"
+# NOTE: Must use "permissionDecisionReason" not "message"
+cat << 'EOF'
+{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "[BRIEFING_REQUIRED] Task prompt must include subagent briefing.\n\nAssemble the prompt:\n1. Read: cat ~/.claude/plugins/agent-swarm/hooks/subagent-briefing.md\n2. Prepend to your task with header: # SUBAGENT OPERATING PROTOCOL\n3. Add phase restrictions if in iterate workflow\n4. Re-call Task with assembled prompt\n\nSubagent Tools (allowed_tools to include):\n- Shell: mcp-call pytest, mcp-call ruff, mcp-call git, etc.\n- Files: mcp-call native__read_file, mcp-call native__write_file\n- Search: mcp-call native__glob, mcp-call native__grep\n- Serena: mcp-call serena__find_symbol, etc.\n\nSee 'Subagent Prompt Assembly' in iterate skill for details."}}
+EOF

@@ -34,6 +34,9 @@ BLOCKED_TOOLS = {
     "native__bash",                   # Direct bash
 }
 
+# Shell command aliases - route these to native__bash
+SHELL_ALIASES = {"pytest", "ruff", "mypy", "black", "git", "gh", "python", "python3", "poetry"}
+
 
 def is_tool_allowed(tool_name: str) -> bool:
     """Check if tool is allowed to be called."""
@@ -55,12 +58,29 @@ def main():
         print("\nAllowed backends:", file=sys.stderr)
         for backend in sorted(ALLOWED_BACKENDS):
             print(f"  - {backend}*", file=sys.stderr)
+        print("\nShell aliases (routed to bash):", file=sys.stderr)
+        print(f"  {', '.join(sorted(SHELL_ALIASES))}", file=sys.stderr)
         print("\nExamples:", file=sys.stderr)
         print("  mcp-call serena__list_dir '{\"relative_path\": \".\"}'", file=sys.stderr)
         print("  mcp-call serena__find_symbol '{\"name_path_pattern\": \"main\"}'", file=sys.stderr)
         sys.exit(1)
 
     tool_name = sys.argv[1]
+
+    # Handle shell aliases - route to native__bash via router
+    if tool_name in SHELL_ALIASES:
+        # Reconstruct the command from tool_name and remaining args
+        command = " ".join([tool_name] + sys.argv[2:])
+        try:
+            result = call_tool("native__bash", {"command": command})
+            if isinstance(result, (dict, list)):
+                print(json.dumps(result, indent=2))
+            else:
+                print(result)
+        except Exception as e:
+            print(f"Error running {tool_name}: {e}", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(0)
 
     # Security: validate tool is allowed
     if not is_tool_allowed(tool_name):
