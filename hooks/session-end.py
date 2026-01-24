@@ -9,16 +9,21 @@ and prompts the agent to write important learnings to memory.
 import json
 import sys
 import subprocess
+import signal
 from pathlib import Path
 
-# Add lib to path for imports
+# Add plugin root and lib to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
-from stores.compression import compress_old_sessions  # noqa: E402
+sys.path.insert(0, str(Path(__file__).parent.parent / "context"))
+from lib.stores.compression import compress_old_sessions  # noqa: E402
+from memory import EpisodeStore, trigger_distillation  # noqa: E402
 
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 CHARTS_SCRIPT = SCRIPTS_DIR / "charts.py"
 STATE_DIR = Path(__file__).parent.parent / ".state"
 SESSION_FILE = STATE_DIR / "session.json"
+
 
 def generate_dashboard():
     """Generate the metrics dashboard."""
@@ -33,7 +38,7 @@ def generate_dashboard():
         
         # Log snapshot result (don't fail if it errors)
         if snapshot_result.returncode != 0:
-            print(f"⚠️ Snapshot capture failed: {snapshot_result.stderr}", file=sys.stderr)
+            print(f"\u26a0\ufe0f Snapshot capture failed: {snapshot_result.stderr}", file=sys.stderr)
         
         # Then generate the full dashboard
         result = subprocess.run(
@@ -50,12 +55,12 @@ def generate_dashboard():
                     return {
                         "success": True,
                         "path": line.strip(),
-                        "message": "✅ Metrics dashboard generated automatically"
+                        "message": "\u2705 Metrics dashboard generated automatically"
                     }
 
             return {
                 "success": True,
-                "message": "✅ Metrics dashboard generated"
+                "message": "\u2705 Metrics dashboard generated"
             }
         else:
             return {
@@ -74,6 +79,7 @@ def generate_dashboard():
             "error": str(e)
         }
 
+
 def check_memory_write_needed(input_data):
     """Memory write is ALWAYS required at session end."""
 
@@ -84,7 +90,7 @@ def check_memory_write_needed(input_data):
             "needed": True,
             "message": (
                 "\n\n============================================================\n"
-                "📝 MEMORY CAPTURE REQUIRED\n"
+                "\ud83d\udcdd MEMORY CAPTURE REQUIRED\n"
                 "============================================================\n"
                 "Before ending this session, you MUST write learnings to memory.\n"
                 "Even brief conversations contain valuable context.\n"
@@ -92,11 +98,11 @@ def check_memory_write_needed(input_data):
                 "Tool: mcp__plugin_serena_serena__write_memory\n"
                 "\n"
                 "What to capture:\n"
-                "  • Key decisions made and rationale\n"
-                "  • Gotchas/issues encountered and solutions\n"
-                "  • Architecture changes or patterns introduced\n"
-                "  • Important context for future sessions\n"
-                "  • Even simple Q&A if it reveals codebase details\n"
+                "  \u2022 Key decisions made and rationale\n"
+                "  \u2022 Gotchas/issues encountered and solutions\n"
+                "  \u2022 Architecture changes or patterns introduced\n"
+                "  \u2022 Important context for future sessions\n"
+                "  \u2022 Even simple Q&A if it reveals codebase details\n"
                 "\n"
                 "Example:\n"
                 "  write_memory(\n"
@@ -126,6 +132,63 @@ def compress_old_session_files():
         return {"error": str(e)}
 
 
+def check_and_distill(scope_path: Path, threshold: int = 10, timeout_seconds: int = 5) -> dict:
+    """
+    Check episode count and trigger distillation if threshold exceeded.
+    
+    Args:
+        scope_path: Path to the project/scope directory
+        threshold: Minimum episode count to trigger distillation (default: 10)
+        timeout_seconds: Maximum time to wait for distillation (default: 5)
+    
+    Returns:
+        dict with keys:
+            - distilled: bool - whether distillation was performed
+            - episode_count: int - number of episodes found
+            - pattern_count: int - number of patterns after distillation (if distilled)
+            - error: str - error message if failed (optional)
+    """
+    try:
+        store = EpisodeStore(scope_path)
+        episodes = store.get_episodes()
+        episode_count = len(episodes)
+        
+        if episode_count < threshold:
+            return {"distilled": False, "episode_count": episode_count}
+        
+        # Set timeout for distillation
+        def timeout_handler(signum, frame):
+            raise TimeoutError("Distillation timed out")
+        
+        old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(timeout_seconds)
+        
+        try:
+            memory = trigger_distillation(scope_path)
+            signal.alarm(0)  # Cancel alarm
+            return {
+                "distilled": True,
+                "episode_count": episode_count,
+                "pattern_count": len(memory.patterns)
+            }
+        except TimeoutError as e:
+            return {
+                "distilled": False,
+                "episode_count": episode_count,
+                "error": str(e)
+            }
+        finally:
+            signal.signal(signal.SIGALRM, old_handler)
+            signal.alarm(0)
+            
+    except Exception as e:
+        return {
+            "distilled": False,
+            "episode_count": 0,
+            "error": str(e)
+        }
+
+
 def main():
     """Session end hook entry point."""
 
@@ -142,7 +205,7 @@ def main():
     memory_check = check_memory_write_needed(input_data)
 
     # Build output message
-    message = result.get("message", "") or f"⚠️ Dashboard generation failed: {result.get('error', 'Unknown error')}"
+    message = result.get("message", "") or f"\u26a0\ufe0f Dashboard generation failed: {result.get('error', 'Unknown error')}"
 
     if result.get("path"):
         message += f"\n   {result['path']}"
@@ -150,7 +213,14 @@ def main():
     # Compress old session files
     compression_result = compress_old_session_files()
     if compression_result.get("compressed", 0) > 0:
-        message += f"\n📦 Compressed {compression_result['compressed']} old session file(s)"
+        message += f"\n\ud83d\udce6 Compressed {compression_result['compressed']} old session file(s)"
+
+    # Auto-distillation check
+    distill_result = check_and_distill(Path.cwd())
+    if distill_result.get("distilled"):
+        message += f"\n\ud83d\udcdd Distilled {distill_result['episode_count']} episodes into {distill_result['pattern_count']} patterns"
+    elif distill_result.get("error"):
+        message += f"\n\u26a0\ufe0f Auto-distillation failed: {distill_result['error']}"
 
     # Append memory suggestion if needed
     if memory_check.get("needed"):
@@ -162,6 +232,7 @@ def main():
     }
 
     print(json.dumps(output))
+
 
 if __name__ == "__main__":
     main()

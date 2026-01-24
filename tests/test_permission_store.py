@@ -31,8 +31,8 @@ class TestToolCategories:
     def test_get_tool_category(self):
         """get_tool_category should return correct category."""
         assert get_tool_category("Read") == ToolCategory.FILE_READ
-        assert get_tool_category("Edit") == ToolCategory.FILE_WRITE
-        assert get_tool_category("Bash") == ToolCategory.SHELL_DANGEROUS
+        assert get_tool_category("mcp__router__native__edit_file") == ToolCategory.FILE_WRITE
+        assert get_tool_category("mcp__router__native__bash") == ToolCategory.SHELL_DANGEROUS
         assert get_tool_category("Task") == ToolCategory.SUBAGENT
         assert get_tool_category("unknown_tool") is None
 
@@ -199,7 +199,7 @@ class TestIsToolAllowed:
         allowed, reason = store.is_tool_allowed("Read")
         assert allowed is True
 
-        allowed, reason = store.is_tool_allowed("Edit")
+        allowed, reason = store.is_tool_allowed("mcp__router__native__edit_file")
         assert allowed is False
         assert "Category" in reason
 

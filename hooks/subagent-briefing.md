@@ -51,6 +51,44 @@ The orchestrator monitors your token usage. Inefficient subagents may be termina
 
 ---
 
+## Git Operations
+
+**Subagents do NOT commit.** Your job is to:
+1. Write tests
+2. Implement code
+3. Verify tests pass
+
+The orchestrator handles git commits in the review phase after all subagent work is collected and verified.
+
+## Git Responsibilities
+
+### If First Task in Group
+
+The orchestrator's prompt will tell you if you're the first task. If so:
+
+1. Create feature branch: `git checkout -b feature/<task-name>`
+2. Make your changes (tests, implementation)
+3. Stage files: `git add <files>` (but do NOT commit)
+
+### If Continuing Existing Branch
+
+1. Verify you're on the correct branch: `git branch --show-current`
+2. If not, switch: `git checkout feature/<task-name>`
+3. Make your changes
+4. Stage files: `git add <files>` (but do NOT commit)
+
+### In Review Phase (Orchestrator Only)
+
+Subagents do NOT create PRs. The orchestrator handles this after all subagent work is verified:
+
+1. Commit: `git commit -m "feat: <description>"`
+2. Push: `git push -u origin feature/<task-name>`
+3. Create PR: `gh pr create --title "..." --body "..."`
+
+**Key Point:** You stage files, the orchestrator commits and creates the PR.
+
+---
+
 ## Memory Integration
 
 You have access to multiple memory systems. Use them strategically to avoid repeating work.

@@ -1344,15 +1344,15 @@ class MCPRouter:
         """
         # Shell commands that route through native__bash backend
         shell_aliases = [
-            "pytest",
-            "ruff",
-            "mypy",
-            "black",
-            "git",
-            "gh",
-            "python",
-            "python3",
-            "poetry",
+            "mcp-call pytest",
+            "mcp-call ruff",
+            "mcp-call mypy",
+            "mcp-call black",
+            "mcp-call git",
+            "mcp-call gh",
+            "mcp-call python",
+            "mcp-call python3",
+            "mcp-call poetry",
         ]
 
         # MCP tool patterns - router-prefixed tools from registered backends

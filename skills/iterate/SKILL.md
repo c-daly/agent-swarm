@@ -45,6 +45,8 @@ test_writing → implement → test → review → done
 | **test** | Run pytest, lint, coverage | Read, Glob, Grep, Bash (no editing!) |
 | **review** | Fix Greptile issues | Read, Glob, Grep, Edit, Write, Bash |
 
+**Git Operations:** Commits happen in the REVIEW phase, not during implementation. Subagents make file changes; the orchestrator commits after all work is verified.
+
 ## Orchestrator Role
 
 **When in ORCHESTRATE phase, you NEVER do implementation tasks. Edit/Write/Bash are BLOCKED.**
@@ -429,6 +431,92 @@ After each agent completes:
 3. Check for review comments
 4. If issues found: `python3 lib/iterate_workflow.py review 0` then `advance`
 5. If clean: `python3 lib/iterate_workflow.py review 1` then `advance`
+
+## Orchestrator: Monitoring PRs
+
+After a subagent completes and pushes:
+
+### 1. Poll for PR
+```bash
+gh pr list --head <branch-name> --json number,url
+```
+
+### 2. Check for Review Comments
+```bash
+# Get PR reviews and inline comments
+gh pr view <pr-number> --json reviews,comments
+
+# Get line-level review comments (more detailed)
+gh api repos/{owner}/{repo}/pulls/{pr}/comments
+```
+
+### 3. Add Comments to Task Queue
+For each review comment that requires action:
+- Create a new task with the comment content
+- Include file path and line number
+- Spawn an implementer agent to address it
+
+```python
+from workflow_queue import WorkflowQueue
+
+queue = WorkflowQueue()
+for comment in review_comments:
+    if requires_action(comment):
+        queue.add_task({
+            "description": f"Fix: {comment['body'][:80]}...",
+            "file": comment.get("path"),
+            "line": comment.get("line"),
+            "comment_id": comment.get("id"),
+            "full_comment": comment["body"]
+        })
+```
+
+### 4. Iterate Until Clean
+- Re-push after fixes
+- Re-poll for new comments
+- Continue until review is clean (no actionable comments)
+
+**Example polling loop:**
+```bash
+# After agent completes and pushes
+PR_NUM=$(gh pr list --head feature-branch --json number -q '.[0].number')
+
+# Get review comments
+gh api repos/owner/repo/pulls/$PR_NUM/comments --jq '.[] | {path, line, body}'
+
+# Check if any unresolved
+COMMENTS=$(gh api repos/owner/repo/pulls/$PR_NUM/comments | jq 'length')
+if [ "$COMMENTS" -gt 0 ]; then
+    # Add to queue and spawn agents
+    python3 lib/iterate_workflow.py review 0
+else
+    python3 lib/iterate_workflow.py review 1
+fi
+```
+
+## Git Workflow
+
+### Branch Creation
+
+The **first subagent** in a task group creates the feature branch:
+
+1. Check if feature branch exists: `git branch --list feature/<task-name>`
+2. If not, create and switch: `git checkout -b feature/<task-name>`
+3. Subsequent agents in the same group work on the existing branch
+
+**Orchestrator responsibility:** Include branch name in subagent prompts so agents know which branch to use.
+
+### PR Creation
+
+In the **review phase**, after all implementation work is complete:
+
+1. Stage all changes: `git add <files>`
+2. Commit with descriptive message: `git commit -m "feat: <description>"`
+3. Push branch to remote: `git push -u origin feature/<task-name>`
+4. Create PR: `gh pr create --title "..." --body "..."`
+5. Greptile reviews the PR automatically
+
+**Note:** PR creation happens ONCE per task group, not per subagent. The orchestrator coordinates this after verifying all subagent work is complete.
 
 ## Orchestrator Progress Output
 

@@ -48,9 +48,9 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "mcp__filesystem__read_text_file": ToolCategory.FILE_READ,
 
     # File write
-    "Edit": ToolCategory.FILE_WRITE,
-    "Write": ToolCategory.FILE_WRITE,
-    "NotebookEdit": ToolCategory.FILE_WRITE,
+    #"Edit": ToolCategory.FILE_WRITE,
+    #"Write": ToolCategory.FILE_WRITE,
+    #"NotebookEdit": ToolCategory.FILE_WRITE,
     "mcp__router__native__edit_file": ToolCategory.FILE_WRITE,
     "mcp__router__native__write_file": ToolCategory.FILE_WRITE,
     "mcp__router__serena__replace_content": ToolCategory.FILE_WRITE,
@@ -72,18 +72,16 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "mcp__plugin_serena_serena__replace_symbol_body": ToolCategory.CODE_EDIT,
 
     # File search
-    "Glob": ToolCategory.FILE_SEARCH,
-    "Grep": ToolCategory.FILE_SEARCH,
+    #"Glob": ToolCategory.FILE_SEARCH,
+    #"Grep": ToolCategory.FILE_SEARCH,
     "mcp__router__native__glob": ToolCategory.FILE_SEARCH,
     "mcp__router__native__grep": ToolCategory.FILE_SEARCH,
     "mcp__router__serena__search_for_pattern": ToolCategory.FILE_SEARCH,
     "mcp__router__serena__find_file": ToolCategory.FILE_SEARCH,
 
-    # Shell (safe - read-only commands)
-    "mcp__router__native__bash": ToolCategory.SHELL_SAFE,
-
-    # Shell (dangerous - native Bash)
-    "Bash": ToolCategory.SHELL_DANGEROUS,
+    # Shell (dangerous - native Bash can execute arbitrary commands)
+    #"Bash": ToolCategory.SHELL_DANGEROUS,
+    "mcp__router__native__bash": ToolCategory.SHELL_DANGEROUS,
 
     # Web research
     "WebFetch": ToolCategory.WEB_RESEARCH,
