@@ -9,6 +9,9 @@ from unittest.mock import MagicMock
 import pytest
 
 # Add directories to path for imports
+# Add parent dir so 'lib' works as a package (from lib.config import X)
+sys.path.insert(0, str(Path(__file__).parent.parent))
+# Also add lib directly for legacy imports (from config import X)
 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
 sys.path.insert(0, str(Path(__file__).parent.parent / "hooks"))
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
