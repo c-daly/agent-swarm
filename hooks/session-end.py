@@ -13,7 +13,7 @@ from pathlib import Path
 
 # Add lib to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
-from stores.compression import compress_old_sessions
+from stores.compression import compress_old_sessions  # noqa: E402
 
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 CHARTS_SCRIPT = SCRIPTS_DIR / "charts.py"

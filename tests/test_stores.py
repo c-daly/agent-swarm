@@ -67,7 +67,7 @@ def test_tool_call_record_dataclass():
 
 
 # Validation tests
-from lib.stores.validation import validate_day_summary, validate_tool_call
+from lib.stores.validation import validate_day_summary, validate_tool_call  # noqa: E402
 
 
 def test_validate_day_summary_clean():

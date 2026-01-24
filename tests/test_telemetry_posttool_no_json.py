@@ -6,13 +6,9 @@ not the legacy v2 JSON file.
 """
 
 import json
-import os
-import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 import pytest
 

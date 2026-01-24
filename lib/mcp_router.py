@@ -837,9 +837,9 @@ class MCPRouter:
                         result = {"content": [{"type": "text", "text": f"Error: Unknown backend prefix: {prefix}"}], "isError": True}
                     else:
                         _router_log("socket", f"{log_prefix} Routing to backend={destination} tool={actual_tool}")
-                        route_start = time.time()
+                        _route_start = time.time()  # noqa: F841 - kept for future duration logging
                         response = self.route(destination, actual_tool, args)
-                        route_duration = int((time.time() - route_start) * 1000)
+                        route_duration = int((time.time() - _route_start) * 1000)
                         _router_log("socket", f"{log_prefix} Backend responded in {route_duration}ms")
 
                         backend_result = response.full
@@ -1142,7 +1142,7 @@ class MCPRouter:
             RouterResponse with structured summary and full response
         """
         import time
-        route_start = time.time()
+        _route_start = time.time()  # noqa: F841 - kept for future duration logging
         correlation_id = self._generate_correlation_id(destination, tool_name, args)
         _router_log("route", f"ENTER dest={destination} tool={tool_name} corr_id={correlation_id}")
 

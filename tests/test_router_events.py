@@ -1,8 +1,7 @@
 # /home/fearsidhe/.claude/plugins/agent-swarm/tests/test_router_events.py
-import pytest
 import sys
 sys.path.insert(0, '/home/fearsidhe/.claude/plugins/agent-swarm/lib')
-from mcp_router import MCPRouter
+from mcp_router import MCPRouter  # noqa: E402
 
 def test_router_event_publish():
     router = MCPRouter()

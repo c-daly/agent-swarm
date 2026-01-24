@@ -3,7 +3,6 @@
 from datetime import date
 from unittest.mock import Mock
 
-import pytest
 
 from lib.charts import (
     render_daily_summary,
@@ -21,7 +20,6 @@ from lib.charts import (
 from lib.telemetry_service import TelemetryService
 from lib.stores.interfaces import DaySummary, ToolSummary, AnalyticsStore
 from lib.stores.duckdb_store import DuckDBStore
-from lib.stores.validation import ValidationResult
 
 
 class TestFormatConfidence:
@@ -234,7 +232,7 @@ class TestRenderWeeklyTrend:
         mock_store.get_daily_summary.return_value = None
         service = TelemetryService(store=mock_store)
 
-        output = render_weekly_trend(service, "2025-01-15")
+        _output = render_weekly_trend(service, "2025-01-15") # noqa: F841 - call verifies side effects
 
         # Should have called for 7 days
         assert mock_store.get_daily_summary.call_count == 7

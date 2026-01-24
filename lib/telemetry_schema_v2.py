@@ -14,9 +14,8 @@ Into a single coherent structure with:
 - filters{} for dashboard dropdowns
 """
 
-from dataclasses import dataclass, field
 from datetime import datetime, date, timezone
-from typing import TypedDict, Optional, Any
+from typing import TypedDict
 import json
 from pathlib import Path
 
@@ -285,7 +284,6 @@ def merge_calls(target: CallData, source: CallData) -> None:
 
 def recompute_aggregates(telemetry: TelemetryV2) -> None:
     """Recompute all aggregate statistics from days data."""
-    from datetime import timedelta
     
     today = date.today()
     days = telemetry.get("days", {})

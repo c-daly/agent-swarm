@@ -20,7 +20,7 @@ try:
     from debug_workflow import DebugWorkflow
     from pr_comment_workflow import PRCommentWorkflow
     from iterate_workflow import is_tool_allowed as iterate_is_tool_allowed, is_active as iterate_is_active
-except ImportError as e:
+except ImportError:
     # Fail open if modules not available
     def workflow_get_state(wf_id):
         return None

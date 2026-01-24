@@ -4,11 +4,10 @@ Verifies that the dashboard serve endpoint returns v3 schema data
 from DuckDB without falling back to JSON file reads.
 """
 
-import json
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -161,7 +160,7 @@ class TestDuckDBTimestampHandling:
         import sys
         sys.path.insert(0, str(Path(__file__).parent.parent))
 
-        from scripts.charts import load_telemetry, _duckdb_store
+        from scripts.charts import load_telemetry, _duckdb_store  # noqa: E402
 
         if _duckdb_store is None:
             pytest.skip("DuckDB not available")
@@ -186,10 +185,10 @@ class TestChartsGeneration:
 
     def test_chart_realtime_telemetry_no_error(self):
         """chart_realtime_telemetry() should not raise TypeError on datetime."""
-        import sys
+        import sys  # noqa: E402
         sys.path.insert(0, str(Path(__file__).parent.parent))
 
-        from scripts.charts import chart_realtime_telemetry, _duckdb_store
+        from scripts.charts import chart_realtime_telemetry, _duckdb_store  # noqa: E402
 
         if _duckdb_store is None:
             pytest.skip("DuckDB not available")
@@ -204,10 +203,10 @@ class TestChartsGeneration:
 
     def test_dashboard_generation_no_error(self):
         """Dashboard generation should complete without datetime errors."""
-        import sys
+        import sys  # noqa: E402
         sys.path.insert(0, str(Path(__file__).parent.parent))
 
-        from scripts.charts import load_telemetry, _duckdb_store
+        from scripts.charts import load_telemetry, _duckdb_store  # noqa: E402
 
         if _duckdb_store is None:
             pytest.skip("DuckDB not available")
@@ -220,6 +219,6 @@ class TestChartsGeneration:
             ts = e.get("ts", "")
             try:
                 # This should work after the fix
-                ts_str = ts[:19] if isinstance(ts, str) else ts.isoformat()[:19]
+                _ts_str = ts[:19] if isinstance(ts, str) else ts.isoformat()[:19]
             except TypeError as err:
                 pytest.fail(f"Timestamp handling failed: {err}")

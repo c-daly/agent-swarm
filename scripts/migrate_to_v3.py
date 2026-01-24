@@ -14,15 +14,15 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Iterator
 
 # Add both lib and project root to path
 lib_dir = Path(__file__).parent.parent / "lib"
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(lib_dir))
 sys.path.insert(0, str(project_root))
-from lib.stores.events import ToolCallEvent
-from lib.stores.jsonl_writer import JSONLWriter
+from lib.stores.events import ToolCallEvent  # noqa: E402
+from lib.stores.jsonl_writer import JSONLWriter  # noqa: E402
 
 
 DEFAULT_SOURCE = Path.home() / ".claude" / "projects"
@@ -254,11 +254,11 @@ def main():
     
     args = parser.parse_args()
     
-    print(f"📊 Migrating telemetry to v3 format")
+    print("📊 Migrating telemetry to v3 format")
     print(f"   Source: {args.source}")
     print(f"   Dest:   {args.dest}")
     if args.dry_run:
-        print(f"   (DRY RUN - no files will be written)")
+        print("   (DRY RUN - no files will be written)")
     print()
     
     if not args.source.exists():
@@ -268,7 +268,7 @@ def main():
     stats = migrate(args.source, args.dest, args.dry_run)
     
     print()
-    print(f"✅ Migration complete:")
+    print("✅ Migration complete:")
     print(f"   Files processed: {stats['files_processed']}")
     print(f"   Files skipped:   {stats['files_skipped']}")
     print(f"   Events written:  {stats['events_written']}")

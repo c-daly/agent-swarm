@@ -11,12 +11,12 @@ import pytest
 pytestmark = pytest.mark.skip(
     reason="Integration test: CLI tests require file-based state (iterate_state.py)"
 )
-from pathlib import Path
-import sys
+from pathlib import Path  # noqa: E402
+import sys  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
-from iterate_state import (
+from iterate_state import (  # noqa: E402
     TaskStatus,
     TaskSource,
     PRIORITY_TEST_FAILURE,
@@ -546,8 +546,8 @@ class TestSaveQueue:
 
     def test_save_queue_creates_queue_key(self, tmp_path, monkeypatch):
         """save_queue creates 'queue' key in session state."""
-        from decomposer import TaskPriority
-        from iterate_state import save_queue, TaskQueue, Task, TaskStatus, TaskSource
+        from decomposer import TaskPriority  # noqa: E402
+        from iterate_state import save_queue, TaskQueue, Task, TaskStatus, TaskSource  # noqa: E402
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()
@@ -578,7 +578,7 @@ class TestSaveQueue:
 
     def test_save_queue_preserves_existing_state(self, tmp_path, monkeypatch):
         """save_queue doesn't overwrite other state keys."""
-        from iterate_state import save_queue, TaskQueue
+        from iterate_state import save_queue, TaskQueue  # noqa: E402
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()
@@ -598,8 +598,8 @@ class TestSaveQueue:
 
     def test_save_queue_serializes_prs(self, tmp_path, monkeypatch):
         """save_queue includes PR state."""
-        from decomposer import TaskPriority
-        from iterate_state import save_queue, TaskQueue, Task, TaskStatus, TaskSource
+        from decomposer import TaskPriority  # noqa: E402
+        from iterate_state import save_queue, TaskQueue, Task, TaskStatus, TaskSource  # noqa: E402
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()
@@ -629,7 +629,7 @@ class TestSaveQueue:
 
     def test_save_queue_serializes_completed_failed(self, tmp_path, monkeypatch):
         """save_queue includes completed and failed lists."""
-        from iterate_state import save_queue, TaskQueue
+        from iterate_state import save_queue, TaskQueue  # noqa: E402
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()
@@ -653,7 +653,7 @@ class TestLoadQueue:
 
     def test_load_queue_returns_empty_if_no_queue_key(self, tmp_path, monkeypatch):
         """load_queue returns empty TaskQueue if no queue state."""
-        from iterate_state import load_queue, TaskQueue
+        from iterate_state import load_queue, TaskQueue  # noqa: E402
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()
@@ -669,7 +669,7 @@ class TestLoadQueue:
 
     def test_load_queue_returns_empty_if_no_file(self, tmp_path, monkeypatch):
         """load_queue returns empty TaskQueue if no session file."""
-        from iterate_state import load_queue, TaskQueue
+        from iterate_state import load_queue, TaskQueue  # noqa: E402
 
         state_file = tmp_path / ".state" / "session.json"
         monkeypatch.setattr("iterate_state.SESSION_FILE", state_file)
@@ -680,7 +680,7 @@ class TestLoadQueue:
 
     def test_load_queue_restores_tasks(self, tmp_path, monkeypatch):
         """load_queue restores task data."""
-        from iterate_state import load_queue, TaskStatus
+        from iterate_state import load_queue, TaskStatus  # noqa: E402
 
         # Mock workflow_client to return queue data
         queue_data = {
@@ -729,7 +729,7 @@ class TestLoadQueue:
 
     def test_load_queue_restores_prs(self, tmp_path, monkeypatch):
         """load_queue restores PR state."""
-        from iterate_state import load_queue
+        from iterate_state import load_queue  # noqa: E402
 
         # Mock workflow_client to return queue data
         queue_data = {
@@ -763,7 +763,7 @@ class TestLoadQueue:
 
     def test_load_queue_restores_completed_failed(self, tmp_path, monkeypatch):
         """load_queue restores completed and failed lists."""
-        from iterate_state import load_queue
+        from iterate_state import load_queue  # noqa: E402
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()
@@ -785,7 +785,7 @@ class TestLoadQueue:
 
     def test_load_queue_handles_malformed_data(self, tmp_path, monkeypatch):
         """load_queue handles missing fields gracefully."""
-        from iterate_state import load_queue
+        from iterate_state import load_queue  # noqa: E402
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()
@@ -808,8 +808,8 @@ class TestLoadQueue:
 
     def test_save_load_roundtrip(self, tmp_path, monkeypatch):
         """save then load preserves queue state."""
-        from decomposer import TaskPriority
-        from iterate_state import save_queue, load_queue, TaskQueue, Task, TaskStatus, TaskSource
+        from decomposer import TaskPriority  # noqa: E402
+        from iterate_state import save_queue, load_queue, TaskQueue, Task, TaskStatus, TaskSource  # noqa: E402
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()
@@ -855,7 +855,7 @@ class TestQueueAddCLI:
 
     def test_queue_add_creates_task(self, tmp_path, monkeypatch, capsys):
         """queue add creates a new task."""
-        from iterate_state import main, load_queue, TaskStatus
+        from iterate_state import main, load_queue, TaskStatus  # noqa: E402
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()
@@ -863,8 +863,6 @@ class TestQueueAddCLI:
         state_file.write_text('{}')
 
         # Clear workflow state before test
-        import lib.workflow_client as wc
-        sm._states.clear()
 
         # Mock both session file and workflow_client
         stored_state = {}
@@ -891,7 +889,7 @@ class TestQueueAddCLI:
 
     def test_queue_add_with_pr(self, tmp_path, monkeypatch):
         """queue add --pr creates task in specific PR."""
-        from iterate_state import main, load_queue
+        from iterate_state import main, load_queue  # noqa: E402
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()
@@ -910,7 +908,7 @@ class TestQueueAddCLI:
 
     def test_queue_add_with_priority(self, tmp_path, monkeypatch):
         """queue add --priority sets task priority."""
-        from iterate_state import main, load_queue
+        from iterate_state import main, load_queue  # noqa: E402
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()
@@ -918,8 +916,6 @@ class TestQueueAddCLI:
         state_file.write_text('{}')
 
         # Clear workflow state before test
-        import lib.workflow_client as wc
-        sm._states.clear()
 
         # Mock both session file and workflow_client
         stored_state = {}
@@ -948,8 +944,8 @@ class TestQueueListCLI:
 
     def test_queue_list_shows_tasks(self, tmp_path, monkeypatch, capsys):
         """queue list displays tasks."""
-        from iterate_state import main, save_queue, TaskQueue, Task, TaskStatus, TaskSource
-        from decomposer import TaskPriority
+        from iterate_state import main, save_queue, TaskQueue, Task, TaskStatus, TaskSource  # noqa: E402
+        from decomposer import TaskPriority  # noqa: E402
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()
@@ -984,8 +980,8 @@ class TestQueueListCLI:
 
     def test_queue_list_filters_by_status(self, tmp_path, monkeypatch, capsys):
         """queue list --status filters tasks."""
-        from iterate_state import main, save_queue, TaskQueue, Task, TaskStatus, TaskSource
-        from decomposer import TaskPriority
+        from iterate_state import main, save_queue, TaskQueue, Task, TaskStatus, TaskSource  # noqa: E402
+        from decomposer import TaskPriority  # noqa: E402
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()
@@ -1035,8 +1031,8 @@ class TestQueueShowCLI:
 
     def test_queue_show_displays_task(self, tmp_path, monkeypatch, capsys):
         """queue show displays task details."""
-        from iterate_state import main, save_queue, TaskQueue, Task, TaskStatus, TaskSource
-        from decomposer import TaskPriority
+        from iterate_state import main, save_queue, TaskQueue, Task, TaskStatus, TaskSource  # noqa: E402
+        from decomposer import TaskPriority  # noqa: E402
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()
@@ -1075,8 +1071,8 @@ class TestQueueRemoveCLI:
 
     def test_queue_remove_removes_pending_task(self, tmp_path, monkeypatch):
         """queue remove removes a pending task."""
-        from iterate_state import main, save_queue, load_queue, TaskQueue, Task, TaskStatus, TaskSource
-        from decomposer import TaskPriority
+        from iterate_state import main, save_queue, load_queue, TaskQueue, Task, TaskStatus, TaskSource  # noqa: E402
+        from decomposer import TaskPriority  # noqa: E402
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()
@@ -1113,8 +1109,8 @@ class TestQueueEligibleCLI:
 
     def test_queue_eligible_shows_eligible_tasks(self, tmp_path, monkeypatch, capsys):
         """queue eligible shows tasks ready for work."""
-        from iterate_state import main, save_queue, TaskQueue, Task, TaskStatus, TaskSource
-        from decomposer import TaskPriority
+        from iterate_state import main, save_queue, TaskQueue, Task, TaskStatus, TaskSource  # noqa: E402
+        from decomposer import TaskPriority  # noqa: E402
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()
@@ -1151,8 +1147,8 @@ class TestPRListCLI:
 
     def test_pr_list_shows_prs(self, tmp_path, monkeypatch, capsys):
         """pr list shows all PRs."""
-        from iterate_state import main, save_queue, TaskQueue, Task, TaskStatus, TaskSource
-        from decomposer import TaskPriority
+        from iterate_state import main, save_queue, TaskQueue, Task, TaskStatus, TaskSource  # noqa: E402
+        from decomposer import TaskPriority  # noqa: E402
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()
@@ -1189,8 +1185,8 @@ class TestPRShowCLI:
 
     def test_pr_show_displays_pr(self, tmp_path, monkeypatch, capsys):
         """pr show displays PR details."""
-        from iterate_state import main, save_queue, TaskQueue, Task, TaskStatus, TaskSource
-        from decomposer import TaskPriority
+        from iterate_state import main, save_queue, TaskQueue, Task, TaskStatus, TaskSource  # noqa: E402
+        from decomposer import TaskPriority  # noqa: E402
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()

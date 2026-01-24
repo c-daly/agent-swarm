@@ -11,8 +11,7 @@ import pytest
 pytestmark = pytest.mark.skip(
     reason="Integration test: requires response format refactoring for MCP router"
 )
-import json
-from unittest.mock import MagicMock, patch
+import json  # noqa: E402
 
 
 class TestSummaryOnlyResponse:

@@ -24,14 +24,14 @@ STATE_DIR = Path(_state_dir_override) if _state_dir_override else Path.home() / 
 LOG_FILE = STATE_DIR / "iterate.log"
 
 # Ensure lib is in path for workflow_client import (needed when run standalone)
-import sys
+import sys  # noqa: E402
 lib_dir = Path(__file__).parent
 if str(lib_dir) not in sys.path:
     sys.path.insert(0, str(lib_dir))
 
 # Import workflow client for state management via MCP router
-import workflow_client
-from workflow_base import (
+import workflow_client  # noqa: E402
+from workflow_base import (  # noqa: E402
     WorkflowPhase, WorkflowDefinition, WorkflowEngine,
     PhaseTransition, KickbackReason
 )
@@ -1263,7 +1263,7 @@ def decompose_spec_to_queue() -> list[dict]:
     import sys
     scripts_dir = Path(__file__).parent.parent / "scripts"
     sys.path.insert(0, str(scripts_dir))
-    from decomposer import decompose_spec
+    from decomposer import decompose_spec  # noqa: E402
 
     # Generate a PR ID for task grouping
     pr_id = state.get("pr_id", "workflow-" + state.get("task", "default")[:20])

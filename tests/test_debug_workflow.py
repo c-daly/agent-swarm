@@ -4,13 +4,12 @@
 import sys
 from pathlib import Path
 
-import pytest
 
 # Ensure lib is in path
 lib_dir = Path(__file__).parent.parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
-from debug_workflow import DebugWorkflow, DebugPhase
+from debug_workflow import DebugWorkflow  # noqa: E402
 
 
 def test_debug_workflow_phases():

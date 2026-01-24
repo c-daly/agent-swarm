@@ -670,7 +670,7 @@ def chart_efficiency_trend():
             if ts:
                 dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
                 return dt.astimezone(EST)
-        except:
+        except Exception:
             pass
         return None
 
@@ -911,7 +911,7 @@ def chart_tool_usage():
             if ts:
                 dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
                 return dt.astimezone(EST)
-        except:
+        except Exception:
             pass
         return None
 
@@ -1176,7 +1176,6 @@ def chart_subagents(session_filter=None):
     
     Uses DuckDB for v3 data, falls back to telemetry.json for v1/v2.
     """
-    from datetime import datetime, timedelta, timezone
 
     # Try v3 DuckDB first
     if _duckdb_store:
@@ -1298,7 +1297,7 @@ def chart_token_trend():
             if ts:
                 dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
                 return dt.astimezone(EST)
-        except:
+        except Exception:
             pass
         return None
 
@@ -1897,7 +1896,7 @@ def chart_realtime_telemetry():
 
 def chart_latency_by_tool():
     """Chart average latency (duration) by tool - find slow tools with time filtering."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timezone
     
     telemetry = load_telemetry()
     if telemetry is None:
@@ -1923,7 +1922,7 @@ def chart_latency_by_tool():
                     ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
                     if (now - ts).total_seconds() > cutoff_hours * 3600:
                         continue
-                except:
+                except Exception:
                     pass
             
             tool = e.get("tool", "unknown")
@@ -2417,7 +2416,7 @@ def chart_activity_heatmap():
 
 def chart_native_vs_mcp():
     """Compare native Claude tools vs MCP tools with time filtering."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timezone
 
     telemetry = load_telemetry()
     if telemetry is None:
@@ -2443,7 +2442,7 @@ def chart_native_vs_mcp():
                     ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
                     if (now - ts).total_seconds() > cutoff_hours * 3600:
                         continue
-                except:
+                except Exception:
                     pass
 
             backend = e.get("backend", "unknown")
@@ -2650,7 +2649,7 @@ def chart_token_efficiency():
                     ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
                     if (now - ts).total_seconds() > cutoff_hours * 3600:
                         continue
-                except:
+                except Exception:
                     pass
 
             tool = e.get("tool", "unknown")
@@ -2834,7 +2833,7 @@ def chart_compression_ratio():
                     ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
                     if (now - ts).total_seconds() > cutoff_hours * 3600:
                         continue
-                except:
+                except Exception:
                     pass
 
             full_chars += e.get("full_size", 0)
@@ -3027,7 +3026,7 @@ def chart_tokens_saved():
                     ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
                     if (now - ts).total_seconds() > cutoff_hours * 3600:
                         continue
-                except:
+                except Exception:
                     pass
 
             saved = event.get("full_size", 0) - event.get("summary_size", 0)
@@ -3464,7 +3463,7 @@ def chart_blocked_tools():
                     ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
                     if (now - ts).total_seconds() > cutoff_hours * 3600:
                         continue
-                except:
+                except Exception:
                     pass
 
             tool = e.get("tool", "unknown")
@@ -3904,7 +3903,7 @@ python3 ~/.claude/plugins/agent-swarm/scripts/charts.py efficiency
     dashboard_path.write_text(html, encoding='utf-8')
 
     print(f"\n✅ Dashboard generated: {dashboard_path}")
-    print(f"\n🌐 Open in browser:")
+    print("\n🌐 Open in browser:")
     print(f"   file://{dashboard_path.absolute()}")
 
     return dashboard_path

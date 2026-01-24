@@ -19,11 +19,10 @@ Usage:
 import sys
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Optional
 
 # Ensure workflow_client is importable
 sys.path.insert(0, str(Path(__file__).parent))
-from workflow_client import agent_get_state, agent_set_state, list_agents
+from workflow_client import agent_get_state, agent_set_state, list_agents  # noqa: E402
 
 
 # Error keywords that indicate failure

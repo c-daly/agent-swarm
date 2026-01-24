@@ -6,7 +6,7 @@ Merges historical data with existing v2 telemetry.json, preserving all data.
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 from lib.telemetry_schema_v2 import (
@@ -15,9 +15,6 @@ from lib.telemetry_schema_v2 import (
     ensure_day,
     recompute_aggregates,
     update_filter_options,
-    default_token_data,
-    default_call_data,
-    default_summarization_data,
 )
 
 STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"

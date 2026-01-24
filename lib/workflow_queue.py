@@ -23,7 +23,7 @@ from typing import Optional
 scripts_dir = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(scripts_dir))
 
-from iterate_state import (
+from iterate_state import (  # noqa: E402
     Task,
     TaskQueue,  # Used for type annotation
     TaskStatus,

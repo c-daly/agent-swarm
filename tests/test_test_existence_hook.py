@@ -4,7 +4,6 @@
 import json
 import subprocess
 from pathlib import Path
-import pytest
 
 
 HOOK_PATH = Path(__file__).parent.parent / "hooks" / "test-existence-enforcement.py"

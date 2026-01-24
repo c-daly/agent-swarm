@@ -151,13 +151,13 @@ def _call_tool(tool_name: str, arguments: dict) -> Any:
                     text = content[0].get("text", "")
                     try:
                         parsed = json.loads(text)
-                        _log(tool_name, f"EXIT: success, parsed JSON result")
+                        _log(tool_name, "EXIT: success, parsed JSON result")
                         return parsed
                     except json.JSONDecodeError:
                         _log(tool_name, f"EXIT: success, text result: {text[:100]}...")
                         return text
 
-            _log(tool_name, f"EXIT: success, raw result")
+            _log(tool_name, "EXIT: success, raw result")
             return result
 
     except socket.timeout:

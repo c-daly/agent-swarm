@@ -4,13 +4,12 @@
 import sys
 from pathlib import Path
 
-import pytest
 
 # Add lib to path
 lib_dir = Path(__file__).parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
-from mcp_bridge import native_glob, native_grep
+from mcp_bridge import native_glob, native_grep  # noqa: E402
 
 
 class TestNativeGlob:
@@ -84,7 +83,7 @@ class TestNativeGrep:
 
     def test_timeout_error(self, monkeypatch):
         """Handles subprocess timeout."""
-        import subprocess
+        import subprocess  # noqa: E402
         def raise_timeout(*args, **kwargs):
             raise subprocess.TimeoutExpired(cmd="rg", timeout=30)
         monkeypatch.setattr(subprocess, "run", raise_timeout)
@@ -93,7 +92,7 @@ class TestNativeGrep:
 
     def test_rg_not_found(self, monkeypatch):
         """Handles missing ripgrep."""
-        import subprocess
+        import subprocess  # noqa: E402
         def raise_not_found(*args, **kwargs):
             raise FileNotFoundError()
         monkeypatch.setattr(subprocess, "run", raise_not_found)
@@ -102,7 +101,7 @@ class TestNativeGrep:
 
     def test_generic_error(self, monkeypatch):
         """Handles generic exceptions."""
-        import subprocess
+        import subprocess  # noqa: E402
         def raise_error(*args, **kwargs):
             raise RuntimeError("test error")
         monkeypatch.setattr(subprocess, "run", raise_error)

@@ -1,15 +1,12 @@
 """Tests for the spec decomposer."""
 
 import json
-import pytest
 from pathlib import Path
-from unittest.mock import patch
-from datetime import datetime
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
-from decomposer import (
+from decomposer import (  # noqa: E402
     decompose_spec,
     parse_spec_sections,
     generate_task,
@@ -261,8 +258,8 @@ Something.
         spec_file.write_text(spec_content)
 
         # Import main and run
-        from decomposer import main
-        import sys
+        from decomposer import main  # noqa: E402
+        import sys  # noqa: E402
 
         old_argv = sys.argv
         try:
@@ -288,8 +285,8 @@ Something.
         spec_file.write_text(spec_content)
         output_file = tmp_path / "tasks.json"
 
-        from decomposer import main
-        import sys
+        from decomposer import main  # noqa: E402
+        import sys  # noqa: E402
 
         old_argv = sys.argv
         try:

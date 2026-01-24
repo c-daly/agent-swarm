@@ -20,9 +20,9 @@ import pytest
 pytestmark = pytest.mark.skip(
     reason="Integration test: phase selection tests need CLI/workflow refactoring"
 )
-from pathlib import Path
+from pathlib import Path  # noqa: E402
 
-import pytest
+import pytest  # noqa: E402
 
 # Add lib to path
 lib_dir = Path(__file__).parent.parent / "lib"
@@ -375,7 +375,7 @@ class TestPhaseAdvanceVerification:
 
     def test_cli_advance_enforces_verification(self):
         """CLI advance command should also enforce verification."""
-        import subprocess
+        import subprocess  # noqa: E402
         
         # Start workflow and move to TEST phase
         subprocess.run(

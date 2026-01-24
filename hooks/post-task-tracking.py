@@ -15,12 +15,18 @@ try:
     from hook_logging import log_error, log_warning, log_info, log_debug, ConfigError, StateError
 except ImportError:
     # Fallback: define minimal logging functions
-    def log_error(msg, **kw): pass
-    def log_warning(msg, **kw): pass
-    def log_info(msg, **kw): pass
-    def log_debug(msg, **kw): pass
-    class ConfigError(Exception): pass
-    class StateError(Exception): pass
+    def log_error(msg, **kw):
+        pass
+    def log_warning(msg, **kw):
+        pass
+    def log_info(msg, **kw):
+        pass
+    def log_debug(msg, **kw):
+        pass
+    class ConfigError(Exception):
+        pass
+    class StateError(Exception):
+        pass
 
 # Import workflow client for state tracking
 try:
@@ -214,7 +220,7 @@ def main():
                 # DEBUG: Confirm tracking
                 try:
                     with open(debug_file, "a") as f:
-                        f.write(f"  ✅ Tracked successfully\n")
+                        f.write("  ✅ Tracked successfully\n")
                 except Exception as e:
                     log_warning(f"Caught exception: {e}")
             except Exception as e:

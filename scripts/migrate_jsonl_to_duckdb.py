@@ -19,7 +19,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(project_root / "lib"))
 
-from lib.telemetry_service import TelemetryService
+from lib.telemetry_service import TelemetryService  # noqa: E402
 
 
 def migrate_jsonl_to_duckdb(dry_run: bool = False) -> dict:
@@ -91,10 +91,10 @@ def migrate_jsonl_to_duckdb(dry_run: bool = False) -> dict:
                         file_events += 1
                         stats["events"] += 1
                         
-                    except json.JSONDecodeError as e:
+                    except json.JSONDecodeError:
                         stats["errors"] += 1
                         file_errors += 1
-                    except Exception as e:
+                    except Exception:
                         stats["errors"] += 1
                         file_errors += 1
             
@@ -123,9 +123,9 @@ def main():
     print(f"  Errors: {stats['errors']}")
     
     if dry_run:
-        print(f"\nRun without --dry-run to perform migration.")
+        print("\nRun without --dry-run to perform migration.")
     else:
-        print(f"\nData now in: ~/.claude/plugins/agent-swarm/.state/telemetry.duckdb")
+        print("\nData now in: ~/.claude/plugins/agent-swarm/.state/telemetry.duckdb")
 
 
 if __name__ == "__main__":

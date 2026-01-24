@@ -116,7 +116,7 @@ def _extract_file_references(text: str) -> set:
     """
     # Pattern: word characters + / or . + file extension
     file_pattern = r'\b[\w/]+\.(py|js|ts|tsx|go|rs|java|cpp|h|json|yaml|yml|md|txt)\b'
-    matches = re.findall(file_pattern, text, re.IGNORECASE)
+    _matches = re.findall(file_pattern, text, re.IGNORECASE)  # noqa: F841
 
     # Return full matches (with extension), not just the extension group
     full_matches = re.findall(r'\b[\w/]+\.\w+\b', text)

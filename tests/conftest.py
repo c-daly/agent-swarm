@@ -4,7 +4,6 @@ import tempfile
 from pathlib import Path
 from copy import deepcopy
 from typing import Any, Optional
-from unittest.mock import MagicMock
 
 import pytest
 

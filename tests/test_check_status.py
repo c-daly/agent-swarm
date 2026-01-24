@@ -4,15 +4,13 @@
 import sys
 from pathlib import Path
 
-import pytest
 
 # Ensure lib is in path
 lib_dir = Path(__file__).parent.parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
-from check_status import (
-    CheckStatusResult, CIStatus, ReviewCheckResult,
-    check_ci_status, check_review_comments, CheckStatusGate, CICheckResult
+from check_status import (  # noqa: E402
+    CIStatus, check_ci_status, check_review_comments, CheckStatusGate
 )
 
 

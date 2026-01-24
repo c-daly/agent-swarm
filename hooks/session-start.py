@@ -23,12 +23,18 @@ try:
     from hook_logging import log_error, log_warning, log_info, log_debug, ConfigError, StateError
 except ImportError:
     # Fallback: define minimal logging functions
-    def log_error(msg, **kw): pass
-    def log_warning(msg, **kw): pass
-    def log_info(msg, **kw): pass
-    def log_debug(msg, **kw): pass
-    class ConfigError(Exception): pass
-    class StateError(Exception): pass
+    def log_error(msg, **kw):
+        pass
+    def log_warning(msg, **kw):
+        pass
+    def log_info(msg, **kw):
+        pass
+    def log_debug(msg, **kw):
+        pass
+    class ConfigError(Exception):
+        pass
+    class StateError(Exception):
+        pass
 
 try:
     from workflow_client import workflow_get_state, workflow_set_state, agent_set_state
@@ -58,7 +64,6 @@ def reset_enforcement_counters(agent_id: str | None = None):
     state_dir = Path.home() / ".claude/plugins/agent-swarm/.state"
     # DISABLED: Session state file no longer used
     # state_file = state_dir / "session.json"
-    state_file = None
     compaction_state_file = state_dir / "compaction_state.json"
 
     try:

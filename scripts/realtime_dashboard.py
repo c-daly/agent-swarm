@@ -10,7 +10,6 @@ Usage:
 """
 
 import sys
-import json
 from pathlib import Path
 
 # Add project root and lib to path for service imports
@@ -18,7 +17,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(project_root / "lib"))
 
-from lib.telemetry_service import TelemetryService
+from lib.telemetry_service import TelemetryService  # noqa: E402
 
 STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
 TELEMETRY_FILE = STATE_DIR / "telemetry.json"  # Keep for fallback
@@ -2476,7 +2475,7 @@ def generate_dashboard():
     DASHBOARD_FILE.write_text(html, encoding='utf-8')
 
     print(f"Dashboard generated: {DASHBOARD_FILE}")
-    print(f"\nOpen in browser:")
+    print("\nOpen in browser:")
     print(f"  file://{DASHBOARD_FILE.absolute()}")
 
     return DASHBOARD_FILE
@@ -2751,7 +2750,6 @@ def serve_dashboard(port: int = 8765):
 
                 try:
                     from pathlib import Path
-                    import glob as glob_mod
 
                     # Parse query params
                     from urllib.parse import urlparse, parse_qs
@@ -2802,7 +2800,7 @@ def serve_dashboard(port: int = 8765):
                                             if ts:
                                                 agent_timestamps.append(ts)
                                             break
-                            except:
+                            except Exception:
                                 pass
 
                         # Strategy: Include recent files FIRST, then add files that overlap with agent range
@@ -2832,7 +2830,7 @@ def serve_dashboard(port: int = 8765):
                                                 if ts and min_agent_time <= ts <= max_agent_time:
                                                     selected_main.add(mf)
                                                 break
-                                except:
+                                except Exception:
                                     pass
 
                         main_to_process = list(selected_main)
@@ -3005,7 +3003,7 @@ def serve_dashboard(port: int = 8765):
                     if not str(file_path).startswith(str(STATE_DIR.resolve())):
                         self.send_error(403, "Forbidden")
                         return
-                except:
+                except Exception:
                     self.send_error(400, "Bad request")
                     return
 
@@ -3039,19 +3037,19 @@ def serve_dashboard(port: int = 8765):
     with socketserver.TCPServer(("", port), DashboardHandler) as httpd:
         url = f"http://localhost:{port}"
         print(f"\n{'='*50}")
-        print(f"  MCP Router Dashboard Server")
+        print("  MCP Router Dashboard Server")
         print(f"{'='*50}")
         print(f"\n  Dashboard: {url}")
         print(f"  Charts:    {url}/charts/dashboard.html")
         print(f"  Telemetry: {url}/telemetry")
         print(f"  History:   {url}/history")
-        print(f"\n  Press Ctrl+C to stop")
+        print("\n  Press Ctrl+C to stop")
         print(f"{'='*50}\n")
 
         # Open browser
         try:
             webbrowser.open(url)
-        except:
+        except Exception:
             pass
 
         try:
@@ -3070,14 +3068,14 @@ def main():
         serve_dashboard(port)
     else:
         path = generate_dashboard()
-        print(f"\nNote: For real-time updates, run with --serve flag:")
+        print("\nNote: For real-time updates, run with --serve flag:")
         print(f"  python3 {__file__} --serve")
 
         # Try to open in browser
         import webbrowser
         try:
             webbrowser.open(f"file://{path.absolute()}")
-        except:
+        except Exception:
             pass
 
 

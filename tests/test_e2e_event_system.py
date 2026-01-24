@@ -7,7 +7,7 @@ import pytest
 import sys
 sys.path.insert(0, '/home/fearsidhe/.claude/plugins/agent-swarm/lib')
 
-from workflow_client import call_tool, list_tools, _get_router_port
+from workflow_client import call_tool, list_tools, _get_router_port  # noqa: E402
 
 
 @pytest.fixture
@@ -36,7 +36,7 @@ def test_call_tool_serena(router_running):
         "recursive": False
     })
     assert result is not None
-    print(f"PASS: serena__list_dir returned result")
+    print("PASS: serena__list_dir returned result")
 
 
 def test_call_tool_native_bash(router_running):
@@ -46,7 +46,7 @@ def test_call_tool_native_bash(router_running):
     })
     assert result is not None
     assert "event-system-test" in str(result)
-    print(f"PASS: native__bash executed correctly")
+    print("PASS: native__bash executed correctly")
 
 
 def test_pseudo_tools_registered(router_running):
@@ -68,7 +68,7 @@ def test_pseudo_tools_registered(router_running):
     if missing:
         pytest.skip(f"Pseudo-tools not found (router restart needed): {missing}")
 
-    print(f"PASS: All pseudo-tools registered")
+    print("PASS: All pseudo-tools registered")
 
 
 if __name__ == "__main__":

@@ -4,15 +4,14 @@
 import sys
 from pathlib import Path
 
-import pytest
 
 # Ensure lib is in path
 lib_dir = Path(__file__).parent.parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
-from adversary_gate import (
+from adversary_gate import (  # noqa: E402
     AdversaryObjection, ConfidenceLevel, ConfidenceScore,
-    AdversaryGate, ObjectionResult
+    AdversaryGate
 )
 
 

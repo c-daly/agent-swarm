@@ -1,8 +1,7 @@
 # /home/fearsidhe/.claude/plugins/agent-swarm/tests/test_event_client.py
-import pytest
 import sys
 sys.path.insert(0, '/home/fearsidhe/.claude/plugins/agent-swarm/lib')
-from workflow_client import generate_correlation_id
+from workflow_client import generate_correlation_id  # noqa: E402
 
 def test_generate_correlation_id_returns_string():
     cid = generate_correlation_id()

@@ -69,7 +69,7 @@ def find_agents(plugin_path: Path) -> list:
                 content = agent_file.read_text()
                 model = "unknown"
                 if "**Model**:" in content:
-                    model_line = [l for l in content.split("\n") if "**Model**:" in l]
+                    model_line = [line for line in content.split("\n") if "**Model**:" in line]
                     if model_line:
                         model = model_line[0].split(":")[-1].strip()
                 agents.append({"name": agent_file.stem, "model": model})

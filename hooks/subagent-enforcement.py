@@ -164,7 +164,7 @@ When done, return a summary:
 
 def build_test_writing_context(agent_id: str, task_desc: str, group: str) -> str:
     """Context injected when entering TEST_WRITING phase."""
-    return f"""
+    return """
 ## TEST_WRITING PHASE
 
 **Goal:** Write failing tests that define expected behavior.
@@ -181,7 +181,7 @@ def build_test_writing_context(agent_id: str, task_desc: str, group: str) -> str
 
 def build_implement_context(agent_id: str, task_desc: str, group: str) -> str:
     """Context injected when entering IMPLEMENT phase."""
-    return f"""
+    return """
 ## IMPLEMENT PHASE
 
 **Goal:** Write minimal code to make tests pass.
@@ -198,7 +198,7 @@ def build_implement_context(agent_id: str, task_desc: str, group: str) -> str:
 
 def build_test_context(agent_id: str, task_desc: str, group: str) -> str:
     """Context injected when entering TEST phase."""
-    return f"""
+    return """
 ## TEST PHASE
 
 **Goal:** Full verification - tests, lint, coverage. NO EDITING in this phase.

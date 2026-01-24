@@ -8,7 +8,7 @@ import pytest
 pytestmark = pytest.mark.skip(
     reason="Integration test: phase model tests need refactoring for MCP router"
 )
-from lib.phase_model import (
+from lib.phase_model import (  # noqa: E402
     Phase,
     ToolCategory,
     ITERATE_PHASES,

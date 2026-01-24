@@ -40,7 +40,7 @@ def rebuild():
     telemetry["daily_summaries"] = daily_summaries
     TELEMETRY_FILE.write_text(json.dumps(telemetry, indent=2))
 
-    print(f"\n✅ Rebuilt daily_summaries")
+    print("\n✅ Rebuilt daily_summaries")
     print(f"   Days with data: {len(daily_summaries)}")
     for date_str in sorted(daily_summaries.keys()):
         summary = daily_summaries[date_str]

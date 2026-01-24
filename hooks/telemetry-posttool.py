@@ -17,8 +17,8 @@ from pathlib import Path
 # Add project root to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from lib.stores.events import ToolCallEvent  # noqa: F401 - referenced by other hooks
-from lib.telemetry_service import TelemetryService
+from lib.stores.events import ToolCallEvent  # noqa: F401, E402 - referenced by other hooks
+from lib.telemetry_service import TelemetryService  # noqa: E402
 
 # Shared state files
 PENDING_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/telemetry_pending.json"

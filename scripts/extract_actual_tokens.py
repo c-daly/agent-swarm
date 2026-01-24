@@ -13,7 +13,7 @@ Usage:
 
 import json
 import argparse
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
 import sys
@@ -40,7 +40,7 @@ def parse_timestamp(ts: str) -> datetime | None:
                 micro, tz = parts[1].split("-")
                 ts = f"{parts[0]}.{micro[:6]}-{tz}"
         return datetime.fromisoformat(ts)
-    except:
+    except Exception:
         return None
 
 
@@ -243,7 +243,7 @@ def aggregate_by_day(entries: list[dict], sessions: dict) -> dict:
         # Parse date from ISO timestamp
         try:
             date = ts.split("T")[0] if "T" in ts else ts[:10]
-        except:
+        except Exception:
             continue
 
         day = daily[date]
@@ -377,7 +377,7 @@ def print_summary(daily_data: dict, session_absolutes: dict):
     total_cache_read = sum(d["cache_read"] for d in daily_data.values())
     total_cache_create = sum(d["cache_create"] for d in daily_data.values())
 
-    print(f"\nIncremental Token Breakdown (Delta-based):")
+    print("\nIncremental Token Breakdown (Delta-based):")
     print(f"  Input tokens:        {total_input:>15,}")
     print(f"  Output tokens:       {total_output:>15,}")
     print(f"  Cache read (hits):   {total_cache_read:>15,}")
@@ -388,7 +388,7 @@ def print_summary(daily_data: dict, session_absolutes: dict):
         print(f"  Cache hit rate:      {cache_hit_rate:>14.1f}%")
 
     # Session absolutes (cumulative final values)
-    print(f"\nSession Absolutes (Final cumulative per session):")
+    print("\nSession Absolutes (Final cumulative per session):")
     print(f"  Sessions:            {session_absolutes['sessions']:>15,}")
     print(f"  Total tokens:        {session_absolutes['total_tokens']:>15,}")
     print(f"  Input tokens:        {session_absolutes['input_tokens']:>15,}")

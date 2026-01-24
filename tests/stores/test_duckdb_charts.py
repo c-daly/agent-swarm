@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("duckdb")
-from lib.stores.duckdb_store import DuckDBStore
+from lib.stores.duckdb_store import DuckDBStore  # noqa: E402
 
 
 @pytest.fixture

@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
 
-from mcp_router import MCPRouter
+from mcp_router import MCPRouter  # noqa: E402
 
 
 @pytest.fixture
@@ -252,7 +252,7 @@ class TestIntegrationWithNativeTools:
 
     def test_native_tools_use_router(self):
         """native_tools functions route through router."""
-        from native_tools import _get_router
+        from native_tools import _get_router  # noqa: E402
 
         router = _get_router()
         assert router is not None

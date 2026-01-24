@@ -12,7 +12,7 @@ import sys
 # Add lib to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'lib'))
 
-from workflow_client import call_tool, list_tools, generate_correlation_id, _log
+from workflow_client import call_tool, list_tools, generate_correlation_id, _log  # noqa: E402
 
 
 def main():
@@ -64,7 +64,7 @@ def main():
 
         elif pseudo_tool == "router__publish":
             topic = tool_input.get("topic", "")
-            data = tool_input.get("data", {})
+            _ = tool_input.get("data", {})
             correlation_id = generate_correlation_id()
 
             # Would publish to event bus here

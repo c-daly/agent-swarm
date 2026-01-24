@@ -12,7 +12,7 @@ import sys
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from context.resolver import (
+from context.resolver import (  # noqa: E402
     resolve_context,
     get_agent_context,
     show_context_tree,

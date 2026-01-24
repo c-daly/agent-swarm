@@ -12,7 +12,7 @@ from pathlib import Path
 # Add context module to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from context.resolver import get_agent_context
+from context.resolver import get_agent_context  # noqa: E402
 
 
 def main():

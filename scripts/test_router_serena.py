@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
 
-from mcp_router import MCPRouter
+from mcp_router import MCPRouter  # noqa: E402
 
 
 def main():
@@ -39,10 +39,10 @@ def main():
         args={"name_path_pattern": "MCPRouter"}
     )
 
-    print(f"\nResponse:")
+    print("\nResponse:")
     print(f"  Summary: {response.summary}")
     print(f"  Correlation ID: {response.correlation_id}")
-    print(f"\n  Full response (first 500 chars):")
+    print("\n  Full response (first 500 chars):")
     import json
     full_str = json.dumps(response.full, indent=2)[:500]
     print(f"  {full_str}")

@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""
+MCP tool caller for subagents - restricted to router backends only.
+
+Usage:
+  mcp-call <tool_name> [json_args]
+
+Examples:
+  mcp-call serena__list_dir '{"relative_path": ".", "recursive": false}'
+  mcp-call serena__find_symbol '{"name_path_pattern": "main", "include_body": true}'
+  mcp-call context7__resolve-library-id '{"libraryName": "react"}'
+"""
+import json
+import sys
+import os
+
+# Add lib to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'lib'))
+
+from workflow_client import call_tool, list_tools
+
+# Allowed backend prefixes - only tools from these backends can be called
+ALLOWED_BACKENDS = {
+    "serena__",
+    "context7__",
+    "playwright__",
+    "workflow__",
+}
+
+# Explicitly blocked tools even within allowed backends
+BLOCKED_TOOLS = {
+    "serena__execute_shell_command",  # Shell execution
+    "playwright__browser_run_code",   # Code execution in browser
+    "native__bash",                   # Direct bash
+}
+
+
+def is_tool_allowed(tool_name: str) -> bool:
+    """Check if tool is allowed to be called."""
+    # Check blocked list first
+    if tool_name in BLOCKED_TOOLS:
+        return False
+
+    # Must match an allowed backend
+    for prefix in ALLOWED_BACKENDS:
+        if tool_name.startswith(prefix):
+            return True
+
+    return False
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: mcp-call <tool_name> [json_args]", file=sys.stderr)
+        print("\nAllowed backends:", file=sys.stderr)
+        for backend in sorted(ALLOWED_BACKENDS):
+            print(f"  - {backend}*", file=sys.stderr)
+        print("\nExamples:", file=sys.stderr)
+        print("  mcp-call serena__list_dir '{\"relative_path\": \".\"}'", file=sys.stderr)
+        print("  mcp-call serena__find_symbol '{\"name_path_pattern\": \"main\"}'", file=sys.stderr)
+        sys.exit(1)
+
+    tool_name = sys.argv[1]
+
+    # Security: validate tool is allowed
+    if not is_tool_allowed(tool_name):
+        print(f"Error: Tool '{tool_name}' is not in the allowed list", file=sys.stderr)
+        print(f"Allowed backends: {', '.join(sorted(ALLOWED_BACKENDS))}", file=sys.stderr)
+        sys.exit(1)
+
+    # Parse arguments
+    if len(sys.argv) > 2:
+        try:
+            args = json.loads(sys.argv[2])
+        except json.JSONDecodeError as e:
+            print(f"Invalid JSON arguments: {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        args = {}
+
+    # Call the tool via router
+    try:
+        result = call_tool(tool_name, args)
+
+        # Output as JSON for easy parsing
+        if isinstance(result, (dict, list)):
+            print(json.dumps(result, indent=2))
+        else:
+            print(result)
+    except Exception as e:
+        print(f"Error calling {tool_name}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

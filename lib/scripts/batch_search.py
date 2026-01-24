@@ -9,7 +9,7 @@ Usage:
 import sys
 import argparse
 sys.path.insert(0, '/home/fearsidhe/.claude/plugins/agent-swarm/lib')
-from mcp_bridge import native_grep
+from mcp_bridge import native_grep  # noqa: E402
 
 def main():
     parser = argparse.ArgumentParser(description='Batch search multiple patterns')

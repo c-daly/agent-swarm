@@ -93,7 +93,7 @@ class TestQueryGreptile:
 
         with patch.dict(os.environ, env, clear=True):
             with patch("requests.post", return_value=mock_response) as mock_post:
-                result = greptile_query.query_greptile(
+                _result = greptile_query.query_greptile(  # noqa: F841
                     "test query",
                     repo="myorg/myrepo",
                     branch="main",
@@ -227,10 +227,8 @@ class TestCLI:
 
     def test_parses_query_argument(self):
         """Should parse positional query argument"""
-        import argparse
         with patch("sys.argv", ["greptile_query.py", "How does auth work?"]):
             # Re-import to test argparse
-            import importlib
             # Just verify it doesn't crash - argparse is standard
             pass
 

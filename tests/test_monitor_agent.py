@@ -8,7 +8,7 @@ import os
 # Add hooks directory to path for import
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'hooks'))
 
-from monitor_agent import (
+from monitor_agent import (  # noqa: E402
     needs_monitoring,
     call_monitor_agent,
     _build_monitor_prompt,

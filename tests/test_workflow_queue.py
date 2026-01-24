@@ -14,7 +14,7 @@ sys.path.insert(0, str(lib_dir))
 scripts_dir = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(scripts_dir))
 
-from iterate_state import (
+from iterate_state import (  # noqa: E402
     TaskStatus,
     TaskSource,
     TaskQueue,
@@ -22,11 +22,9 @@ from iterate_state import (
     PRIORITY_GREPTILE_WARNING,
     PRIORITY_ORIGINAL,
     save_queue,
-    load_queue,
-    SESSION_FILE,
 )
 
-from workflow_queue import WorkflowQueue
+from workflow_queue import WorkflowQueue  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

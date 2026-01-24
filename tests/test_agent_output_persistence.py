@@ -1,9 +1,7 @@
 """Tests for agent output persistence in SubagentStop hook."""
 
-import pytest
-import json
 from pathlib import Path
-from unittest.mock import patch, mock_open, MagicMock, call
+from unittest.mock import patch, MagicMock
 import sys
 import importlib.util
 

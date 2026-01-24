@@ -15,13 +15,13 @@ import glob
 
 # Add lib to path for workflow_client and agent_recovery
 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
-from workflow_client import (
+from workflow_client import (  # noqa: E402
     agent_set_state,
     workflow_is_active,
     workflow_get_value,
     workflow_update,
 )
-from agent_recovery import detect_failed_agent, handle_failed_agent
+from agent_recovery import detect_failed_agent, handle_failed_agent  # noqa: E402
 
 STATE_DIR = Path.home() / ".claude" / "plugins" / "agent-swarm" / ".state"
 STATE_FILE = STATE_DIR / "session.json"
@@ -148,7 +148,7 @@ def persist_agent_output(session_id: str, agent_type: str) -> dict:
         
         return failure_info
         
-    except Exception as e:
+    except Exception:
         # Log error but don't fail the hook
         # (In production, could use logging module)
         return failure_info

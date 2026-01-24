@@ -7,7 +7,7 @@ and ConnectionPool for load-balanced access to multiple connections.
 
 import asyncio
 import json
-from typing import Any, Optional
+from typing import Optional
 
 from config import BackendConfig
 from errors import ConnectionError, RequestTimeoutError

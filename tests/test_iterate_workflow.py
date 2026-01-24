@@ -17,7 +17,7 @@ pytestmark = pytest.mark.skip(
 lib_dir = Path(__file__).parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
-from iterate_workflow import (
+from iterate_workflow import (  # noqa: E402
     Phase,
     PHASE_TOOLS,
     start,
@@ -36,8 +36,8 @@ from iterate_workflow import (
     LOG_FILE,
     _reset_logger,
 )
-import workflow_client
-from pathlib import Path
+import workflow_client  # noqa: E402
+from pathlib import Path  # noqa: E402
 
 def get_state():
     """Helper to get iterate workflow state for tests."""
@@ -612,14 +612,14 @@ class TestReviewPhase:
 
     def test_add_review_comment_fails_outside_review(self):
         """add_review_comment raises error outside review phase."""
-        from iterate_workflow import add_review_comment
+        from iterate_workflow import add_review_comment  # noqa: E402
         start("Test task")  # Starts in test_writing
         with pytest.raises(ValueError, match="review phase"):
             add_review_comment({"id": "c1", "body": "Test"})
 
     def test_set_pr_number_fails_without_workflow(self):
         """set_pr_number raises error without active workflow."""
-        from iterate_workflow import set_pr_number
+        from iterate_workflow import set_pr_number  # noqa: E402
         with pytest.raises(RuntimeError, match="no active workflow"):
             set_pr_number(123)
 
@@ -629,8 +629,8 @@ class TestGhCliIntegration:
 
     def test_fetch_pr_review_status_success(self, monkeypatch):
         """fetch_pr_review_status parses JSON response."""
-        from iterate_workflow import fetch_pr_review_status
-        import subprocess
+        from iterate_workflow import fetch_pr_review_status  # noqa: E402
+        import subprocess  # noqa: E402
 
         mock_result = subprocess.CompletedProcess(
             args=["gh"],
@@ -646,8 +646,8 @@ class TestGhCliIntegration:
 
     def test_fetch_pr_review_status_filters_resolved(self, monkeypatch):
         """fetch_pr_review_status excludes resolved comments."""
-        from iterate_workflow import fetch_pr_review_status
-        import subprocess
+        from iterate_workflow import fetch_pr_review_status  # noqa: E402
+        import subprocess  # noqa: E402
 
         mock_result = subprocess.CompletedProcess(
             args=["gh"],
@@ -663,8 +663,8 @@ class TestGhCliIntegration:
 
     def test_fetch_pr_review_status_empty_response(self, monkeypatch):
         """fetch_pr_review_status handles empty response."""
-        from iterate_workflow import fetch_pr_review_status
-        import subprocess
+        from iterate_workflow import fetch_pr_review_status  # noqa: E402
+        import subprocess  # noqa: E402
 
         mock_result = subprocess.CompletedProcess(args=["gh"], returncode=0, stdout="", stderr="")
         monkeypatch.setattr(subprocess, "run", lambda *a, **kw: mock_result)
@@ -674,8 +674,8 @@ class TestGhCliIntegration:
 
     def test_fetch_pr_review_status_timeout(self, monkeypatch):
         """fetch_pr_review_status handles timeout."""
-        from iterate_workflow import fetch_pr_review_status
-        import subprocess
+        from iterate_workflow import fetch_pr_review_status  # noqa: E402
+        import subprocess  # noqa: E402
 
         def raise_timeout(*a, **kw):
             raise subprocess.TimeoutExpired(cmd="gh", timeout=30)
@@ -686,7 +686,7 @@ class TestGhCliIntegration:
 
     def test_fetch_pr_review_status_gh_not_found(self, monkeypatch):
         """fetch_pr_review_status handles missing gh CLI."""
-        from iterate_workflow import fetch_pr_review_status
+        from iterate_workflow import fetch_pr_review_status  # noqa: E402
 
         def raise_not_found(*a, **kw):
             raise FileNotFoundError()
@@ -697,7 +697,7 @@ class TestGhCliIntegration:
 
     def test_refresh_review_status_no_pr(self):
         """refresh_review_status returns 0 without PR number."""
-        from iterate_workflow import refresh_review_status
+        from iterate_workflow import refresh_review_status  # noqa: E402
         start("Test task")
         force_phase(Phase.REVIEW)
         result = refresh_review_status()
@@ -705,7 +705,7 @@ class TestGhCliIntegration:
 
     def test_refresh_review_status_wrong_phase(self):
         """refresh_review_status returns 0 outside review phase."""
-        from iterate_workflow import refresh_review_status, set_pr_number
+        from iterate_workflow import refresh_review_status, set_pr_number  # noqa: E402
         start("Test task")
         set_pr_number(123)
         result = refresh_review_status()  # Still in test_writing
@@ -713,8 +713,8 @@ class TestGhCliIntegration:
 
     def test_fetch_parses_single_object(self, monkeypatch):
         """fetch_pr_review_status handles single object (not array)."""
-        from iterate_workflow import fetch_pr_review_status
-        import subprocess
+        from iterate_workflow import fetch_pr_review_status  # noqa: E402
+        import subprocess  # noqa: E402
 
         mock_result = subprocess.CompletedProcess(
             args=["gh"], returncode=0,
@@ -728,8 +728,8 @@ class TestGhCliIntegration:
 
     def test_fetch_parses_line_by_line(self, monkeypatch):
         """fetch_pr_review_status falls back to line-by-line parsing."""
-        from iterate_workflow import fetch_pr_review_status
-        import subprocess
+        from iterate_workflow import fetch_pr_review_status  # noqa: E402
+        import subprocess  # noqa: E402
 
         # jq output format - one JSON object per line
         mock_result = subprocess.CompletedProcess(
@@ -743,8 +743,8 @@ class TestGhCliIntegration:
 
     def test_fetch_handles_invalid_json_lines(self, monkeypatch):
         """fetch_pr_review_status skips invalid JSON lines."""
-        from iterate_workflow import fetch_pr_review_status
-        import subprocess
+        from iterate_workflow import fetch_pr_review_status  # noqa: E402
+        import subprocess  # noqa: E402
 
         mock_result = subprocess.CompletedProcess(
             args=["gh"], returncode=0,
@@ -757,8 +757,8 @@ class TestGhCliIntegration:
 
     def test_refresh_adds_comments_to_queue(self, monkeypatch):
         """refresh_review_status adds fetched comments to queue."""
-        from iterate_workflow import refresh_review_status, set_pr_number
-        import subprocess
+        from iterate_workflow import refresh_review_status, set_pr_number  # noqa: E402
+        import subprocess  # noqa: E402
 
         start("Test task")
         force_phase(Phase.REVIEW)
@@ -836,20 +836,20 @@ class TestOrchestrateCompletion:
 
     def test_is_orchestration_complete_function_exists(self):
         """is_orchestration_complete function should be importable."""
-        from iterate_workflow import is_orchestration_complete
+        from iterate_workflow import is_orchestration_complete  # noqa: E402
         assert callable(is_orchestration_complete)
 
     def test_is_orchestration_complete_false_when_inactive(self):
         """is_orchestration_complete returns False when workflow not active."""
-        from iterate_workflow import is_orchestration_complete
+        from iterate_workflow import is_orchestration_complete  # noqa: E402
         # No workflow started
         assert is_orchestration_complete() is False
 
     def test_is_orchestration_complete_false_with_active_workers(self, monkeypatch):
         """is_orchestration_complete returns False when workers are active."""
-        from iterate_workflow import is_orchestration_complete
-        import sys
-        from pathlib import Path
+        from iterate_workflow import is_orchestration_complete  # noqa: E402
+        import sys  # noqa: E402
+        from pathlib import Path  # noqa: E402
 
         # Mock worker_pool.is_complete to return False (workers active)
         worker_pool_path = Path(__file__).parent.parent / "lib"
@@ -858,7 +858,7 @@ class TestOrchestrateCompletion:
         def mock_is_complete(queue_empty):
             return False  # Workers still active
 
-        import worker_pool
+        import worker_pool  # noqa: E402
         monkeypatch.setattr(worker_pool, "is_complete", mock_is_complete)
 
         start("## Task Overview\n- [ ] First item to implement\n- [ ] Second item with details")  # Spec-like -> ORCHESTRATE
@@ -866,9 +866,9 @@ class TestOrchestrateCompletion:
 
     def test_is_orchestration_complete_true_when_done(self, monkeypatch):
         """is_orchestration_complete returns True when queue empty and no workers."""
-        from iterate_workflow import is_orchestration_complete
-        import sys
-        from pathlib import Path
+        from iterate_workflow import is_orchestration_complete  # noqa: E402
+        import sys  # noqa: E402
+        from pathlib import Path  # noqa: E402
 
         # Mock worker_pool.is_complete to return True (all done)
         worker_pool_path = Path(__file__).parent.parent / "lib"
@@ -877,7 +877,7 @@ class TestOrchestrateCompletion:
         def mock_is_complete(queue_empty):
             return queue_empty  # Done if queue is empty
 
-        import worker_pool
+        import worker_pool  # noqa: E402
         monkeypatch.setattr(worker_pool, "is_complete", mock_is_complete)
 
         # Also mock _get_workflow_queue to return a queue that reports all_done

@@ -76,7 +76,7 @@ class EfficiencyAnalyzer:
                 "reason": reason if event_type == "blocked" else None,
                 "raw": line,
             }
-        except:
+        except Exception:
             return None
 
     def analyze_patterns(self):
