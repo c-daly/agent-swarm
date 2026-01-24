@@ -3,9 +3,17 @@
 
 Starts the router as an MCP server on stdio.
 Reads backends from config/backends.json.
+
+Socket listener is SHARED across sessions:
+- First session starts the socket listener
+- Subsequent sessions reuse the existing socket
+- Each session has its own MCP stdio connection
 """
 
 import json
+import os
+import signal
+import socket
 import sys
 from pathlib import Path
 
@@ -15,6 +23,70 @@ sys.path.insert(0, str(ROOT / "lib"))
 from mcp_router import MCPRouter, start_stdio_server
 
 CONFIG_FILE = ROOT / "config" / "backends.json"
+STATE_DIR = ROOT / ".state"
+PID_FILE = STATE_DIR / "router.pid"
+PORT_FILE = STATE_DIR / "router.port"
+
+
+def check_existing_socket() -> int | None:
+    """Check if a healthy socket listener already exists.
+
+    Returns port number if healthy, None otherwise.
+    """
+    if not PID_FILE.exists() or not PORT_FILE.exists():
+        return None
+
+    try:
+        pid = int(PID_FILE.read_text().strip())
+        port = int(PORT_FILE.read_text().strip())
+    except (ValueError, OSError):
+        return None
+
+    # Check if process is running
+    try:
+        os.kill(pid, 0)  # Signal 0 = check existence
+    except OSError:
+        # Process dead, clean up stale files
+        _cleanup_stale_files()
+        return None
+
+    # Health check - try to connect
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1.0)
+            s.connect(("127.0.0.1", port))
+            # Send a ping
+            s.sendall(b'{"jsonrpc":"2.0","method":"ping","id":0}\n')
+            response = s.recv(1024)
+            if b"pong" in response or b"result" in response:
+                return port
+    except (socket.error, socket.timeout):
+        pass
+
+    # Socket not responding, kill stale process
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        pass
+    _cleanup_stale_files()
+    return None
+
+
+def _cleanup_stale_files():
+    """Remove stale pid/port files."""
+    for f in [PID_FILE, PORT_FILE]:
+        try:
+            f.unlink()
+        except OSError:
+            pass
+
+
+def write_socket_info(port: int):
+    """Write current process info for socket sharing."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    PID_FILE.write_text(str(os.getpid()))
+    PORT_FILE.write_text(str(port))
+
 
 if __name__ == "__main__":
     router = MCPRouter()
@@ -29,8 +101,18 @@ if __name__ == "__main__":
                 tool_prefix=config.get("tool_prefix", ""),
             )
 
-    # Start socket listener for hooks to call workflow tools
-    port = router.start_socket_listener()
-    sys.stderr.write(f"Router socket listener on port {port}\n")
+    # Check for existing shared socket
+    existing_port = check_existing_socket()
 
+    if existing_port:
+        # Reuse existing socket listener
+        sys.stderr.write(f"Reusing existing router socket on port {existing_port}\n")
+        port = existing_port
+    else:
+        # Start new socket listener (we're the first/master)
+        port = router.start_socket_listener()
+        write_socket_info(port)
+        sys.stderr.write(f"Started router socket listener on port {port}\n")
+
+    # Always start MCP stdio server (per-session)
     start_stdio_server(router)
