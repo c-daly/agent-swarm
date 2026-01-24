@@ -1049,6 +1049,47 @@ class MCPRouter:
                 "description": "Get analysis of token usage trends",
                 "inputSchema": {"type": "object", "properties": {}},
             },
+            # Event system pseudo-tools (handled by hooks, not router)
+            {
+                "name": "router__request",
+                "description": "Async tool request. Returns correlation_id. Poll router__poll for response.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "tool": {"type": "string", "description": "Tool name (e.g., serena__find_symbol)"},
+                        "args": {"type": "object", "description": "Tool arguments"}
+                    },
+                    "required": ["tool", "args"]
+                }
+            },
+            {
+                "name": "router__poll",
+                "description": "Poll for async response by correlation_id.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "correlation_id": {"type": "string", "description": "Correlation ID from router__request"}
+                    },
+                    "required": ["correlation_id"]
+                }
+            },
+            {
+                "name": "router__publish",
+                "description": "Publish event to topic.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "topic": {"type": "string", "description": "Event topic"},
+                        "data": {"type": "object", "description": "Event data"}
+                    },
+                    "required": ["topic", "data"]
+                }
+            },
+            {
+                "name": "router__list_tools",
+                "description": "List all available tools.",
+                "inputSchema": {"type": "object", "properties": {}}
+            },
         ]
 
         # Get tools from all backends
@@ -1689,6 +1730,47 @@ def start_stdio_server(router: MCPRouter):
                         "workflow_id": {"type": "string", "description": "Workflow ID to clear (optional, omit for all)"}
                     }
                 },
+            },
+            # Event system pseudo-tools (handled by hooks, not router)
+            {
+                "name": "router__request",
+                "description": "Async tool request. Returns correlation_id. Poll router__poll for response.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "tool": {"type": "string", "description": "Tool name (e.g., serena__find_symbol)"},
+                        "args": {"type": "object", "description": "Tool arguments"}
+                    },
+                    "required": ["tool", "args"]
+                }
+            },
+            {
+                "name": "router__poll",
+                "description": "Poll for async response by correlation_id.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "correlation_id": {"type": "string", "description": "Correlation ID from router__request"}
+                    },
+                    "required": ["correlation_id"]
+                }
+            },
+            {
+                "name": "router__publish",
+                "description": "Publish event to topic.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "topic": {"type": "string", "description": "Event topic"},
+                        "data": {"type": "object", "description": "Event data"}
+                    },
+                    "required": ["topic", "data"]
+                }
+            },
+            {
+                "name": "router__list_tools",
+                "description": "List all available tools.",
+                "inputSchema": {"type": "object", "properties": {}}
             },
         ]
         for server in router.list_servers():
