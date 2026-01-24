@@ -756,7 +756,7 @@ class MCPRouter:
 
             except OSError as e:
                 # Port binding failed - likely race condition
-                if e.errno == 98:  # EADDRINUSE
+                if getattr(e, "errno", None) == 98:  # EADDRINUSE
                     _router_log(
                         "federation",
                         f"Bind failed (attempt {attempt + 1}), checking for main router",
@@ -812,6 +812,7 @@ class MCPRouter:
         if not self._port_file.exists():
             return None
 
+        sock = None
         try:
             port = int(self._port_file.read_text().strip())
             # Try to connect and ping
@@ -828,15 +829,13 @@ class MCPRouter:
             }
             sock.sendall(json.dumps(request).encode() + b"\n")
 
-            # Wait for response
+            # Wait for response (timeout handles infinite loop protection)
             response_data = b""
             while b"\n" not in response_data:
                 chunk = sock.recv(4096)
                 if not chunk:
                     break
                 response_data += chunk
-
-            sock.close()
 
             if response_data:
                 response = json.loads(response_data.decode().strip())
@@ -847,6 +846,12 @@ class MCPRouter:
             _router_log("federation", f"Main router check failed: {e}", "DEBUG")
         except Exception as e:
             _router_log("federation", f"Unexpected error checking main router: {e}", "WARN")
+        finally:
+            if sock:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
 
         return None
 
@@ -862,6 +867,7 @@ class MCPRouter:
         if not self._main_router_port:
             return {"error": {"code": -32603, "message": "No main router configured"}}
 
+        sock = None
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(30.0)
@@ -870,15 +876,13 @@ class MCPRouter:
             # Send request
             sock.sendall(json.dumps(request).encode() + b"\n")
 
-            # Receive response
+            # Receive response (timeout handles infinite loop protection)
             response_data = b""
             while b"\n" not in response_data:
                 chunk = sock.recv(8192)
                 if not chunk:
                     break
                 response_data += chunk
-
-            sock.close()
 
             if response_data:
                 return json.loads(response_data.decode().strip())
@@ -887,9 +891,91 @@ class MCPRouter:
         except socket.timeout:
             _router_log("federation", "Proxy timeout to main router", "ERROR")
             return {"error": {"code": -32603, "message": "Timeout proxying to main router"}}
+        except (ConnectionRefusedError, ConnectionResetError, BrokenPipeError) as e:
+            # Main router appears to be dead - attempt failover
+            _router_log("federation", f"Main router unreachable: {e}, attempting failover", "WARN")
+            return self._attempt_failover_and_retry(request)
         except Exception as e:
             _router_log("federation", f"Proxy error: {e}", "ERROR")
             return {"error": {"code": -32603, "message": f"Proxy error: {e}"}}
+        finally:
+            if sock:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+
+    def _attempt_failover_and_retry(self, request: dict) -> dict:
+        """Attempt to promote to primary and handle the request locally.
+
+        Args:
+            request: The original JSON-RPC request that failed to proxy.
+
+        Returns:
+            Response from handling locally after promotion, or error if promotion fails.
+        """
+        # Clear secondary state
+        self._main_router_port = 0
+
+        # Try to become primary
+        try:
+            self._promote_to_primary()
+            _router_log("federation", "Successfully promoted to primary after failover")
+
+            # Now handle the request locally
+            params = request.get("params", {})
+            tool_name = params.get("name", "")
+            args = params.get("arguments", {})
+
+            # Parse destination__tool format
+            if "__" in tool_name:
+                destination, actual_tool = tool_name.split("__", 1)
+            else:
+                return {
+                    "error": {"code": -32602, "message": f"Invalid tool name format: {tool_name}"}
+                }
+
+            # Route locally
+            response = self.route(destination, actual_tool, args)
+            return {
+                "result": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(
+                                {"summary": response.summary, "full": response.full}
+                            ),
+                        }
+                    ]
+                }
+            }
+        except Exception as e:
+            _router_log("federation", f"Failover failed: {e}", "ERROR")
+            return {"error": {"code": -32603, "message": f"Failover failed: {e}"}}
+
+    def _promote_to_primary(self) -> None:
+        """Promote this secondary router to primary.
+
+        Raises:
+            RuntimeError: If promotion fails.
+        """
+        self._socket_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._socket_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._socket_server.bind(("127.0.0.1", 0))  # Auto-assign port
+        self._socket_server.listen(5)
+        self._socket_port = self._socket_server.getsockname()[1]
+        self._socket_running = True
+        self._is_primary = True
+
+        # Update port file
+        self._port_file.parent.mkdir(parents=True, exist_ok=True)
+        self._port_file.write_text(str(self._socket_port))
+
+        # Start accept loop in background thread
+        self._socket_thread = Thread(target=self._socket_accept_loop, daemon=True)
+        self._socket_thread.start()
+
+        _router_log("federation", f"Promoted to PRIMARY on port {self._socket_port}")
 
     def is_primary(self) -> bool:
         """Check if this router is the primary (owns socket listener)."""
@@ -1271,6 +1357,22 @@ class MCPRouter:
         Returns:
             List of tool definitions with prefixed names.
         """
+        # Secondary routers should proxy to main to avoid spawning local backends
+        if not self._is_primary and self._main_router_port:
+            proxy_request = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/list",
+                "params": {},
+            }
+            proxy_response = self._proxy_to_main(proxy_request)
+            if "result" in proxy_response and "tools" in proxy_response["result"]:
+                return proxy_response["result"]["tools"]
+            # Fall through to local listing if proxy fails
+            _router_log(
+                "federation", "Failed to get tools from main router, using local listing", "WARN"
+            )
+
         # Router's own tools
         all_tools = [
             {
@@ -1396,11 +1498,16 @@ class MCPRouter:
         # Federation: if secondary, proxy to main router
         if not self._is_primary and self._main_router_port:
             _router_log("route", f"PROXY to main router port {self._main_router_port}")
+            # Construct prefixed tool name, avoiding double-prefixing if tool_name already has prefix
+            if tool_name.startswith(f"{destination}__"):
+                prefixed_tool = tool_name
+            else:
+                prefixed_tool = f"{destination}__{tool_name}"
             proxy_request = {
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "tools/call",
-                "params": {"name": f"{destination}__{tool_name}", "arguments": args},
+                "params": {"name": prefixed_tool, "arguments": args},
             }
             proxy_response = self._proxy_to_main(proxy_request)
 
