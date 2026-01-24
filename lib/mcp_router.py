@@ -472,6 +472,11 @@ class MCPRouter:
         self.on_request: list[Callable[[str, str, dict], None]] = []
         self.on_response: list[Callable[[RouterResponse], None]] = []
 
+        # Event system for async tool execution
+        self._event_queue: dict[str, list[dict]] = {}  # topic -> events
+        self._event_responses: dict[str, dict] = {}  # correlation_id -> response
+        self._event_lock = Lock()
+
         # Telemetry collector for real-time metrics
         self.telemetry: Optional[TelemetryCollector] = TelemetryCollector() if enable_telemetry else None
 
@@ -989,6 +994,37 @@ class MCPRouter:
                 }
                 for s in self._servers.values()
             ]
+
+    # ==================== Event System ====================
+
+    def event_publish(self, topic: str, data: dict, correlation_id: str) -> dict:
+        """Publish event to internal event bus."""
+        with self._event_lock:
+            if topic not in self._event_queue:
+                self._event_queue[topic] = []
+            event = {
+                "topic": topic,
+                "data": data,
+                "correlation_id": correlation_id,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+            self._event_queue[topic].append(event)
+            _router_log("event", f"PUBLISH topic={topic} cid={correlation_id}")
+            return {"status": "published", "correlation_id": correlation_id}
+
+    def event_poll(self, correlation_id: str, timeout_ms: int = 0) -> Optional[dict]:
+        """Poll for response by correlation ID."""
+        with self._event_lock:
+            response = self._event_responses.pop(correlation_id, None)
+            if response:
+                _router_log("event", f"POLL cid={correlation_id} found")
+            return response
+
+    def event_respond(self, correlation_id: str, data: dict) -> None:
+        """Store response for a correlation ID."""
+        with self._event_lock:
+            self._event_responses[correlation_id] = data
+            _router_log("event", f"RESPOND cid={correlation_id}")
 
     def _list_all_tools_for_socket(self) -> list[dict]:
         """Get all tools from all backends for socket clients.
