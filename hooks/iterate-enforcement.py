@@ -48,7 +48,7 @@ def is_tool_allowed_for_agent(tool_name: str, agent_id: str, command: str | None
     
     # Import phase model to check restrictions
     try:
-        from phase_model import get_phase_info, TOOL_CATEGORIES, Phase
+        from phase_model import get_phase_info, TOOL_CATEGORIES
         phase_info = get_phase_info(phase_name)
         if not phase_info:
             return True, "", phase_name

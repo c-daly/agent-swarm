@@ -18,11 +18,9 @@ from pathlib import Path
 lib_dir = Path(__file__).parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
-from telemetry_schema_v2 import (
+from telemetry_schema_v2 import (  # noqa: E402
     default_telemetry_v2,
     default_day_data,
-    default_token_data,
-    default_call_data,
 )
 
 STATE_DIR = Path(__file__).parent.parent / ".state"
@@ -125,14 +123,14 @@ def migrate_v1_to_v2(v1_data: dict) -> dict:
 def main():
     dry_run = "--dry-run" in sys.argv
     
-    print(f"Loading v1 telemetry...")
+    print("Loading v1 telemetry...")
     v1_data = load_v1_telemetry()
     
     if not v1_data:
         print("No data to migrate")
         return
     
-    print(f"\nV1 Structure:")
+    print("\nV1 Structure:")
     print(f"  - events: {len(v1_data.get('events', []))} items")
     print(f"  - daily_summaries: {len(v1_data.get('daily_summaries', {}))} days")
     print(f"  - aggregates.by_tool: {len(v1_data.get('aggregates', {}).get('by_tool', {}))} tools")
@@ -140,7 +138,7 @@ def main():
     print("\nMigrating to v2.0...")
     v2_data = migrate_v1_to_v2(v1_data)
     
-    print(f"\nV2 Structure:")
+    print("\nV2 Structure:")
     print(f"  - days: {len(v2_data.get('days', {}))} days")
     print(f"  - events: {len(v2_data.get('events', []))} items")
     print(f"  - aggregates.all_time.calls.by_tool: {len(v2_data['aggregates']['all_time']['calls']['by_tool'])} tools")

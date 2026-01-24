@@ -1,6 +1,5 @@
 """Tests for permission_store.py"""
 
-import pytest
 import sys
 from pathlib import Path
 
@@ -8,9 +7,9 @@ from pathlib import Path
 lib_dir = Path(__file__).parent.parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
-from permission_store import (
+from permission_store import (  # noqa: E402
     PermissionStore, PhasePermissions, TaskConstraints, SubagentRestrictions,
-    ToolCategory, TOOL_CATEGORIES, get_tool_category,
+    ToolCategory, get_tool_category,
     FILE_WRITE_TOOLS, WORKFLOW_CONTROL_TOOLS,
 )
 

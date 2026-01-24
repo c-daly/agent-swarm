@@ -10,10 +10,8 @@ import pytest
 pytestmark = pytest.mark.skip(
     reason="Integration test: requires telemetry refactoring for MCP router"
 )
-from unittest.mock import patch
-from pathlib import Path
-import tempfile
-import json
+from pathlib import Path  # noqa: E402
+import tempfile  # noqa: E402
 
 
 class TestSequenceAnalysis:

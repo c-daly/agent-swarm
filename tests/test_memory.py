@@ -13,7 +13,7 @@ import sys
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from context.memory import (
+from context.memory import (  # noqa: E402
     Pattern,
     Episode,
     Memory,

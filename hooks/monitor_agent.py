@@ -7,7 +7,6 @@ Used for: commit message validation, classification appropriateness, context und
 """
 
 import os
-import json
 import re
 from typing import Dict, Optional, Any
 
@@ -15,12 +14,18 @@ try:
     from hook_logging import log_error, log_warning, log_info, log_debug, ConfigError, StateError
 except ImportError:
     # Fallback: define minimal logging functions
-    def log_error(msg, **kw): pass
-    def log_warning(msg, **kw): pass
-    def log_info(msg, **kw): pass
-    def log_debug(msg, **kw): pass
-    class ConfigError(Exception): pass
-    class StateError(Exception): pass
+    def log_error(msg, **kw):
+        pass
+    def log_warning(msg, **kw):
+        pass
+    def log_info(msg, **kw):
+        pass
+    def log_debug(msg, **kw):
+        pass
+    class ConfigError(Exception):
+        pass
+    class StateError(Exception):
+        pass
 # Try to import anthropic, gracefully degrade if not available
 try:
     import anthropic

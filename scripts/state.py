@@ -73,7 +73,7 @@ def transition(phase):
     if checkpoint_required and not autopilot:
         print(f"⚠️  CHECKPOINT: {old_phase} → {phase}", file=sys.stderr)
         print(f"Checkpoint required for {phase} phase", file=sys.stderr)
-        print(f"User approval needed before proceeding", file=sys.stderr)
+        print("User approval needed before proceeding", file=sys.stderr)
         sys.exit(1)
 
     # Update state

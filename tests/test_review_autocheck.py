@@ -17,10 +17,9 @@ import pytest
 lib_dir = Path(__file__).parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
-from iterate_workflow import (
+from iterate_workflow import (  # noqa: E402
     Phase,
     start,
-    stop,
     get_phase,
     set_phase,
     advance_phase,
@@ -48,7 +47,7 @@ class TestFetchPRReviewStatus:
     def test_fetch_pr_comments_returns_list(self):
         """fetch_pr_review_status should return list of comments."""
         # Import after potential module changes
-        from iterate_workflow import fetch_pr_review_status
+        from iterate_workflow import fetch_pr_review_status  # noqa: E402
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
@@ -67,7 +66,7 @@ class TestFetchPRReviewStatus:
 
     def test_fetch_pr_comments_handles_empty(self):
         """fetch_pr_review_status returns empty list when no comments."""
-        from iterate_workflow import fetch_pr_review_status
+        from iterate_workflow import fetch_pr_review_status  # noqa: E402
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="[]")
@@ -78,7 +77,7 @@ class TestFetchPRReviewStatus:
 
     def test_fetch_pr_comments_handles_gh_failure(self):
         """fetch_pr_review_status returns empty list on gh failure."""
-        from iterate_workflow import fetch_pr_review_status
+        from iterate_workflow import fetch_pr_review_status  # noqa: E402
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="Not found")
@@ -89,7 +88,7 @@ class TestFetchPRReviewStatus:
 
     def test_fetch_filters_resolved_comments(self):
         """fetch_pr_review_status should not return resolved comments."""
-        from iterate_workflow import fetch_pr_review_status
+        from iterate_workflow import fetch_pr_review_status  # noqa: E402
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
@@ -112,7 +111,7 @@ class TestAutoPopulateReviewQueue:
 
     def test_entering_review_fetches_comments(self):
         """Advancing to review phase should fetch PR comments."""
-        from iterate_workflow import fetch_pr_review_status, set_pr_number
+        from iterate_workflow import set_pr_number  # noqa: E402
 
         start("test task")
         set_pr_number(10)  # Must set PR number for auto-fetch
@@ -141,7 +140,7 @@ class TestAutoPopulateReviewQueue:
             ]
 
             # Trigger auto-fetch (e.g., via refresh function)
-            from iterate_workflow import refresh_review_status
+            from iterate_workflow import refresh_review_status  # noqa: E402
             refresh_review_status(10)
 
             tasks = get_pending_review_tasks()
@@ -162,14 +161,14 @@ class TestReviewBlockingWithAutoCheck:
                 {"id": "123", "body": "Critical fix needed"},
             ]
 
-            from iterate_workflow import refresh_review_status
+            from iterate_workflow import refresh_review_status  # noqa: E402
             refresh_review_status(10)
 
             assert is_review_blocked() is True
 
     def test_review_unblocked_after_addressing_comments(self):
         """Should unblock after all fetched comments addressed."""
-        from iterate_workflow import mark_review_task_done, refresh_review_status
+        from iterate_workflow import mark_review_task_done, refresh_review_status  # noqa: E402
 
         start("test task")
         set_phase(Phase.REVIEW)
@@ -194,7 +193,7 @@ class TestPRNumberTracking:
 
     def test_pr_number_stored_in_state(self):
         """PR number should be stored in state for auto-refresh."""
-        from iterate_workflow import set_pr_number, get_pr_number
+        from iterate_workflow import set_pr_number, get_pr_number  # noqa: E402
 
         start("test task")
         set_pr_number(42)
@@ -203,8 +202,8 @@ class TestPRNumberTracking:
 
     def test_pr_number_persists_across_loads(self):
         """PR number should persist after state reload."""
-        from iterate_workflow import set_pr_number, get_pr_number
-        import workflow_client
+        from iterate_workflow import set_pr_number  # noqa: E402
+        import workflow_client  # noqa: E402
 
         start("test task")
         set_pr_number(123)
@@ -215,7 +214,7 @@ class TestPRNumberTracking:
 
     def test_advance_to_review_uses_stored_pr(self):
         """Advancing to review should use stored PR number for fetch."""
-        from iterate_workflow import set_pr_number
+        from iterate_workflow import set_pr_number  # noqa: E402
 
         start("test task")
         set_pr_number(10)

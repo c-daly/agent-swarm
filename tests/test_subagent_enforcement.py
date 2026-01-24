@@ -9,7 +9,6 @@ Verifies that implementer subagents spawned during iterate-tdd mode:
 """
 
 import json
-import os
 import sys
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
@@ -19,7 +18,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
 
 # We'll test by importing the hook modules directly after setting up mocks
-import importlib.util
+import importlib.util  # noqa: E402
 
 
 def load_hook_module(hook_name: str):
@@ -64,7 +63,7 @@ class TestSubagentStartInTestWritingPhase:
             
             # Run the hook
             with patch('sys.stdin', Mock(read=lambda: json.dumps(hook_input))):
-                with patch('builtins.print') as mock_print:
+                with patch('builtins.print') as _:  # noqa: F841 - suppress stdout
                     hook.main()
             
             # Verify agent_set_state was called
@@ -105,7 +104,7 @@ class TestSubagentStartInTestWritingPhase:
             }
 
             with patch('sys.stdin', Mock(read=lambda: json.dumps(hook_input))):
-                with patch('builtins.print') as mock_print:
+                with patch('builtins.print') as _:  # noqa: F841 - suppress stdout
                     hook.main()
 
             call_args = mock_workflow_client.agent_set_state.call_args[0]
@@ -140,7 +139,7 @@ class TestSubagentStartInTestWritingPhase:
             }
 
             with patch('sys.stdin', Mock(read=lambda: json.dumps(hook_input))):
-                with patch('builtins.print') as mock_print:
+                with patch('builtins.print') as _:  # noqa: F841 - suppress stdout
                     hook.main()
 
             call_args = mock_workflow_client.agent_set_state.call_args[0]
@@ -204,7 +203,7 @@ class TestIterateEnforcementPhaseLocking:
         
         with patch.dict('sys.modules', {'workflow_client': mock_workflow_client}):
             # Import iterate_workflow to get is_tool_allowed
-            import iterate_workflow
+            import iterate_workflow  # noqa: E402
             
             # Set phase to test_writing
             with patch.object(iterate_workflow, 'get_phase') as mock_get_phase:
@@ -226,7 +225,7 @@ class TestIterateEnforcementPhaseLocking:
         mock_workflow_client.workflow_is_active.return_value = True
         
         with patch.dict('sys.modules', {'workflow_client': mock_workflow_client}):
-            import iterate_workflow
+            import iterate_workflow  # noqa: E402
             
             # Set phase to implement
             with patch.object(iterate_workflow, 'get_phase') as mock_get_phase:

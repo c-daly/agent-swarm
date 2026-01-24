@@ -323,7 +323,7 @@ class TestStdioServer:
         invalid_json_input = "not valid json\n"
         mock_stdin = io.StringIO(invalid_json_input)
 
-        router = MCPRouter()
+        _router = MCPRouter()  # noqa: F841 - instantiation test
 
         # Redirect stdout and stdin, run one iteration
         import json
@@ -373,7 +373,7 @@ class TestStdioServer:
             raise ValueError("Simulated error")
         except json.JSONDecodeError:
             pass
-        except Exception as e:
+        except Exception:
             # request_id should be 42, not None
             assert request_id == 42
 

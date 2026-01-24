@@ -17,19 +17,16 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Generator, Optional, Any
+from typing import Optional
 import hashlib
 
 # Add lib to path
 lib_dir = Path(__file__).parent
 sys.path.insert(0, str(lib_dir))
 
-from telemetry_schema_v2 import (
+from telemetry_schema_v2 import (  # noqa: E402
     TelemetryV2,
-    DayData,
     TokenData,
-    SessionData,
-    default_day_data,
     default_token_data,
     default_call_data,
     ensure_day,
@@ -447,14 +444,14 @@ def main():
     
     if args.all:
         stats = process_all(verbose=verbose)
-        print(f"\nAll processing complete:")
+        print("\nAll processing complete:")
         print(f"  Batches: {stats['batches']}")
         print(f"  Files processed: {stats['total_processed']}")
         print(f"  Tokens extracted: {stats['total_tokens']:,}")
         print(f"  Errors: {stats['total_errors']}")
     else:
         stats = process_batch(max_files=args.batch, verbose=verbose)
-        print(f"\nBatch complete:")
+        print("\nBatch complete:")
         print(f"  Processed: {stats['processed_this_batch']}")
         print(f"  Tokens extracted: {stats['tokens_extracted']:,}")
         print(f"  Remaining: {stats['remaining']}")

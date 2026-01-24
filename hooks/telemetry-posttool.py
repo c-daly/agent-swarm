@@ -17,8 +17,8 @@ from pathlib import Path
 # Add project root to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from lib.stores.events import ToolCallEvent  # noqa: F401 - referenced by other hooks
-from lib.telemetry_service import TelemetryService
+from lib.stores.events import ToolCallEvent  # noqa: F401, E402 - referenced by other hooks
+from lib.telemetry_service import TelemetryService  # noqa: E402
 
 # Shared state files
 PENDING_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/telemetry_pending.json"
@@ -127,17 +127,17 @@ def estimate_tokens(tool_name: str, subagent_type: str = "") -> int:
     return TOKEN_ESTIMATES.get(tool_name, 500)
 
 
-def detect_error(tool_output) -> tuple[bool, str]:
+def detect_error(tool_response) -> tuple[bool, str]:
     """Detect if tool output indicates an error."""
-    if isinstance(tool_output, dict):
-        if tool_output.get("isError"):
-            return True, str(tool_output.get("content", ""))[:200]
-        if "error" in tool_output:
-            return True, str(tool_output["error"])[:200]
-    if isinstance(tool_output, str):
-        lower = tool_output.lower()
+    if isinstance(tool_response, dict):
+        if tool_response.get("isError"):
+            return True, str(tool_response.get("content", ""))[:200]
+        if "error" in tool_response:
+            return True, str(tool_response["error"])[:200]
+    if isinstance(tool_response, str):
+        lower = tool_response.lower()
         if "error:" in lower or "exception:" in lower or "failed:" in lower:
-            return True, tool_output[:200]
+            return True, tool_response[:200]
     return False, ""
 
 
@@ -154,7 +154,7 @@ def main():
         return
 
     tool_name = input_data.get("tool_name", "")
-    tool_output = input_data.get("tool_output", {})
+    tool_response = input_data.get("tool_response", {})
 
     # Find the pending request
     latest = load_json(LATEST_FILE)
@@ -181,7 +181,7 @@ def main():
     duration_ms = int((time.time() - start_time) * 1000)
 
     # Detect errors
-    is_error, error_msg = detect_error(tool_output)
+    is_error, error_msg = detect_error(tool_response)
 
     # Try to get actual tokens from transcript, fall back to estimate
     subagent_type = request_data.get("subagent_type", "")
@@ -207,10 +207,20 @@ def main():
         state_dir = Path.home() / ".claude/plugins/agent-swarm/.state"
         service = TelemetryService(data_dir=str(state_dir))
         
-        # Summary tracking (mcp-summarizer hook removed in router refactor)
-        was_summarized = False
-        original_size = None
-        summary_size = None
+        # Summary tracking - measure output size and determine if it would be summarized
+        SUMMARIZATION_THRESHOLD = 2000  # chars - matches SummarizationService
+
+        # Calculate original size from tool output
+        if isinstance(tool_response, dict):
+            output_str = json.dumps(tool_response)
+        else:
+            output_str = str(tool_response) if tool_response else ""
+
+        original_size = len(output_str)
+
+        # Determine if this would have been summarized (output exceeds threshold)
+        was_summarized = original_size > SUMMARIZATION_THRESHOLD
+        summary_size = min(original_size, SUMMARIZATION_THRESHOLD) if was_summarized else None
         
         event_data = {
             "timestamp": datetime.now(timezone.utc).isoformat(),

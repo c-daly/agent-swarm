@@ -154,13 +154,52 @@ class TaskQueue:
         task = self.tasks.get(task_id)
         if not task:
             raise ValueError(f"Task {task_id} not found")
-        
+
         task.status = TaskStatus.FAILED
         task.assigned_agent = None
         task.metadata["error"] = error
-        
+
         self.failed.append(task_id)
 
+    def retry_or_escalate(self, task_id: str, error: str, max_retries: int = 3) -> bool:
+        """Retry a failed task or escalate if max retries exceeded.
+
+        Args:
+            task_id: Task to retry
+            error: Error message from this attempt
+            max_retries: Maximum retry attempts before escalating
+
+        Returns:
+            True if task was reset to pending (will retry)
+            False if max retries exceeded (escalated)
+        """
+        import sys
+
+        task = self.tasks.get(task_id)
+        if not task:
+            raise ValueError(f"Task {task_id} not found")
+
+        # Track retry attempts
+        retry_count = task.metadata.get("retry_count", 0) + 1
+        task.metadata["retry_count"] = retry_count
+
+        # Log the failure
+        errors = task.metadata.get("errors", [])
+        errors.append({"attempt": retry_count, "error": error})
+        task.metadata["errors"] = errors
+        print(f"[QUEUE] Task {task_id} failed (attempt {retry_count}/{max_retries}): {error}", file=sys.stderr)
+
+        if retry_count < max_retries:
+            # Reset to pending for retry
+            task.status = TaskStatus.PENDING
+            task.assigned_agent = None
+            print(f"[QUEUE] Task {task_id} reset to pending for retry", file=sys.stderr)
+            return True
+        else:
+            # Max retries exceeded - mark permanently failed
+            self.mark_failed(task_id, f"Exceeded {max_retries} attempts. Last error: {error}")
+            print(f"[QUEUE] Task {task_id} ESCALATED - exceeded {max_retries} retries", file=sys.stderr)
+            return False
 
     # Query methods
     def get_pending(self, pr_id: Optional[str] = None) -> list[Task]:

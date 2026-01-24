@@ -29,6 +29,25 @@ import select
 from pathlib import Path
 from typing import Any, Callable, Optional, TYPE_CHECKING
 
+
+def _router_log(component: str, message: str, level: str = "INFO") -> None:
+    """Write a log entry with timestamp to router log file.
+
+    Args:
+        component: Component name (e.g., "socket", "route", "backend")
+        message: The log message
+        level: Log level (INFO, DEBUG, ERROR, WARN)
+    """
+    log_file = Path(__file__).parent.parent / ".state" / "router.log"
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    pid = os.getpid()
+
+    # Ensure parent directory exists
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(log_file, "a") as f:
+        f.write(f"[{timestamp}] [{level}] [PID:{pid}] [{component}] {message}\n")
+
 if TYPE_CHECKING:
     from lib.telemetry_service import TelemetryService
 
@@ -47,14 +66,23 @@ except ImportError:
     openai = None  # type: ignore
     OPENAI_AVAILABLE = False
 
-# Import v2 telemetry schema functions
-from telemetry_schema_v2 import (
-    TelemetryV2,
-    load_telemetry_v2,
-    save_telemetry_v2,
-    ensure_day,
-    update_timing_stats,
-)
+# Import v2 telemetry schema functions (optional - deprecated)
+try:
+    from telemetry_schema_v2 import (
+        TelemetryV2,
+        load_telemetry_v2,
+        save_telemetry_v2,
+        ensure_day,
+        update_timing_stats,
+    )
+    TELEMETRY_V2_AVAILABLE = True
+except ImportError:
+    TELEMETRY_V2_AVAILABLE = False
+    TelemetryV2 = dict  # type: ignore
+    def load_telemetry_v2(path): return {}  # type: ignore
+    def save_telemetry_v2(data, path): pass  # type: ignore
+    def ensure_day(data, key): return data.setdefault(key, {})  # type: ignore
+    def update_timing_stats(timing, backend, duration): pass  # type: ignore
 
 
 @dataclass
@@ -453,6 +481,11 @@ class MCPRouter:
         self.on_request: list[Callable[[str, str, dict], None]] = []
         self.on_response: list[Callable[[RouterResponse], None]] = []
 
+        # Event system for async tool execution
+        self._event_queue: dict[str, list[dict]] = {}  # topic -> events
+        self._event_responses: dict[str, dict] = {}  # correlation_id -> response
+        self._event_lock = Lock()
+
         # Telemetry collector for real-time metrics
         self.telemetry: Optional[TelemetryCollector] = TelemetryCollector() if enable_telemetry else None
 
@@ -701,7 +734,8 @@ class MCPRouter:
         """Accept connections and spawn handler threads."""
         self._active_socket_connections = 0
         self._total_socket_accepts = 0
-        
+        _router_log("socket", f"Accept loop started on port {self._socket_port}")
+
         while self._socket_running:
             try:
                 self._socket_server.settimeout(1.0)  # Check running flag periodically
@@ -709,27 +743,32 @@ class MCPRouter:
                     client, addr = self._socket_server.accept()
                     self._total_socket_accepts += 1
                     self._active_socket_connections += 1
-                    
+                    conn_id = self._total_socket_accepts
+                    _router_log("socket", f"ACCEPT conn_id={conn_id} from={addr} active={self._active_socket_connections}")
+
                     # Wrap handler to track connection lifecycle
-                    def handle_and_track(c, conn_id):
+                    def handle_and_track(c, cid):
                         try:
-                            self._handle_socket_client(c)
+                            self._handle_socket_client(c, cid)
                         finally:
                             self._active_socket_connections -= 1
-                    
+                            _router_log("socket", f"CLOSE conn_id={cid} active={self._active_socket_connections}")
+
                     Thread(
                         target=handle_and_track,
-                        args=(client, self._total_socket_accepts),
+                        args=(client, conn_id),
                         daemon=True
                     ).start()
                 except socket.timeout:
                     continue
-            except Exception:
+            except Exception as e:
                 if self._socket_running:
+                    _router_log("socket", f"Accept error: {e}", "ERROR")
                     continue
                 break
+        _router_log("socket", "Accept loop stopped")
 
-    def _handle_socket_client(self, client: socket.socket) -> None:
+    def _handle_socket_client(self, client: socket.socket, conn_id: int = 0) -> None:
         """Handle a single client connection.
 
         Reads JSON-RPC request, routes it, sends response.
@@ -738,28 +777,51 @@ class MCPRouter:
         import time
         start_time = time.time()
         tool_name = "unknown"
-        
+        log_prefix = f"conn_id={conn_id}"
+
         try:
             # Set timeout on socket operations
             client.settimeout(30.0)  # 30 second timeout for reads
-            
+            _router_log("socket", f"{log_prefix} Reading request...")
+
             # Read request (newline-delimited JSON)
             data = b""
             while b"\n" not in data:
                 chunk = client.recv(4096)
                 if not chunk:
+                    _router_log("socket", f"{log_prefix} Client disconnected before sending data", "WARN")
                     return
                 data += chunk
+
+            read_time = time.time()
+            _router_log("socket", f"{log_prefix} Received {len(data)} bytes in {int((read_time - start_time) * 1000)}ms")
 
             request = json.loads(data.decode().strip())
             request_id = request.get("id")
             method = request.get("method", "")
             params = request.get("params", {})
+            _router_log("socket", f"{log_prefix} Parsed request: method={method} id={request_id}")
 
             # Route the request (same logic as stdio)
-            if method == "tools/call":
+            if method == "tools/list":
+                # Return all available tools from all backends
+                tools = self._list_all_tools_for_socket()
+                result = {"tools": tools}
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": result
+                }
+                response_bytes = json.dumps(response).encode() + b"\n"
+                client.sendall(response_bytes)
+                duration_ms = int((time.time() - start_time) * 1000)
+                _router_log("socket", f"{log_prefix} COMPLETE tools/list duration={duration_ms}ms tools_count={len(tools)}")
+                return
+
+            elif method == "tools/call":
                 tool_name = params.get("name", "")
                 args = params.get("arguments", {})
+                _router_log("socket", f"{log_prefix} ROUTE tool={tool_name} args_keys={list(args.keys())}")
 
                 if "__" in tool_name:
                     prefix, actual_tool = tool_name.split("__", 1)
@@ -771,11 +833,18 @@ class MCPRouter:
                             break
 
                     if not destination:
+                        _router_log("socket", f"{log_prefix} Unknown backend prefix: {prefix}", "ERROR")
                         result = {"content": [{"type": "text", "text": f"Error: Unknown backend prefix: {prefix}"}], "isError": True}
                     else:
+                        _router_log("socket", f"{log_prefix} Routing to backend={destination} tool={actual_tool}")
+                        _route_start = time.time()  # noqa: F841 - kept for future duration logging
                         response = self.route(destination, actual_tool, args)
+                        route_duration = int((time.time() - _route_start) * 1000)
+                        _router_log("socket", f"{log_prefix} Backend responded in {route_duration}ms")
+
                         backend_result = response.full
                         if isinstance(backend_result, dict) and "error" in backend_result:
+                            _router_log("socket", f"{log_prefix} Backend error: {str(backend_result.get('error', ''))[:100]}", "ERROR")
                             result = {"content": [{"type": "text", "text": f"Error: {backend_result['error']}"}], "isError": True}
                         else:
                             if isinstance(backend_result, dict) and "result" in backend_result:
@@ -783,9 +852,13 @@ class MCPRouter:
                             else:
                                 full_content = backend_result
                             result = full_content
+                            result_size = len(json.dumps(result)) if result else 0
+                            _router_log("socket", f"{log_prefix} Success result_size={result_size}")
                 else:
+                    _router_log("socket", f"{log_prefix} Tool name not prefixed: {tool_name}", "ERROR")
                     result = {"content": [{"type": "text", "text": "Tool name must be prefixed: prefix__tool"}], "isError": True}
             else:
+                _router_log("socket", f"{log_prefix} Unsupported method: {method}", "WARN")
                 result = {"error": f"Unsupported method: {method}"}
 
             # Send response
@@ -794,15 +867,18 @@ class MCPRouter:
                 "id": request_id,
                 "result": result
             }
-            client.sendall(json.dumps(response).encode() + b"\n")
-            
+            response_bytes = json.dumps(response).encode() + b"\n"
+            client.sendall(response_bytes)
+
             # Track successful socket request in telemetry
             duration_ms = int((time.time() - start_time) * 1000)
+            _router_log("socket", f"{log_prefix} COMPLETE tool={tool_name} duration={duration_ms}ms response_size={len(response_bytes)}")
             if self.telemetry:
                 self._track_socket_event("success", tool_name, duration_ms)
 
         except socket.timeout:
             duration_ms = int((time.time() - start_time) * 1000)
+            _router_log("socket", f"{log_prefix} TIMEOUT tool={tool_name} duration={duration_ms}ms", "ERROR")
             if self.telemetry:
                 self._track_socket_event("timeout", tool_name, duration_ms)
             try:
@@ -816,6 +892,7 @@ class MCPRouter:
                 pass
         except Exception as e:
             duration_ms = int((time.time() - start_time) * 1000)
+            _router_log("socket", f"{log_prefix} ERROR tool={tool_name} duration={duration_ms}ms error={str(e)[:100]}", "ERROR")
             if self.telemetry:
                 self._track_socket_event("error", tool_name, duration_ms, str(e)[:100])
             try:
@@ -927,6 +1004,125 @@ class MCPRouter:
                 for s in self._servers.values()
             ]
 
+    # ==================== Event System ====================
+
+    def event_publish(self, topic: str, data: dict, correlation_id: str) -> dict:
+        """Publish event to internal event bus."""
+        with self._event_lock:
+            if topic not in self._event_queue:
+                self._event_queue[topic] = []
+            event = {
+                "topic": topic,
+                "data": data,
+                "correlation_id": correlation_id,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+            self._event_queue[topic].append(event)
+            _router_log("event", f"PUBLISH topic={topic} cid={correlation_id}")
+            return {"status": "published", "correlation_id": correlation_id}
+
+    def event_poll(self, correlation_id: str, timeout_ms: int = 0) -> Optional[dict]:
+        """Poll for response by correlation ID."""
+        with self._event_lock:
+            response = self._event_responses.pop(correlation_id, None)
+            if response:
+                _router_log("event", f"POLL cid={correlation_id} found")
+            return response
+
+    def event_respond(self, correlation_id: str, data: dict) -> None:
+        """Store response for a correlation ID."""
+        with self._event_lock:
+            self._event_responses[correlation_id] = data
+            _router_log("event", f"RESPOND cid={correlation_id}")
+
+    def _list_all_tools_for_socket(self) -> list[dict]:
+        """Get all tools from all backends for socket clients.
+
+        Returns:
+            List of tool definitions with prefixed names.
+        """
+        # Router's own tools
+        all_tools = [
+            {
+                "name": "router__ping",
+                "description": "Test tool that returns a simple message",
+                "inputSchema": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "router__telemetry",
+                "description": "Get real-time telemetry data",
+                "inputSchema": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "router__telemetry_analysis",
+                "description": "Get analysis of token usage trends",
+                "inputSchema": {"type": "object", "properties": {}},
+            },
+            # Event system pseudo-tools (handled by hooks, not router)
+            {
+                "name": "router__request",
+                "description": "Async tool request. Returns correlation_id. Poll router__poll for response.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "tool": {"type": "string", "description": "Tool name (e.g., serena__find_symbol)"},
+                        "args": {"type": "object", "description": "Tool arguments"}
+                    },
+                    "required": ["tool", "args"]
+                }
+            },
+            {
+                "name": "router__poll",
+                "description": "Poll for async response by correlation_id.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "correlation_id": {"type": "string", "description": "Correlation ID from router__request"}
+                    },
+                    "required": ["correlation_id"]
+                }
+            },
+            {
+                "name": "router__publish",
+                "description": "Publish event to topic.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "topic": {"type": "string", "description": "Event topic"},
+                        "data": {"type": "object", "description": "Event data"}
+                    },
+                    "required": ["topic", "data"]
+                }
+            },
+            {
+                "name": "router__list_tools",
+                "description": "List all available tools.",
+                "inputSchema": {"type": "object", "properties": {}}
+            },
+        ]
+
+        # Get tools from all backends
+        for server in self.list_servers():
+            name = server["name"]
+            prefix = server.get("tool_prefix") or name
+
+            try:
+                response = self._forward_to_server(
+                    self._servers[name],
+                    "__list__",  # Special: triggers tools/list
+                    {}
+                )
+                if "result" in response and "tools" in response["result"]:
+                    for tool in response["result"]["tools"]:
+                        # Prefix tool name
+                        tool_copy = tool.copy()
+                        tool_copy["name"] = f"{prefix}__{tool['name']}"
+                        all_tools.append(tool_copy)
+            except Exception:
+                pass  # Skip failed backends
+
+        return all_tools
+
     # === Routing ===
 
     def route(
@@ -945,7 +1141,10 @@ class MCPRouter:
         Returns:
             RouterResponse with structured summary and full response
         """
+        import time
+        _route_start = time.time()  # noqa: F841 - kept for future duration logging
         correlation_id = self._generate_correlation_id(destination, tool_name, args)
+        _router_log("route", f"ENTER dest={destination} tool={tool_name} corr_id={correlation_id}")
 
         # Start telemetry tracking
         telemetry_id = None
@@ -969,6 +1168,7 @@ class MCPRouter:
         if not server:
             error = True
             error_msg = f"Server '{destination}' not registered"
+            _router_log("route", f"ERROR server not registered: {destination}", "ERROR")
             response = RouterResponse(
                 summary=f"Error: {error_msg}",
                 full={"error": error_msg},
@@ -976,12 +1176,16 @@ class MCPRouter:
             )
         else:
             # Forward request
+            forward_start = time.time()
             full_response = self._forward_to_server(server, tool_name, args)
+            forward_duration = int((time.time() - forward_start) * 1000)
+            _router_log("route", f"Backend responded in {forward_duration}ms")
 
             # Check for error in response
             if isinstance(full_response, dict) and "error" in full_response:
                 error = True
                 error_msg = str(full_response.get("error", "Unknown error"))[:200]
+                _router_log("route", f"Backend error: {error_msg}", "ERROR")
 
             # Generate structured summary using schema extraction
             summary = self._extract_summary(tool_name, full_response)
@@ -1536,6 +1740,47 @@ def start_stdio_server(router: MCPRouter):
                     }
                 },
             },
+            # Event system pseudo-tools (handled by hooks, not router)
+            {
+                "name": "router__request",
+                "description": "Async tool request. Returns correlation_id. Poll router__poll for response.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "tool": {"type": "string", "description": "Tool name (e.g., serena__find_symbol)"},
+                        "args": {"type": "object", "description": "Tool arguments"}
+                    },
+                    "required": ["tool", "args"]
+                }
+            },
+            {
+                "name": "router__poll",
+                "description": "Poll for async response by correlation_id.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "correlation_id": {"type": "string", "description": "Correlation ID from router__request"}
+                    },
+                    "required": ["correlation_id"]
+                }
+            },
+            {
+                "name": "router__publish",
+                "description": "Publish event to topic.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "topic": {"type": "string", "description": "Event topic"},
+                        "data": {"type": "object", "description": "Event data"}
+                    },
+                    "required": ["topic", "data"]
+                }
+            },
+            {
+                "name": "router__list_tools",
+                "description": "List all available tools.",
+                "inputSchema": {"type": "object", "properties": {}}
+            },
         ]
         for server in router.list_servers():
             name = server["name"]
@@ -1557,13 +1802,25 @@ def start_stdio_server(router: MCPRouter):
                 pass  # Skip failed backends
         return all_tools
 
+    _router_log("stdio", "Server started, waiting for requests...")
+
     for line in sys.stdin:
+        # Log raw input BEFORE parsing
+        _router_log("stdio", f"RAW_INPUT len={len(line)} preview={line[:100]!r}")
+
         request_id = None
         try:
             request = json.loads(line.strip())
             method = request.get("method", "")
             params = request.get("params", {})
             request_id = request.get("id")
+
+            # Log all incoming requests
+            if method == "tools/call":
+                tool_name = params.get("name", "unknown")
+                _router_log("stdio", f"RECV tools/call tool={tool_name} id={request_id}")
+            elif method not in ("notifications/initialized",):
+                _router_log("stdio", f"RECV method={method} id={request_id}")
 
             # MCP handshake
             if method == "initialize":
@@ -1664,19 +1921,23 @@ def start_stdio_server(router: MCPRouter):
 
             # Write response (skip for notifications)
             if request_id is not None:
-                send({
+                response_msg = {
                     "jsonrpc": "2.0",
                     "id": request_id,
                     "result": result
-                })
+                }
+                _router_log("stdio", f"SEND id={request_id} result_size={len(json.dumps(result))}")
+                send(response_msg)
 
         except json.JSONDecodeError as e:
+            _router_log("stdio", f"ERROR parse error: {e}", "ERROR")
             send({
                 "jsonrpc": "2.0",
                 "id": request_id,
                 "error": {"code": -32700, "message": f"Parse error: {e}"}
             })
         except Exception as e:
+            _router_log("stdio", f"ERROR exception: {str(e)[:100]}", "ERROR")
             send({
                 "jsonrpc": "2.0",
                 "id": request_id,

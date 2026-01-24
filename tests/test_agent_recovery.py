@@ -7,7 +7,7 @@ Uses workflow_client for state management via MCP router.
 
 import sys
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import pytest
 
@@ -15,8 +15,8 @@ import pytest
 lib_dir = Path(__file__).parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
-import workflow_client
-from agent_recovery import detect_failed_agent, handle_failed_agent, get_failed_agents
+import workflow_client  # noqa: E402
+from agent_recovery import detect_failed_agent, handle_failed_agent, get_failed_agents  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

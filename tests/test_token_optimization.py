@@ -7,11 +7,9 @@ Tests cover:
 4. Prompt compression (reduce agent briefing size)
 """
 
-import json
 import os
-import tempfile
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
@@ -141,7 +139,7 @@ class TestContextCaching:
 
         # First resolve
         ctx1 = resolver.resolve(context_hierarchy["feature"])
-        original_content = ctx1.to_markdown()
+        _original_content = ctx1.to_markdown()  # noqa: F841
 
         # Modify context file
         time.sleep(0.1)  # Ensure mtime changes
@@ -407,7 +405,7 @@ class TestTokenOptimizationIntegration:
         # 1. Start workflow with workflow_client
         import sys
         sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
-        import workflow_client
+        import workflow_client  # noqa: E402
 
         workflow_client.workflow_set_state(
             "iterate",
@@ -415,20 +413,20 @@ class TestTokenOptimizationIntegration:
         )
 
         # 2. Resolve context with caching
-        from context.cached_resolver import CachedResolver
+        from context.cached_resolver import CachedResolver  # noqa: E402
 
         resolver = CachedResolver(cache_dir=temp_state_dir)
-        ctx = resolver.resolve(context_hierarchy["feature"])
+        _ctx = resolver.resolve(context_hierarchy["feature"])  # noqa: F841
         assert resolver.get_stats()["cache_misses"] == 1
 
         # 3. Generate compressed briefing
-        from lib.prompt_compression import generate_agent_briefing
+        from lib.prompt_compression import generate_agent_briefing  # noqa: E402
 
         briefing = generate_agent_briefing("implementer", phase="implement", max_tokens=1000)
         assert len(briefing) < 4000  # Under 1000 tokens
 
         # 4. Log with rotation
-        from lib.log_rotation import RotatingLog
+        from lib.log_rotation import RotatingLog  # noqa: E402
 
         log = RotatingLog(temp_state_dir / "workflow.log", max_size_kb=100, max_files=3)
         log.write(f"Integration test completed at {datetime.now()}\n")
@@ -453,9 +451,9 @@ class TestTokenOptimizationIntegration:
         with mock.patch.object(Path, "read_text", counting_read):
             with mock.patch.object(Path, "write_text", counting_write):
                 # Simulate workflow operations
-                import sys
+                import sys  # noqa: E402
                 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
-                import workflow_client
+                import workflow_client  # noqa: E402
 
                 # Single save/load via MCP - no file I/O
                 workflow_client.workflow_set_state("iterate", {"active": True})

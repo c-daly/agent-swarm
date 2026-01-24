@@ -2,7 +2,6 @@
 """Tests for async connection pool with multiplexing."""
 
 import asyncio
-import json
 import sys
 from pathlib import Path
 
@@ -11,9 +10,9 @@ import pytest
 # Add lib to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
 
-from config import BackendConfig
-from errors import ConnectionError, RequestTimeoutError
-from connection_pool import AsyncConnection
+from config import BackendConfig  # noqa: E402
+from errors import ConnectionError, RequestTimeoutError  # noqa: E402
+from connection_pool import AsyncConnection  # noqa: E402
 
 
 @pytest.fixture
@@ -31,8 +30,8 @@ def backend_config():
 
 # Simple echo server script for integration tests
 ECHO_SERVER = '''
-import json
-import sys
+import json  # noqa: E402
+import sys  # noqa: E402
 
 while True:
     line = sys.stdin.readline()
@@ -126,8 +125,8 @@ class TestAsyncConnection:
         """Request times out if no response received."""
         # Server that never responds
         slow_server = '''
-import time
-import sys
+import time  # noqa: E402
+import sys  # noqa: E402
 while True:
     line = sys.stdin.readline()
     if not line:
@@ -170,7 +169,7 @@ while True:
         """Connection detects when process dies unexpectedly."""
         # Server that exits immediately
         exit_server = '''
-import sys
+import sys  # noqa: E402
 sys.exit(0)
 '''
         config = BackendConfig(
@@ -233,7 +232,7 @@ class TestConnectionPool:
     @pytest.mark.asyncio
     async def test_pool_initialization(self):
         """ConnectionPool initializes with config."""
-        from connection_pool import ConnectionPool
+        from connection_pool import ConnectionPool  # noqa: E402
         
         config = BackendConfig(
             name="test",
@@ -250,7 +249,7 @@ class TestConnectionPool:
     @pytest.mark.asyncio
     async def test_pool_acquire_returns_connection(self):
         """acquire() returns a working connection."""
-        from connection_pool import ConnectionPool
+        from connection_pool import ConnectionPool  # noqa: E402
         
         config = BackendConfig(
             name="test",
@@ -274,7 +273,7 @@ class TestConnectionPool:
     @pytest.mark.asyncio
     async def test_pool_reuses_connections(self):
         """Pool reuses connections instead of creating new ones."""
-        from connection_pool import ConnectionPool
+        from connection_pool import ConnectionPool  # noqa: E402
         
         config = BackendConfig(
             name="test",
@@ -303,7 +302,7 @@ class TestConnectionPool:
     @pytest.mark.asyncio
     async def test_pool_semaphore_limits_concurrent(self):
         """Semaphore limits concurrent requests."""
-        from connection_pool import ConnectionPool
+        from connection_pool import ConnectionPool  # noqa: E402
         
         config = BackendConfig(
             name="test",
@@ -346,7 +345,7 @@ class TestConnectionPool:
     @pytest.mark.asyncio
     async def test_pool_stats_tracks_metrics(self):
         """Pool tracks usage statistics."""
-        from connection_pool import ConnectionPool
+        from connection_pool import ConnectionPool  # noqa: E402
         
         config = BackendConfig(
             name="test",
@@ -376,7 +375,7 @@ class TestConnectionPool:
     @pytest.mark.asyncio
     async def test_pool_close_terminates_all(self):
         """close() terminates all connections."""
-        from connection_pool import ConnectionPool
+        from connection_pool import ConnectionPool  # noqa: E402
         
         config = BackendConfig(
             name="test",

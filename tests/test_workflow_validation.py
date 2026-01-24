@@ -19,9 +19,9 @@ import pytest
 pytestmark = pytest.mark.skip(
     reason="Integration test: requires MCP router for workflow_client state"
 )
-from pathlib import Path
+from pathlib import Path  # noqa: E402
 
-import pytest
+import pytest  # noqa: E402
 
 # Add lib to path
 lib_dir = Path(__file__).parent.parent / "lib"
@@ -302,7 +302,7 @@ class TestStatusOutput:
 
     def test_status_when_not_active(self):
         """status() returns message when not active."""
-        from iterate_workflow import status
+        from iterate_workflow import status  # noqa: E402
 
         # No workflow started
         result = status()
@@ -331,9 +331,9 @@ class TestExceptionHandling:
 
     def test_log_handles_file_errors(self):
         """_log handles OSError when log file can't be created."""
-        from unittest.mock import patch
-        from iterate_workflow import _reset_logger, _get_logger
-        import logging
+        from unittest.mock import patch  # noqa: E402
+        from iterate_workflow import _reset_logger, _get_logger  # noqa: E402
+        import logging  # noqa: E402
 
         _reset_logger()
 
@@ -346,8 +346,8 @@ class TestExceptionHandling:
 
     def test_log_handles_general_exceptions(self):
         """_log handles general exceptions gracefully."""
-        from unittest.mock import patch, MagicMock
-        from iterate_workflow import _log, _reset_logger
+        from unittest.mock import patch, MagicMock  # noqa: E402
+        from iterate_workflow import _log, _reset_logger  # noqa: E402
 
         _reset_logger()
 
@@ -453,8 +453,8 @@ class TestCLI:
     @classmethod
     def run_cli(cls, *args):
         """Run CLI with coverage tracking."""
-        import subprocess
-        import os
+        import subprocess  # noqa: E402
+        import os  # noqa: E402
         env = os.environ.copy()
         coveragerc = cls.PROJECT_ROOT / ".coveragerc"
         if coveragerc.exists():

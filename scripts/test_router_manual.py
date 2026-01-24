@@ -16,7 +16,7 @@ from pathlib import Path
 # Add lib to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
 
-from mcp_router import MCPRouter, RouterResponse
+from mcp_router import MCPRouter, RouterResponse  # noqa: E402
 
 
 def test_registration():

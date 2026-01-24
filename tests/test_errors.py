@@ -1,5 +1,4 @@
 """Tests for router error hierarchy."""
-import pytest
 
 
 class TestRouterErrors:

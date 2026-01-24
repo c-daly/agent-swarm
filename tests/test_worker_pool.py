@@ -14,8 +14,8 @@ import pytest
 lib_dir = Path(__file__).parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
-import workflow_client
-from worker_pool import (
+import workflow_client  # noqa: E402
+from worker_pool import (  # noqa: E402
     start,
     stop,
     get_state,

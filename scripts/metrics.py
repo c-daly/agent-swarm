@@ -104,7 +104,7 @@ def analyze_activity_log():
                                     match = re.search(r'([a-zA-Z0-9_/-]+\.py)', command)
                                     if match:
                                         script_name = match.group(1).split('/')[-1]
-                            except:
+                            except Exception:
                                 script_name = "unknown_script.py"
                         elif " -c " in command or " << " in command:
                             is_script = True
@@ -139,7 +139,7 @@ def analyze_activity_log():
                     metrics["duplicate_reads"] += 1
                 seen_reads.add(file)
                 metrics["files_read"].append(file)
-            except Exception as e:
+            except Exception:
                 pass  # Silent exception
 
     metrics["unique_files"] = len(seen_reads)
@@ -204,7 +204,7 @@ def calculate_token_estimate(log_metrics):
                     subagent_tokens += 40000
                 else:
                     subagent_tokens += 50000
-        except Exception as e:
+        except Exception:
             pass  # Silent exception
 
     total_tokens += subagent_tokens
@@ -227,7 +227,7 @@ def calculate_token_impact(log_metrics):
 
     # DATA VOLUME METRICS
     total_reads = log_metrics.get("total_reads", 0)
-    unique_files = log_metrics.get("unique_files", 0)
+    _unique_files = log_metrics.get("unique_files", 0)  # noqa: F841
     tools = log_metrics.get("tools_by_type", {})
 
     # Estimate total lines processed (rough: 50 lines per read on average)
@@ -333,7 +333,7 @@ def show_report():
 
     # Token Impact Analysis
     impact = calculate_token_impact(log_metrics)
-    print(f"\n🎯 Token Impact Analysis:")
+    print("\n🎯 Token Impact Analysis:")
     print(f"   Impact Score: {impact['impact_score']:.0f}/100", end="")
     if impact['impact_score'] >= 50:
         print(" 🔴 HIGH - Significant optimization potential")
@@ -342,18 +342,18 @@ def show_report():
     else:
         print(" 🟢 LOW - Efficient usage")
 
-    print(f"\n   Data Volume:")
+    print("\n   Data Volume:")
     print(f"     Total reads: {impact['data_volume']['total_reads']}")
     print(f"     Estimated lines: {impact['data_volume']['estimated_lines']:,}")
     print(f"     Searches: {impact['data_volume']['searches']}")
 
-    print(f"\n   Efficiency:")
+    print("\n   Efficiency:")
     print(f"     Duplicate rate: {impact['efficiency']['duplicate_rate']:.1f}%")
     print(f"     Script adoption: {impact['efficiency']['script_adoption']:.1f}%")
     print(f"     Subagents: {impact['efficiency']['subagent_count']}")
 
     if impact['recommendations']:
-        print(f"\n   Recommendations:")
+        print("\n   Recommendations:")
         for rec in impact['recommendations']:
             priority = rec['priority']
             icon = {"HIGH": "🔴", "MEDIUM": "🟡", "INFO": "ℹ️", "SUCCESS": "✅"}.get(priority, "•")
@@ -361,7 +361,7 @@ def show_report():
             print(f"        → {rec['action']}")
 
     # Tool usage breakdown
-    print(f"\n🔧 Tool Usage:")
+    print("\n🔧 Tool Usage:")
     total_tools = sum(log_metrics["tools_by_type"].values())
     for tool, count in sorted(log_metrics["tools_by_type"].items(), key=lambda x: -x[1]):
         pct = count / total_tools * 100 if total_tools > 0 else 0
@@ -372,27 +372,27 @@ def show_report():
     direct_reads = log_metrics["tools_by_type"].get("Read", 0)
     total_data_ops = script_calls + direct_reads
 
-    print(f"\n📜 Script Usage:")
+    print("\n📜 Script Usage:")
     print(f"   Script calls: {script_calls}")
     print(f"   Direct reads: {direct_reads}")
     if total_data_ops > 0:
         adoption = script_calls / total_data_ops * 100
         print(f"   Adoption rate: {adoption:.1f}% {'✅' if adoption >= 60 else '⚠️' if adoption >= 30 else '❌'}")
-        print(f"   Target: 60%+")
+        print("   Target: 60%+")
 
     if log_metrics.get("scripts_used"):
-        print(f"\n   Scripts used:")
+        print("\n   Scripts used:")
         for script, count in sorted(log_metrics["scripts_used"].items(), key=lambda x: -x[1]):
             print(f"      {script}: {count}")
 
     # Efficiency metrics
-    print(f"\n⚡ Efficiency Metrics:")
+    print("\n⚡ Efficiency Metrics:")
     print(f"   Files read: {log_metrics['total_reads']}")
     print(f"   Unique files: {log_metrics['unique_files']}")
     print(f"   Duplicate reads: {log_metrics['duplicate_reads']} ({log_metrics.get('duplicate_rate', 0):.1f}%)")
 
     # Block analysis
-    print(f"\n🚫 Blocks:")
+    print("\n🚫 Blocks:")
     total_blocks = sum(log_metrics["blocks_by_reason"].values())
     if total_blocks > 0:
         for reason, count in sorted(log_metrics["blocks_by_reason"].items(), key=lambda x: -x[1]):
@@ -402,7 +402,7 @@ def show_report():
         print("   None")
 
     # Recommendations
-    print(f"\n💡 Recommendations:")
+    print("\n💡 Recommendations:")
 
     # Script adoption recommendations
     if total_data_ops > 0:
@@ -463,7 +463,7 @@ def compare_to_baseline():
     baseline_score = baseline["efficiency_score"]
     current_score = calculate_efficiency_score(current)
 
-    print(f"\n📊 Efficiency Score:")
+    print("\n📊 Efficiency Score:")
     print(f"   Baseline: {baseline_score:.1f}")
     print(f"   Current:  {current_score:.1f}")
 
@@ -476,7 +476,7 @@ def compare_to_baseline():
         print(f"   Change:   {diff:.1f} → Same")
 
     # Compare key metrics
-    print(f"\n📈 Key Metrics:")
+    print("\n📈 Key Metrics:")
 
     metrics_compare = [
         ("Total reads", "total_reads"),
@@ -502,7 +502,7 @@ def compare_to_baseline():
             print(f"   {label:20} {base_val:6} → {curr_val:6} ({diff:+}) {symbol}")
 
     # Tool usage changes
-    print(f"\n🔧 Tool Usage Changes:")
+    print("\n🔧 Tool Usage Changes:")
     base_tools = baseline["metrics"].get("tools_by_type", {})
     curr_tools = current.get("tools_by_type", {})
 

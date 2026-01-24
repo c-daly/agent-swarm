@@ -4,13 +4,12 @@
 import sys
 from pathlib import Path
 
-import pytest
 
 # Ensure lib is in path
 lib_dir = Path(__file__).parent.parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
-from workflow_base import (
+from workflow_base import (  # noqa: E402
     WorkflowPhase, PhaseTransition, WorkflowDefinition,
     TransitionResult, KickbackReason, WorkflowEngine
 )
@@ -215,5 +214,5 @@ def test_parallel_adversary_check():
     assert task_id is not None
 
     # Can poll for result
-    result = engine.get_adversary_result(task_id, block=False)
+    _result = engine.get_adversary_result(task_id, block=False)
     # Result may be None if still running (or pending dict if blocking)

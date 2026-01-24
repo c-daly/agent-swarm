@@ -4,13 +4,12 @@
 import sys
 from pathlib import Path
 
-import pytest
 
 # Ensure lib is in path
 lib_dir = Path(__file__).parent.parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
-from pr_comment_workflow import PRCommentWorkflow
+from pr_comment_workflow import PRCommentWorkflow  # noqa: E402
 
 
 def test_pr_comment_workflow_phases():

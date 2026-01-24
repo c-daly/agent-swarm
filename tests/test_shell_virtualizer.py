@@ -4,7 +4,6 @@ Tests command categorization and redirect suggestions for Bash commands
 that should use dedicated tools instead (cat -> FILE_READ, grep -> FILE_SEARCH, etc).
 """
 
-import pytest
 import sys
 from pathlib import Path
 

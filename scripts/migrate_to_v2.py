@@ -10,7 +10,6 @@ Transforms:
 
 import json
 from pathlib import Path
-from datetime import datetime
 
 TELEMETRY_FILE = Path.home() / ".claude" / "plugins" / "agent-swarm" / ".state" / "telemetry.json"
 
@@ -101,10 +100,10 @@ def migrate_to_v2():
     with open(TELEMETRY_FILE, "w") as f:
         json.dump(data, f, indent=2)
     
-    print(f"Migration complete!")
+    print("Migration complete!")
     print(f"  - Version: {data['version']}")
     print(f"  - Days populated: {len(days)}")
-    print(f"  - Filter options:")
+    print("  - Filter options:")
     print(f"    - Tools: {len(filter_options['tools'])}")
     print(f"    - Backends: {len(filter_options['backends'])}")
     print(f"    - Sessions: {len(filter_options['sessions'])}")

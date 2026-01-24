@@ -25,7 +25,6 @@ CLI:
 
 import json
 import sys
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,14 +36,13 @@ scripts_dir = lib_dir.parent / "scripts"
 sys.path.insert(0, str(lib_dir))
 sys.path.insert(0, str(scripts_dir))
 
-import workflow_client
-from iterate_state import (
-    TaskQueue,
+import workflow_client  # noqa: E402
+from iterate_state import (  # noqa: E402
     TaskStatus,
     load_queue,
     save_queue,
 )
-from worker_pool import (
+from worker_pool import (  # noqa: E402
     start as worker_pool_start,
     stop as worker_pool_stop,
     is_active as worker_pool_is_active,
@@ -52,8 +50,6 @@ from worker_pool import (
     spawn_worker,
     on_worker_complete,
     get_active_workers,
-    is_complete as worker_pool_is_complete,
-    get_state as get_worker_state,
 )
 
 
@@ -148,7 +144,7 @@ def start_orchestrate(config: OrchestrateConfig) -> OrchestrateState:
     )
     _save_state(state)
 
-    print(f"[ORCHESTRATE] Started")
+    print("[ORCHESTRATE] Started")
     print(f"  Max agents: {config.max_agents}")
     print(f"  Poll interval: {config.review_poll_interval_minutes}m")
     print(f"  PR: {config.pr_id}")
@@ -301,8 +297,10 @@ def handle_worker_completion(worker_id: str, success: bool, result: Optional[dic
             queue.mark_complete(task_id, result)
             print(f"[ORCHESTRATE] Task {task_id} completed successfully")
         else:
-            queue.mark_failed(task_id, result.get("error", "Unknown error") if result else "Unknown error")
-            print(f"[ORCHESTRATE] Task {task_id} failed")
+            error = result.get("error", "Unknown error") if result else "Unknown error"
+            will_retry = queue.retry_or_escalate(task_id, error)
+            if not will_retry:
+                print(f"[ORCHESTRATE] Task {task_id} requires manual intervention", file=sys.stderr)
 
         save_queue(queue)
 

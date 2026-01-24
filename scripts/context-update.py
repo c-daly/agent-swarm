@@ -12,11 +12,10 @@ from pathlib import Path
 # Add context module to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from context.updater import (
+from context.updater import (  # noqa: E402
     list_proposals,
     apply_proposal,
     reject_proposal,
-    propose_context_update,
     DYNAMIC_SECTIONS,
     STABLE_SECTIONS,
 )

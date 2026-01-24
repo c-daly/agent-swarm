@@ -1,7 +1,6 @@
 """Tests for summarization charts no-data handling."""
-import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import sys
 
 # Add scripts to path

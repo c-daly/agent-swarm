@@ -3,7 +3,7 @@
 import json
 import pytest
 from datetime import datetime, timezone, timedelta
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 import sys
 from pathlib import Path
 
@@ -11,9 +11,9 @@ from pathlib import Path
 lib_dir = Path(__file__).parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
-import orchestrate
-import iterate_workflow
-import workflow_client
+import orchestrate  # noqa: E402
+import iterate_workflow  # noqa: E402
+import workflow_client  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -24,14 +24,14 @@ def setup_teardown():
     # Clear any orchestrate state
     try:
         orchestrate.stop_orchestrate("test_cleanup")
-    except:
+    except Exception:
         pass
     yield
     # Cleanup after test
     workflow_client.workflow_stop("iterate")
     try:
         orchestrate.stop_orchestrate("test_cleanup")
-    except:
+    except Exception:
         pass
 
 
@@ -174,7 +174,7 @@ class TestCommentFetching:
     @patch("subprocess.run")
     def test_fetch_handles_timeout(self, mock_run):
         """Should handle subprocess timeout."""
-        import subprocess
+        import subprocess  # noqa: E402
         mock_run.side_effect = subprocess.TimeoutExpired("gh", 30)
 
         comments = iterate_workflow.fetch_pr_review_status(123)

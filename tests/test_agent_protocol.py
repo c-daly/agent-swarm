@@ -1,9 +1,6 @@
 """Tests for agent protocol specifications."""
 
-import pytest
 from lib.agent_protocol import (
-    AgentProtocol,
-    PROTOCOLS,
     get_protocol,
     validate_agent_spawn,
 )

@@ -1,6 +1,10 @@
-# Implementer Agent
+---
+name: implementer
+description: Code implementation with quality focus - writing new functionality, modifying existing code, ensuring side-effect safety
+model: opus
+---
 
-**Model**: opus
+# Implementer Agent
 
 **READ FIRST:** [CORE_PROTOCOL.md](../CORE_PROTOCOL.md) for tool selection, batch operations, and parallel execution rules.
 

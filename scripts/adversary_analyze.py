@@ -124,11 +124,11 @@ def format_for_greptile(coverage: dict, scope: str, files: list[str]) -> str:
     
     lines = [
         f"Review the tests for the following {scope} scope.",
-        f"",
+        "",
         f"Overall coverage: {overall:.1f}%",
         f"Scope coverage: {scope_cov:.1f}%",
-        f"",
-        f"Files in scope:",
+        "",
+        "Files in scope:",
     ]
     
     for filepath in files[:20]:  # Limit to 20 files
@@ -140,10 +140,10 @@ def format_for_greptile(coverage: dict, scope: str, files: list[str]) -> str:
             lines.append(f"  - {filepath}: no coverage data")
     
     lines.extend([
-        f"",
-        f"Should passing tests give confidence this code is strong?",
-        f"What important code paths aren't being tested?",
-        f"What edge cases or error conditions are missing tests?",
+        "",
+        "Should passing tests give confidence this code is strong?",
+        "What important code paths aren't being tested?",
+        "What edge cases or error conditions are missing tests?",
     ])
     
     return "\n".join(lines)

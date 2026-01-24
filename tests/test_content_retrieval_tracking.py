@@ -4,7 +4,6 @@ Tests tracking of whether agents retrieve full content after receiving summaries
 """
 
 import tempfile
-from pathlib import Path
 
 import pytest
 

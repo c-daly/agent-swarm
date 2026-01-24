@@ -31,7 +31,7 @@ lib_dir = Path(__file__).parent
 if str(lib_dir) not in sys.path:
     sys.path.insert(0, str(lib_dir))
 
-import workflow_client
+import workflow_client  # noqa: E402
 
 
 def _generate_worker_id() -> str:

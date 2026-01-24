@@ -12,8 +12,8 @@ from pathlib import Path
 lib_dir = Path(__file__).parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
-import workflow_client
-from lib.review_gate import (
+import workflow_client  # noqa: E402
+from lib.review_gate import (  # noqa: E402
     ReviewState,
     load_review_state,
     save_review_state,
