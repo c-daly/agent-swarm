@@ -241,5 +241,70 @@ class TestIterateEnforcementPhaseLocking:
                 assert isinstance(allowed, bool)
 
 
+class TestAgentTypeRegistration:
+    """Test that SubagentStart hook registers agent type for telemetry."""
+    
+    def test_subagent_start_calls_register_agent_type(self):
+        """SubagentStart should call store.register_agent_type(agent_id, agent_type)."""
+        mock_workflow_client = MagicMock()
+        mock_workflow_client.workflow_get_state.return_value = {}
+        mock_workflow_client.workflow_is_active.return_value = False
+        mock_workflow_client.agent_set_state.return_value = {"success": True}
+        
+        mock_store = MagicMock()
+        
+        with patch.dict('sys.modules', {'workflow_client': mock_workflow_client}):
+            hook = load_hook_module('subagent-enforcement')
+            
+            hook_input = {
+                "sessionId": "test-session-123",
+                "agentId": "sub-abc12345",
+                "agentType": "implementer",
+                "task": "Add feature X"
+            }
+            
+            # Patch the DuckDBStore import inside the hook
+            with patch.object(hook, 'get_telemetry_store', return_value=mock_store):
+                with patch('sys.stdin', Mock(read=lambda: json.dumps(hook_input))):
+                    with patch('builtins.print'):
+                        hook.main()
+            
+            # Verify register_agent_type was called with correct args
+            mock_store.register_agent_type.assert_called_once_with(
+                "sub-abc12345", "implementer"
+            )
+    
+    def test_register_agent_type_failure_does_not_fail_hook(self):
+        """If register_agent_type fails, hook should still complete successfully."""
+        mock_workflow_client = MagicMock()
+        mock_workflow_client.workflow_get_state.return_value = {}
+        mock_workflow_client.workflow_is_active.return_value = False
+        mock_workflow_client.agent_set_state.return_value = {"success": True}
+        
+        mock_store = MagicMock()
+        mock_store.register_agent_type.side_effect = Exception("DB error")
+        
+        with patch.dict('sys.modules', {'workflow_client': mock_workflow_client}):
+            hook = load_hook_module('subagent-enforcement')
+            
+            hook_input = {
+                "sessionId": "test-session-123",
+                "agentId": "sub-abc12345",
+                "agentType": "implementer",
+                "task": "Add feature X"
+            }
+            
+            with patch.object(hook, 'get_telemetry_store', return_value=mock_store):
+                with patch('sys.stdin', Mock(read=lambda: json.dumps(hook_input))):
+                    with patch('builtins.print') as mock_print:
+                        # Should not raise
+                        hook.main()
+            
+            # Verify hook still produced output
+            assert mock_print.called
+            output = json.loads(mock_print.call_args[0][0])
+            assert "hookSpecificOutput" in output
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

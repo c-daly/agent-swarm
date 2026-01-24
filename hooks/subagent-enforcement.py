@@ -43,6 +43,23 @@ except ImportError:
     def get_tool_category(name):
         return None
 
+# Telemetry store for agent type registration
+_telemetry_store = None
+STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
+
+
+def get_telemetry_store():
+    """Get or create DuckDBStore for telemetry."""
+    global _telemetry_store
+    if _telemetry_store is None:
+        try:
+            from stores.duckdb_store import DuckDBStore
+            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            _telemetry_store = DuckDBStore(data_dir=str(STATE_DIR))
+        except Exception:
+            pass  # Telemetry unavailable
+    return _telemetry_store
+
 
 def load_session_state() -> dict:
     """Load session state from state server."""
@@ -178,6 +195,14 @@ def main():
 
     # Use Claude Code's agentId if provided, otherwise generate one
     agent_id = input_data.get("agentId") or f"sub-{uuid.uuid4().hex[:8]}"
+
+    # Register agent type for telemetry (non-blocking)
+    try:
+        store = get_telemetry_store()
+        if store:
+            store.register_agent_type(agent_id, agent_type)
+    except Exception:
+        pass  # Don't fail the hook if telemetry registration fails
 
     # Load all state from state server
     session_state = load_session_state()
