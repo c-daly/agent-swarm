@@ -496,6 +496,10 @@ class MCPRouter:
         self._socket_running: bool = False
         self._port_file = Path(__file__).parent.parent / ".state" / "router.port"
 
+        # Federation state
+        self._is_primary: bool = False  # True if we own the socket listener
+        self._main_router_port: int = 0  # Port of main router (if we're secondary)
+
     def _cache_workflow_state(self, tool_name: str, args: dict, response: dict) -> None:
         """Cache workflow state from set/update/start operations."""
         if tool_name == "workflow_set_state":
@@ -690,31 +694,77 @@ class MCPRouter:
     # Socket Listener for External Clients
     # ─────────────────────────────────────────────────────────────
 
-    def start_socket_listener(self, port: int = 0) -> int:
-        """Start socket listener for external clients (hooks, CLIs).
+    def start_socket_listener(self, port: int = 0, force_primary: bool = False) -> int:
+        """Start socket listener with federation support.
+
+        Checks for existing main router first. If one exists and is responsive,
+        this router becomes secondary and proxies requests to the main.
+        Otherwise, this router becomes primary.
 
         Args:
             port: Port to listen on (0 for auto-assign).
+            force_primary: If True, always try to become primary (for testing).
 
         Returns:
-            The actual port being used.
+            The actual port being used (main router's port if secondary).
         """
-        self._socket_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._socket_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._socket_server.bind(("127.0.0.1", port))
-        self._socket_server.listen(5)
-        self._socket_port = self._socket_server.getsockname()[1]
-        self._socket_running = True
+        # Federation check: is there already a main router?
+        if not force_primary:
+            main_port = self._check_main_router()
+            if main_port:
+                # Become secondary - proxy to main router
+                self._is_primary = False
+                self._main_router_port = main_port
+                self._socket_port = main_port  # Report main's port
+                _router_log("federation", f"Joined as secondary, main router on port {main_port}")
+                return main_port
 
-        # Write port to file for client discovery
-        self._port_file.parent.mkdir(parents=True, exist_ok=True)
-        self._port_file.write_text(str(self._socket_port))
+        # Try to become primary
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                self._socket_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self._socket_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                self._socket_server.bind(("127.0.0.1", port))
+                self._socket_server.listen(5)
+                self._socket_port = self._socket_server.getsockname()[1]
+                self._socket_running = True
+                self._is_primary = True
 
-        # Start accept loop in background thread
-        self._socket_thread = Thread(target=self._socket_accept_loop, daemon=True)
-        self._socket_thread.start()
+                # Write port to file for client/secondary discovery
+                self._port_file.parent.mkdir(parents=True, exist_ok=True)
+                self._port_file.write_text(str(self._socket_port))
 
-        return self._socket_port
+                # Start accept loop in background thread
+                self._socket_thread = Thread(target=self._socket_accept_loop, daemon=True)
+                self._socket_thread.start()
+
+                _router_log("federation", f"Started as PRIMARY on port {self._socket_port}")
+                return self._socket_port
+
+            except OSError as e:
+                # Port binding failed - likely race condition
+                if e.errno == 98:  # EADDRINUSE
+                    _router_log("federation", f"Bind failed (attempt {attempt + 1}), checking for main router")
+                    if self._socket_server:
+                        self._socket_server.close()
+                        self._socket_server = None
+
+                    # Another router might have just started - check again
+                    import time
+                    time.sleep(0.1 * (attempt + 1))  # Backoff
+                    main_port = self._check_main_router()
+                    if main_port:
+                        self._is_primary = False
+                        self._main_router_port = main_port
+                        self._socket_port = main_port
+                        _router_log("federation", f"Lost race, joined as secondary on port {main_port}")
+                        return main_port
+                else:
+                    raise
+
+        # All retries failed
+        raise RuntimeError("Failed to start socket listener after retries")
 
     def stop_socket_listener(self) -> None:
         """Stop socket listener and clean up port file."""
@@ -724,11 +774,108 @@ class MCPRouter:
                 self._socket_server.close()
             except Exception:
                 pass
-        if self._port_file.exists():
+        # Only delete port file if we're the primary (we created it)
+        if self._is_primary and self._port_file.exists():
             try:
                 self._port_file.unlink()
             except Exception:
                 pass
+
+    # ─────────────────────────────────────────────────────────────
+    # Federation - Multiple Router Coordination
+    # ─────────────────────────────────────────────────────────────
+
+    def _check_main_router(self) -> Optional[int]:
+        """Check if a main router exists and is responsive.
+
+        Returns:
+            Port of main router if alive, None otherwise.
+        """
+        if not self._port_file.exists():
+            return None
+
+        try:
+            port = int(self._port_file.read_text().strip())
+            # Try to connect and ping
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2.0)
+            sock.connect(("127.0.0.1", port))
+
+            # Send ping request
+            request = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "router__ping", "arguments": {}}
+            }
+            sock.sendall(json.dumps(request).encode() + b"\n")
+
+            # Wait for response
+            response_data = b""
+            while b"\n" not in response_data:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                response_data += chunk
+
+            sock.close()
+
+            if response_data:
+                response = json.loads(response_data.decode().strip())
+                if "result" in response:
+                    _router_log("federation", f"Main router alive on port {port}")
+                    return port
+        except (socket.error, json.JSONDecodeError, ValueError) as e:
+            _router_log("federation", f"Main router check failed: {e}", "DEBUG")
+        except Exception as e:
+            _router_log("federation", f"Unexpected error checking main router: {e}", "WARN")
+
+        return None
+
+    def _proxy_to_main(self, request: dict) -> dict:
+        """Proxy a request to the main router.
+
+        Args:
+            request: JSON-RPC request to forward.
+
+        Returns:
+            Response from main router.
+        """
+        if not self._main_router_port:
+            return {"error": {"code": -32603, "message": "No main router configured"}}
+
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(30.0)
+            sock.connect(("127.0.0.1", self._main_router_port))
+
+            # Send request
+            sock.sendall(json.dumps(request).encode() + b"\n")
+
+            # Receive response
+            response_data = b""
+            while b"\n" not in response_data:
+                chunk = sock.recv(8192)
+                if not chunk:
+                    break
+                response_data += chunk
+
+            sock.close()
+
+            if response_data:
+                return json.loads(response_data.decode().strip())
+            return {"error": {"code": -32603, "message": "Empty response from main router"}}
+
+        except socket.timeout:
+            _router_log("federation", "Proxy timeout to main router", "ERROR")
+            return {"error": {"code": -32603, "message": "Timeout proxying to main router"}}
+        except Exception as e:
+            _router_log("federation", f"Proxy error: {e}", "ERROR")
+            return {"error": {"code": -32603, "message": f"Proxy error: {e}"}}
+
+    def is_primary(self) -> bool:
+        """Check if this router is the primary (owns socket listener)."""
+        return self._is_primary
 
     def _socket_accept_loop(self) -> None:
         """Accept connections and spawn handler threads."""
@@ -823,7 +970,21 @@ class MCPRouter:
                 args = params.get("arguments", {})
                 _router_log("socket", f"{log_prefix} ROUTE tool={tool_name} args_keys={list(args.keys())}")
 
-                if "__" in tool_name:
+                # Handle router built-in tools first
+                if tool_name == "router__ping":
+                    result = {"content": [{"type": "text", "text": "pong! Router is working."}]}
+                elif tool_name == "router__telemetry":
+                    if self.telemetry:
+                        summary = self.telemetry.get_summary()
+                        summary["socket_stats"] = self.get_socket_stats()
+                        summary["federation"] = {"is_primary": self._is_primary, "main_port": self._main_router_port}
+                        result = {"content": [{"type": "text", "text": json.dumps(summary, indent=2)}]}
+                    else:
+                        result = {"content": [{"type": "text", "text": "Telemetry not enabled"}]}
+                elif tool_name == "router__list_tools":
+                    tools = self._list_all_tools_for_socket()
+                    result = {"content": [{"type": "text", "text": json.dumps({"tools": [t["name"] for t in tools]}, indent=2)}]}
+                elif "__" in tool_name:
                     prefix, actual_tool = tool_name.split("__", 1)
                     # Find backend by prefix
                     destination = None
@@ -1159,6 +1320,78 @@ class MCPRouter:
                 hook(destination, tool_name, args)
             except Exception:
                 pass  # Don't let hooks break routing
+
+        # Federation: if secondary, proxy to main router
+        if not self._is_primary and self._main_router_port:
+            _router_log("route", f"PROXY to main router port {self._main_router_port}")
+            proxy_request = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": f"{destination}__{tool_name}",
+                    "arguments": args
+                }
+            }
+            proxy_response = self._proxy_to_main(proxy_request)
+
+            # Extract result from proxy response
+            if "error" in proxy_response:
+                error_msg = str(proxy_response.get("error", {}).get("message", "Proxy error"))
+                response = RouterResponse(
+                    summary=f"Error: {error_msg}",
+                    full={"error": error_msg},
+                    correlation_id=correlation_id
+                )
+            else:
+                result = proxy_response.get("result", {})
+                # Parse the envelope if present
+                if isinstance(result, dict) and "content" in result:
+                    content = result.get("content", [])
+                    if content and isinstance(content[0], dict):
+                        text = content[0].get("text", "{}")
+                        try:
+                            envelope = json.loads(text)
+                            response = RouterResponse(
+                                summary=envelope.get("summary", ""),
+                                full=envelope.get("full", result),
+                                correlation_id=correlation_id
+                            )
+                        except json.JSONDecodeError:
+                            response = RouterResponse(
+                                summary=text[:200],
+                                full=result,
+                                correlation_id=correlation_id
+                            )
+                    else:
+                        response = RouterResponse(
+                            summary=str(result)[:200],
+                            full=result,
+                            correlation_id=correlation_id
+                        )
+                else:
+                    response = RouterResponse(
+                        summary=str(result)[:200],
+                        full=result,
+                        correlation_id=correlation_id
+                    )
+
+            # Complete telemetry
+            if self.telemetry and telemetry_id:
+                self.telemetry.track_response(
+                    telemetry_id,
+                    error="error" in proxy_response,
+                    error_msg=str(proxy_response.get("error", ""))[:200]
+                )
+
+            # Fire response hooks
+            for hook in self.on_response:
+                try:
+                    hook(response)
+                except Exception:
+                    pass
+
+            return response
 
         # Get target server
         with self._lock:
