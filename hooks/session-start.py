@@ -252,9 +252,10 @@ def read_memory_snippets(memory_names: list[str], max_chars_per_memory: int = 50
         try:
             if not file_path.exists():
                 continue
-            content = file_path.read_text()[:max_chars_per_memory]
+            full_content = file_path.read_text()
+            content = full_content[:max_chars_per_memory]
             # Add ellipsis if truncated
-            if len(file_path.read_text()) > max_chars_per_memory:
+            if len(full_content) > max_chars_per_memory:
                 content += "..."
             snippets.append(f"**{name}**\n> {content.replace(chr(10), chr(10) + '> ')}")
         except Exception:
