@@ -1129,7 +1129,8 @@ class MCPRouter:
         self,
         destination: str,
         tool_name: str,
-        args: dict
+        args: dict,
+        skip_summary: bool = False
     ) -> RouterResponse:
         """Route a tool request to target server.
 
@@ -1137,6 +1138,7 @@ class MCPRouter:
             destination: Target server name
             tool_name: Tool to invoke
             args: Tool arguments
+            skip_summary: If True, skip LLM summarization (faster for internal calls)
 
         Returns:
             RouterResponse with structured summary and full response
@@ -1187,8 +1189,11 @@ class MCPRouter:
                 error_msg = str(full_response.get("error", "Unknown error"))[:200]
                 _router_log("route", f"Backend error: {error_msg}", "ERROR")
 
-            # Generate structured summary using schema extraction
-            summary = self._extract_summary(tool_name, full_response)
+            # Generate structured summary using schema extraction (skip for internal calls)
+            if skip_summary:
+                summary = json.dumps({"skipped": True})
+            else:
+                summary = self._extract_summary(tool_name, full_response)
 
             response = RouterResponse(
                 summary=summary,
@@ -1531,6 +1536,10 @@ Summary:"""
 
         # Get raw content from MCP response
         content = self._extract_content(response)
+
+        # Skip LLM for small responses (workflow state, simple results)
+        if len(content) < 500:
+            return json.dumps({"preview": content[:200], "size": len(content)})
 
         # For bash with stderr, use fallback directly (LLM struggles with [stderr] marker)
         if tool_name == "bash" and "[stderr]" in content:
