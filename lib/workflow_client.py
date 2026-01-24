@@ -15,6 +15,7 @@ Usage:
 import json
 import os
 import socket
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -419,3 +420,8 @@ def call_tool(tool_name: str, arguments: dict) -> Any:
     except Exception as e:
         _log(f"call_tool:{tool_name}", f"EXCEPTION: {e}", "ERROR")
         return None
+
+
+def generate_correlation_id() -> str:
+    """Generate unique correlation ID for event tracking."""
+    return f"evt-{uuid.uuid4().hex[:12]}"
