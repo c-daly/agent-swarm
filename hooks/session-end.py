@@ -156,16 +156,21 @@ def check_and_distill(scope_path: Path, threshold: int = 10, timeout_seconds: in
         if episode_count < threshold:
             return {"distilled": False, "episode_count": episode_count}
         
-        # Set timeout for distillation
-        def timeout_handler(signum, frame):
-            raise TimeoutError("Distillation timed out")
-        
-        old_handler = signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(timeout_seconds)
-        
+        # Set timeout for distillation (Unix only - SIGALRM not available on Windows)
+        use_alarm = hasattr(signal, 'SIGALRM')
+        old_handler = None
+
+        if use_alarm:
+            def timeout_handler(signum, frame):
+                raise TimeoutError("Distillation timed out")
+
+            old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(timeout_seconds)
+
         try:
             memory = trigger_distillation(scope_path)
-            signal.alarm(0)  # Cancel alarm
+            if use_alarm:
+                signal.alarm(0)  # Cancel alarm
             return {
                 "distilled": True,
                 "episode_count": episode_count,
@@ -178,8 +183,9 @@ def check_and_distill(scope_path: Path, threshold: int = 10, timeout_seconds: in
                 "error": str(e)
             }
         finally:
-            signal.signal(signal.SIGALRM, old_handler)
-            signal.alarm(0)
+            if use_alarm and old_handler is not None:
+                signal.signal(signal.SIGALRM, old_handler)
+                signal.alarm(0)
             
     except Exception as e:
         return {
