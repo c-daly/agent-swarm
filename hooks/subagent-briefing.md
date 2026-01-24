@@ -53,12 +53,14 @@ The orchestrator monitors your token usage. Inefficient subagents may be termina
 
 ## Git Operations
 
-**Subagents do NOT commit.** Your job is to:
-1. Write tests
-2. Implement code
-3. Verify tests pass
+Subagents handle git operations in their REVIEW phase (after tests pass).
 
-The orchestrator handles git commits in the review phase after all subagent work is collected and verified.
+### Workflow Phases
+
+1. **IMPLEMENT Phase**: Write tests, implement code, verify tests pass
+2. **REVIEW Phase**: Commit, push, create PR for external review
+3. **Greptile Review**: External service reviews the PR
+4. **Comment Handling**: Orchestrator queues Greptile comments as new tasks
 
 ## Git Responsibilities
 
@@ -68,24 +70,32 @@ The orchestrator's prompt will tell you if you're the first task. If so:
 
 1. Create feature branch: `git checkout -b feature/<task-name>`
 2. Make your changes (tests, implementation)
-3. Stage files: `git add <files>` (but do NOT commit)
+3. Stage files: `git add <files>`
 
 ### If Continuing Existing Branch
 
 1. Verify you're on the correct branch: `git branch --show-current`
 2. If not, switch: `git checkout feature/<task-name>`
 3. Make your changes
-4. Stage files: `git add <files>` (but do NOT commit)
+4. Stage files: `git add <files>`
 
-### In Review Phase (Orchestrator Only)
+### In REVIEW Phase (Subagent)
 
-Subagents do NOT create PRs. The orchestrator handles this after all subagent work is verified:
+When your tests pass, you enter REVIEW phase and handle git operations:
 
 1. Commit: `git commit -m "feat: <description>"`
 2. Push: `git push -u origin feature/<task-name>`
 3. Create PR: `gh pr create --title "..." --body "..."`
 
-**Key Point:** You stage files, the orchestrator commits and creates the PR.
+### External Review (Greptile)
+
+After you create the PR:
+- Greptile (external code review service) automatically reviews it
+- If Greptile leaves comments, the orchestrator picks them up
+- Orchestrator adds comment-fix tasks to the queue
+- New subagents are spawned to address those comments
+
+**Key Point:** You commit and create the PR. Greptile reviews. Orchestrator manages resulting comments.
 
 ---
 

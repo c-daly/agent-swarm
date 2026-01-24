@@ -1110,14 +1110,14 @@ def _format_queue_status() -> Optional[str]:
         return None
 
 
-def print_status_banner(force: bool = False) -> None:
+def print_status_banner(force: bool = True) -> None:
     """Print decorated status banner (OUTPUT.1, OUTPUT.3, OUTPUT.4).
 
     Shows current phase, iteration progress, task, and queue status.
     """
     state = workflow_client.workflow_get_state("iterate") or {}
 
-    if not state.get("active"):
+    if not state.get("active") and not force:
         return
 
     phase = state.get("phase", "unknown")
@@ -1129,25 +1129,25 @@ def print_status_banner(force: bool = False) -> None:
     # Progress bar for iterations (OUTPUT.4)
     progress_pct = min(100, int((iteration / max_iter) * 100)) if max_iter > 0 else 0
     progress_filled = progress_pct // 5  # 20 chars total
-    progress_bar = "█" * progress_filled + "░" * (20 - progress_filled)
+    progress_bar = "\u2588" * progress_filled + "\u2591" * (20 - progress_filled)
 
     lines = [
-        "┌─[ITERATE]────────────────────────────────────────────────────────────┐",
-        f"│  Phase: {phase.upper():<12} Iteration: {iteration}/{max_iter} [{progress_bar}] {progress_pct}%│",
-        f"│  Task: {task_desc:<62}│",
+        "\u250c\u2500[ITERATE]\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510",
+        f"\u2502  Phase: {phase.upper():<12} Iteration: {iteration}/{max_iter} [{progress_bar}] {progress_pct}%\u2502",
+        f"\u2502  Task: {task_desc:<62}\u2502",
     ]
 
     if mode:
-        lines.append(f"│  Mode: {mode:<62}│")
+        lines.append(f"\u2502  Mode: {mode:<62}\u2502")
 
     # Queue status (OUTPUT.3)
     queue_status = _format_queue_status()
     if queue_status:
-        lines.append("│" + "─" * 70 + "│")
+        lines.append("\u2502" + "\u2500" * 70 + "\u2502")
         for line in queue_status.split("\n"):
-            lines.append(f"│  {line:<66}│")
+            lines.append(f"\u2502  {line:<66}\u2502")
 
-    lines.append("└" + "─" * 70 + "┘")
+    lines.append("\u2514" + "\u2500" * 70 + "\u2518")
     print("\n".join(lines))
 
 

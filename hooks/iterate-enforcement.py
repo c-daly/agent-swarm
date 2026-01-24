@@ -67,6 +67,10 @@ def is_tool_allowed_for_agent(tool_name: str, agent_id: str, command: str | None
         return True, "", phase_name
 
 
+# Orchestrator cannot use editing tools - reserved for subagents
+ORCHESTRATOR_BLOCKED_TOOLS = {"Edit", "Write", "NotebookEdit"}
+
+
 def allow(reason: str = "") -> dict:
     """Return allow decision."""
     result = {
@@ -128,6 +132,11 @@ def main():
             print(json.dumps(allow("Subagent mcp-call allowed")))
             return
         # Non-mcp-call bash falls through to phase blocking
+
+    # Orchestrator cannot use editing tools - reserved for subagents
+    if not agent_id and tool_name in ORCHESTRATOR_BLOCKED_TOOLS:
+        print(json.dumps(block(f"[ORCHESTRATOR] Tool '{tool_name}' is reserved for subagents")))
+        return
 
     if agent_id:
         # Use agent-specific phase enforcement

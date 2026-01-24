@@ -1,27 +1,13 @@
 """Phase model for iterate workflow enforcement.
 
-Defines tool categories, phases, and validation logic for
-the iterate workflow to prevent agents from skipping phases
-or using inappropriate tools.
+Defines phases and validation logic for the iterate workflow
+to prevent agents from skipping phases or using inappropriate tools.
 """
 
-from enum import Enum, auto
 from dataclasses import dataclass
 from typing import FrozenSet, Optional
 
-class ToolCategory(Enum):
-    """Categories of tools available to agents."""
-    FILE_READ = auto()
-    FILE_WRITE = auto()
-    CODE_QUERY = auto()
-    CODE_EDIT = auto()
-    FILE_SEARCH = auto()
-    SHELL_SAFE = auto()
-    SHELL_DANGEROUS = auto()
-    WEB_RESEARCH = auto()
-    SUBAGENT = auto()
-    MEMORY = auto()
-    USER_INTERACTION = auto()
+from lib.tool_categories import ToolCategory, TOOL_CATEGORIES
 
 
 @dataclass(frozen=True)
@@ -44,7 +30,8 @@ ITERATE_PHASES = {
             ToolCategory.SUBAGENT,
             ToolCategory.USER_INTERACTION,
         }),
-        blocked_tools=frozenset({"Edit", "Write", "NotebookEdit"}),
+        # Block native shell tools - orchestrator should use mcp__router__native__bash for gh commands
+        blocked_tools=frozenset({"Edit", "Write", "NotebookEdit", "Bash"}),
         requires_verification=False,
     ),
     "test_writing": Phase(
@@ -102,59 +89,6 @@ ITERATE_PHASES = {
         blocked_tools=frozenset({"Edit", "Write", "Bash"}),
         requires_verification=True,
     ),
-}
-
-
-# Tool to category mapping
-TOOL_CATEGORIES = {
-    # File operations
-    "Read": ToolCategory.FILE_READ,
-    "Edit": ToolCategory.FILE_WRITE,
-    "Write": ToolCategory.FILE_WRITE,
-    "mcp__plugin_serena_serena__read_file": ToolCategory.FILE_READ,
-    "mcp__plugin_serena_serena__create_text_file": ToolCategory.FILE_WRITE,
-    "mcp__plugin_serena_serena__replace_content": ToolCategory.FILE_WRITE,
-    "mcp__filesystem__read_file": ToolCategory.FILE_READ,
-    "mcp__filesystem__read_text_file": ToolCategory.FILE_READ,
-    "mcp__filesystem__write_file": ToolCategory.FILE_WRITE,
-    "mcp__filesystem__edit_file": ToolCategory.FILE_WRITE,
-
-    # Search operations
-    "Glob": ToolCategory.FILE_SEARCH,
-    "Grep": ToolCategory.FILE_SEARCH,
-    "mcp__plugin_serena_serena__find_file": ToolCategory.FILE_SEARCH,
-    "mcp__plugin_serena_serena__search_for_pattern": ToolCategory.FILE_SEARCH,
-    "mcp__filesystem__search_files": ToolCategory.FILE_SEARCH,
-
-    # Code query operations
-    "mcp__plugin_serena_serena__get_symbols_overview": ToolCategory.CODE_QUERY,
-    "mcp__plugin_serena_serena__find_symbol": ToolCategory.CODE_QUERY,
-    "mcp__plugin_serena_serena__find_referencing_symbols": ToolCategory.CODE_QUERY,
-
-    # Code edit operations
-    "mcp__plugin_serena_serena__replace_symbol_body": ToolCategory.CODE_EDIT,
-    "mcp__plugin_serena_serena__insert_after_symbol": ToolCategory.CODE_EDIT,
-    "mcp__plugin_serena_serena__insert_before_symbol": ToolCategory.CODE_EDIT,
-    "mcp__plugin_serena_serena__rename_symbol": ToolCategory.CODE_EDIT,
-
-    # Subagents
-    "Task": ToolCategory.SUBAGENT,
-
-    # Web research
-    "WebSearch": ToolCategory.WEB_RESEARCH,
-    "WebFetch": ToolCategory.WEB_RESEARCH,
-    "mcp__plugin_greptile_greptile__list_merge_requests": ToolCategory.WEB_RESEARCH,
-    "mcp__plugin_greptile_greptile__get_merge_request": ToolCategory.WEB_RESEARCH,
-    "mcp__plugin_greptile_greptile__trigger_code_review": ToolCategory.WEB_RESEARCH,
-
-    # Memory
-    "mcp__memory__create_entities": ToolCategory.MEMORY,
-    "mcp__memory__add_observations": ToolCategory.MEMORY,
-    "mcp__plugin_episodic-memory_episodic-memory__search": ToolCategory.MEMORY,
-
-    # Shell - requires special handling via shell_virtualizer
-    "Bash": None,
-    "mcp__plugin_serena_serena__execute_shell_command": None,
 }
 
 
