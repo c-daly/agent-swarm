@@ -42,6 +42,53 @@ def log_subagent_stop(agent_type: str, session_id: str, phase: str) -> None:
         f.write(f"{datetime.now().isoformat()} | STOP | agent={agent_type} | session={session_id} | phase={phase}\n")
 
 
+def extract_learnings(output_text: str) -> list[str]:
+    """Extract LEARNING: tags from agent output.
+    
+    Looks for lines containing 'LEARNING: description' and returns
+    the description text for each.
+    
+    Returns list of learning descriptions (may be empty).
+    """
+    if not output_text:
+        return []
+    
+    pattern = r'LEARNING:\s*(.+?)(?:\n|$)'
+    return re.findall(pattern, output_text, re.IGNORECASE)
+
+
+def log_learnings_to_episodes(learnings: list[str], agent_type: str, task: str) -> None:
+    """Append captured learnings to EPISODES.md.
+    
+    Creates .context directory and EPISODES.md if they don't exist.
+    Appends a new episode entry with the learnings.
+    """
+    if not learnings:
+        return
+    
+    context_dir = Path(__file__).parent.parent / ".context"
+    context_dir.mkdir(parents=True, exist_ok=True)
+    
+    episodes_file = context_dir / "EPISODES.md"
+    
+    # Build episode entry
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    entry_lines = [
+        f"\n## Session: {timestamp} - Learning Capture",
+        f"- **Task**: {task[:100]}..." if len(task) > 100 else f"- **Task**: {task}",
+        "- **Outcome**: success",
+        f"- **Agent**: {agent_type}",
+        "- **Learnings**:",
+    ]
+    for learning in learnings:
+        entry_lines.append(f"  - {learning}")
+    entry_lines.append("")
+    
+    # Append to file
+    with open(episodes_file, "a") as f:
+        f.write("\n".join(entry_lines))
+
+
 def extract_agent_completion_info(output_text: str) -> dict:
     """Extract completion info from agent output.
 
@@ -97,6 +144,38 @@ def find_agent_output_file(session_id: str):
         return None
     except Exception:
         return None
+
+
+def capture_learnings_from_output(session_id: str, agent_type: str, task: str = "") -> int:
+    """Capture LEARNING: tags from agent output and log to EPISODES.md.
+    
+    Args:
+        session_id: The agent session ID
+        agent_type: Type of agent (e.g., 'implementer')
+        task: Task description (optional, used in episode entry)
+    
+    Returns:
+        Number of learnings captured
+    """
+    try:
+        output_file = find_agent_output_file(session_id)
+        if not output_file:
+            return 0
+        
+        output_path = Path(output_file)
+        if not output_path.exists():
+            return 0
+        
+        output_text = output_path.read_text()
+        learnings = extract_learnings(output_text)
+        
+        if learnings:
+            task_desc = task if task else f"{agent_type} subagent task"
+            log_learnings_to_episodes(learnings, agent_type, task_desc)
+        
+        return len(learnings)
+    except Exception:
+        return 0  # Don't fail hook on learning capture errors
 
 
 def persist_agent_output(session_id: str, agent_type: str) -> dict:
@@ -200,11 +279,16 @@ def main():
     # Persist agent output to state manager and check for failures
     failure_info = persist_agent_output(session_id, agent_type)
 
+    # Capture LEARNING: tags from agent output and log to EPISODES.md
+    learnings_captured = capture_learnings_from_output(session_id, agent_type)
+
     # Update workflow state - move from active_agents to completed_tasks
     update_workflow_state(session_id, agent_type)
 
     # Build result with failure status if detected
     message = f"Subagent {agent_type} completed in phase {phase}"
+    if learnings_captured > 0:
+        message += f" [{learnings_captured} learning(s) captured]"
     if failure_info["failure_detected"]:
         message += f" [FAILED: {failure_info['failure_reason']}]"
 

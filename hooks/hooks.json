@@ -13,6 +13,16 @@
         ]
       },
       {
+        "matcher": "mcp__*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/subagent-mcp-bypass.py",
+            "timeout": 3
+          }
+        ]
+      },
+      {
         "matcher": "*",
         "hooks": [
           {

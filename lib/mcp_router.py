@@ -1113,6 +1113,12 @@ class MCPRouter:
                             }
                         ]
                     }
+                elif tool_name == "router__get_allowed_tools":
+                    agent_type = args.get("agent_type")
+                    allowed = self.get_allowed_tools(agent_type)
+                    result = {
+                        "content": [{"type": "text", "text": json.dumps(allowed, indent=2)}]
+                    }
                 elif "__" in tool_name:
                     prefix, actual_tool = tool_name.split("__", 1)
                     # Find backend by prefix
@@ -1320,6 +1326,53 @@ class MCPRouter:
                 for s in self._servers.values()
             ]
 
+    def get_allowed_tools(self, agent_type: Optional[str] = None) -> dict:
+        """Get allowed tools for subagents.
+
+        Returns shell aliases (routed via native__bash), MCP tool patterns,
+        and the Bash pattern for mcp-call invocations.
+
+        Args:
+            agent_type: Optional agent type for future per-agent restrictions.
+                        Currently unused - all agents get same whitelist.
+
+        Returns:
+            Dict with keys:
+                - shell_aliases: List of commands routed via native__bash
+                - mcp_patterns: List of allowed MCP tool glob patterns
+                - bash_pattern: Bash permission pattern for mcp-call
+        """
+        # Shell commands that route through native__bash backend
+        shell_aliases = [
+            "mcp-call pytest",
+            "mcp-call ruff",
+            "mcp-call mypy",
+            "mcp-call black",
+            "mcp-call git",
+            "mcp-call gh",
+            "mcp-call python",
+            "mcp-call python3",
+            "mcp-call poetry",
+        ]
+
+        # MCP tool patterns - router-prefixed tools from registered backends
+        mcp_patterns = [
+            "mcp__router__serena__*",
+            "mcp__router__context7__*",
+            "mcp__router__native__*",
+            "mcp__router__playwright__*",
+            "mcp__router__workflow__*",
+        ]
+
+        # Bash permission pattern for mcp-call script
+        bash_pattern = "Bash(mcp-call*)"
+
+        return {
+            "shell_aliases": shell_aliases,
+            "mcp_patterns": mcp_patterns,
+            "bash_pattern": bash_pattern,
+        }
+
     # ==================== Event System ====================
 
     def event_publish(self, topic: str, data: dict, correlation_id: str) -> dict:
@@ -1436,6 +1489,19 @@ class MCPRouter:
                 "name": "router__list_tools",
                 "description": "List all available tools.",
                 "inputSchema": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "router__get_allowed_tools",
+                "description": "Get allowed tools whitelist for subagents (shell aliases, MCP patterns).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "agent_type": {
+                            "type": "string",
+                            "description": "Optional agent type for per-agent restrictions",
+                        },
+                    },
+                },
             },
         ]
 
@@ -2182,6 +2248,19 @@ def start_stdio_server(router: MCPRouter):
                 "description": "List all available tools.",
                 "inputSchema": {"type": "object", "properties": {}},
             },
+            {
+                "name": "router__get_allowed_tools",
+                "description": "Get allowed tools whitelist for subagents (shell aliases, MCP patterns).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "agent_type": {
+                            "type": "string",
+                            "description": "Optional agent type for per-agent restrictions",
+                        },
+                    },
+                },
+            },
         ]
         for server in router.list_servers():
             name = server["name"]
@@ -2273,6 +2352,13 @@ def start_stdio_server(router: MCPRouter):
                     result_data = router.clear_workflow_cache(workflow_id)
                     result = {
                         "content": [{"type": "text", "text": json.dumps(result_data, indent=2)}]
+                    }
+
+                elif tool_name == "router__get_allowed_tools":
+                    agent_type = args.get("agent_type")
+                    allowed = router.get_allowed_tools(agent_type)
+                    result = {
+                        "content": [{"type": "text", "text": json.dumps(allowed, indent=2)}]
                     }
 
                 # Parse prefix__toolname for backend routing
