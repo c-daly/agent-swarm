@@ -66,14 +66,23 @@ except ImportError:
     openai = None  # type: ignore
     OPENAI_AVAILABLE = False
 
-# Import v2 telemetry schema functions
-from telemetry_schema_v2 import (
-    TelemetryV2,
-    load_telemetry_v2,
-    save_telemetry_v2,
-    ensure_day,
-    update_timing_stats,
-)
+# Import v2 telemetry schema functions (optional - deprecated)
+try:
+    from telemetry_schema_v2 import (
+        TelemetryV2,
+        load_telemetry_v2,
+        save_telemetry_v2,
+        ensure_day,
+        update_timing_stats,
+    )
+    TELEMETRY_V2_AVAILABLE = True
+except ImportError:
+    TELEMETRY_V2_AVAILABLE = False
+    TelemetryV2 = dict  # type: ignore
+    def load_telemetry_v2(path): return {}  # type: ignore
+    def save_telemetry_v2(data, path): pass  # type: ignore
+    def ensure_day(data, key): return data.setdefault(key, {})  # type: ignore
+    def update_timing_stats(timing, backend, duration): pass  # type: ignore
 
 
 @dataclass
