@@ -248,6 +248,13 @@ def spawn_eligible_tasks(
         queue.mark_running(task.id, "orchestrate")
         save_queue(queue)
 
+        # Update iterate state with task context for subagent-enforcement hook
+        # This sets current_group and current_repo_path before spawning
+        iterate_state = workflow_client.workflow_get_state("iterate") or {}
+        iterate_state["current_group"] = task.pr_id
+        iterate_state["current_repo_path"] = getattr(task, "repo_path", "") or ""
+        workflow_client.workflow_set_state("iterate", iterate_state)
+
         # Spawn worker
         worker_id = spawn_worker(task.id, task.description)
 

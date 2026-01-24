@@ -118,7 +118,17 @@ def main():
 
     # Check if this is a subagent with stored state
     agent_id = input_data.get("agentId")
-    
+
+    # Subagents can only use Bash for mcp-call (their tool interface)
+    # This exception allows implementers to call Serena/Context7 via router
+    if agent_id and tool_name == "Bash":
+        cmd = tool_input.get("command", "").strip()
+        mcp_call_path = "/home/fearsidhe/.claude/plugins/agent-swarm/bin/mcp-call"
+        if cmd.startswith("mcp-call ") or cmd.startswith(f"{mcp_call_path} "):
+            print(json.dumps(allow("Subagent mcp-call allowed")))
+            return
+        # Non-mcp-call bash falls through to phase blocking
+
     if agent_id:
         # Use agent-specific phase enforcement
         allowed, reason, phase_name = is_tool_allowed_for_agent(tool_name, agent_id, command=command)
