@@ -114,14 +114,15 @@ def get_blocked_tools_for_phase(phase: str, perms_dict: dict | None) -> list[str
     return blocked
 
 
-def build_tdd_context(agent_id: str, task_desc: str, group: str = "default") -> str:
+def build_tdd_context(agent_id: str, task_desc: str, group: str = "default", repo_path: str = "") -> str:
     """Build TDD workflow context for implementer subagents."""
+    repo_info = f"\n**Repo:** {repo_path}" if repo_path else ""
     return f"""
 ## SUBAGENT WORKFLOW CONTEXT
 
 **Agent ID:** {agent_id}
 **Task:** {task_desc}
-**Group/PR:** {group}
+**Group/PR:** {group}{repo_info}
 **Spawned by:** Orchestrator
 
 ### Tools Available
@@ -162,9 +163,10 @@ When done, return a summary:
 """
 
 
-def build_test_writing_context(agent_id: str, task_desc: str, group: str) -> str:
+def build_test_writing_context(agent_id: str, task_desc: str, group: str, repo_path: str = "") -> str:
     """Context injected when entering TEST_WRITING phase."""
-    return """
+    cd_cmd = f"cd {repo_path} && " if repo_path else ""
+    return f"""
 ## TEST_WRITING PHASE
 
 **Goal:** Write failing tests that define expected behavior.
@@ -172,16 +174,17 @@ def build_test_writing_context(agent_id: str, task_desc: str, group: str) -> str
 **Steps:**
 1. Read task requirements and existing code patterns
 2. Write test file(s) that will fail (red phase of TDD)
-3. Verify tests fail: `pytest <test_file> -x`
+3. Verify tests fail: `{cd_cmd}pytest <test_file> -x`
 4. When done, advance: `python3 lib/iterate_workflow.py advance`
 
 **DO NOT skip to implementation. Tests MUST exist and FAIL before proceeding.**
 """
 
 
-def build_implement_context(agent_id: str, task_desc: str, group: str) -> str:
+def build_implement_context(agent_id: str, task_desc: str, group: str, repo_path: str = "") -> str:
     """Context injected when entering IMPLEMENT phase."""
-    return """
+    cd_cmd = f"cd {repo_path} && " if repo_path else ""
+    return f"""
 ## IMPLEMENT PHASE
 
 **Goal:** Write minimal code to make tests pass.
@@ -189,24 +192,25 @@ def build_implement_context(agent_id: str, task_desc: str, group: str) -> str:
 **Steps:**
 1. Check side-effects before changes with `mcp__plugin_serena_serena__find_referencing_symbols`
 2. Follow existing code patterns
-3. Run tests frequently: `pytest <test_file> -x`
+3. Run tests frequently: `{cd_cmd}pytest <test_file> -x`
 4. When tests pass, advance: `python3 lib/iterate_workflow.py advance`
 
 **Write only what's needed to make tests pass. No extra features.**
 """
 
 
-def build_test_context(agent_id: str, task_desc: str, group: str) -> str:
+def build_test_context(agent_id: str, task_desc: str, group: str, repo_path: str = "") -> str:
     """Context injected when entering TEST phase."""
-    return """
+    cd_cmd = f"cd {repo_path} && " if repo_path else ""
+    return f"""
 ## TEST PHASE
 
 **Goal:** Full verification - tests, lint, coverage. NO EDITING in this phase.
 
 **Steps:**
-1. Run full test suite: `pytest`
-2. Run linter: `ruff check .`
-3. Check coverage: `pytest --cov`
+1. Run full test suite: `{cd_cmd}pytest`
+2. Run linter: `{cd_cmd}ruff check .`
+3. Check coverage: `{cd_cmd}pytest --cov`
 4. Record results: `python3 lib/iterate_workflow.py test 1 1 1` (args: tests lint coverage, 1=pass 0=fail)
 5. Advance: `python3 lib/iterate_workflow.py advance`
 
@@ -214,19 +218,24 @@ def build_test_context(agent_id: str, task_desc: str, group: str) -> str:
 """
 
 
-def build_review_context(agent_id: str, task_desc: str, group: str) -> str:
+def build_review_context(agent_id: str, task_desc: str, group: str, repo_path: str = "") -> str:
     """Context injected when entering REVIEW phase."""
+    # Build cd command if repo_path provided (multi-repo support)
+    cd_cmd = f"cd {repo_path} && " if repo_path else ""
+    repo_info = f"\n**Repo:** {repo_path}" if repo_path else ""
+    push_repo_arg = f" --repo-path={repo_path}" if repo_path else ""
+
     return f"""
 ## REVIEW PHASE
 
 **Goal:** Git workflow - branch, commit, PR, gated push.
-**Group:** {group} | **Branch:** feature/{group}
+**Group:** {group} | **Branch:** feature/{group}{repo_info}
 
 **Steps:**
-1. Check/create branch: `git checkout -b "feature/{group}"` or `git checkout "feature/{group}"`
-2. Create PR if first task: `gh pr create --title "{group}" --body "Implementation tasks" --draft`
-3. Commit: `git add -A && git commit -m "{task_desc}"`
-4. Gated push: `python3 scripts/iterate_state.py push --pr={group}`
+1. Check/create branch: `{cd_cmd}git checkout -b "feature/{group}"` or `{cd_cmd}git checkout "feature/{group}"`
+2. Create PR if first task: `{cd_cmd}gh pr create --title "{group}" --body "Implementation tasks" --draft`
+3. Commit: `{cd_cmd}git add -A && git commit -m "{task_desc}"`
+4. Gated push: `python3 scripts/iterate_state.py push --pr={group}{push_repo_arg}`
 5. Record and advance: `python3 lib/iterate_workflow.py review 1 && python3 lib/iterate_workflow.py advance`
 """
 
@@ -312,18 +321,19 @@ def main():
 
     elif mode == "iterate-tdd":
         # In iterate-tdd mode
-        # Extract group from iterate state or default
+        # Extract group and repo info from iterate state or default
         group = iterate_state.get("current_group") or iterate_state.get("pr_id") or "default"
+        repo_path = iterate_state.get("current_repo_path") or ""
 
         if agent_type == "implementer" and phase in ("orchestrate", "test_writing", "implement", "test", "review"):
             # Subagent spawned by orchestrator for implementation work
             message_suffix = f" (iterate-tdd/{phase})"
-            additional_context.append(build_tdd_context(agent_id, task_desc, group))
+            additional_context.append(build_tdd_context(agent_id, task_desc, group, repo_path))
 
             # Add phase-specific context if we have a builder for this phase
             if phase in PHASE_CONTEXT_BUILDERS:
                 phase_builder = PHASE_CONTEXT_BUILDERS[phase]
-                additional_context.append(phase_builder(agent_id, task_desc, group))
+                additional_context.append(phase_builder(agent_id, task_desc, group, repo_path))
         else:
             # iterate-tdd but not implementer or different phase - apply phase restrictions
             blocked_tools = get_blocked_tools_for_phase(phase, perms_dict)

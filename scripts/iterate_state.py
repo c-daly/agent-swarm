@@ -71,6 +71,8 @@ class Task:
     assigned_agent: Optional[str] = None  # Agent ID if currently running
     depends_on: list[str] = field(default_factory=list)  # Task IDs this depends on
     metadata: dict = field(default_factory=dict)  # Flexible storage
+    repo: Optional[str] = None       # Repository name (e.g., "sophia", "hermes") for multi-repo support
+    repo_path: Optional[str] = None  # Absolute path to repo (e.g., "/home/user/projects/LOGOS/sophia")
 
 
 @dataclass
@@ -577,6 +579,7 @@ def main():
     push_parser = subparsers.add_parser("push", help="Gated push - only proceeds if all PR tasks are committed")
     push_parser.add_argument("--pr", required=True, help="PR ID to push")
     push_parser.add_argument("--dry-run", action="store_true", help="Check status without pushing")
+    push_parser.add_argument("--repo-path", help="Path to repository (for multi-repo support)")
 
     args = parser.parse_args()
 
@@ -585,7 +588,7 @@ def main():
     elif args.command == "pr":
         handle_pr_command(args)
     elif args.command == "push":
-        cmd_gated_push(args.pr, args.dry_run)
+        cmd_gated_push(args.pr, args.dry_run, getattr(args, 'repo_path', None))
     else:
         parser.print_help()
         sys.exit(1)
@@ -835,7 +838,7 @@ def cmd_pr_create(pr_id: str, branch: str, task_ids: list[str]) -> None:
 # Gated Push Command
 # =============================================================================
 
-def cmd_gated_push(pr_id: str, dry_run: bool = False) -> None:
+def cmd_gated_push(pr_id: str, dry_run: bool = False, repo_path: Optional[str] = None) -> None:
     """Gated push - only proceeds if all tasks in PR are committed.
 
     This is called by subagents when they complete their work.
@@ -845,6 +848,7 @@ def cmd_gated_push(pr_id: str, dry_run: bool = False) -> None:
     Args:
         pr_id: PR identifier to push
         dry_run: If True, just check status without pushing
+        repo_path: Optional path to repository. If provided, git commands run in that directory.
     """
     import subprocess
 
@@ -873,18 +877,21 @@ def cmd_gated_push(pr_id: str, dry_run: bool = False) -> None:
     print(f"[PUSH] All tasks committed for PR: {pr_id}")
     print(f"  Branch: {pr.branch}")
     print(f"  Tasks: {status['total']}")
+    if repo_path:
+        print(f"  Repo: {repo_path}")
 
     if dry_run:
         print("  (dry-run - would push here)")
         return
 
-    # Execute git push
+    # Execute git push (in repo_path if specified)
     try:
         result = subprocess.run(
             ["git", "push", "-u", "origin", pr.branch],
             capture_output=True,
             text=True,
-            timeout=60
+            timeout=60,
+            cwd=repo_path  # Run in target repo directory
         )
 
         if result.returncode == 0:
