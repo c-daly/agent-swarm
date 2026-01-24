@@ -6,110 +6,16 @@ Agent reads permissions at session/task start and self-enforces.
 
 from dataclasses import dataclass, field
 from typing import FrozenSet, Optional
-from enum import Enum, auto
 import fnmatch
 from pathlib import Path
 
-
-# Tool constants - define first so they can be used in class methods
-FILE_WRITE_TOOLS = frozenset({"Edit", "Write", "NotebookEdit"})
-WORKFLOW_CONTROL_TOOLS = frozenset({
-    "workflow_set_state", "workflow_update", "workflow_start", "workflow_stop",
-    "mcp__router__workflow__workflow_set_state",
-    "mcp__router__workflow__workflow_update",
-    "mcp__router__workflow__workflow_start",
-    "mcp__router__workflow__workflow_stop",
-})
-
-
-class ToolCategory(Enum):
-    """Categories of tools for permission grouping."""
-    FILE_READ = auto()
-    FILE_WRITE = auto()
-    CODE_QUERY = auto()
-    CODE_EDIT = auto()
-    FILE_SEARCH = auto()
-    SHELL_SAFE = auto()
-    SHELL_DANGEROUS = auto()
-    WEB_RESEARCH = auto()
-    SUBAGENT = auto()
-    MEMORY = auto()
-    USER_INTERACTION = auto()
-    WORKFLOW_CONTROL = auto()
-
-
-# Tool to category mapping
-TOOL_CATEGORIES: dict[str, ToolCategory] = {
-    # File read
-    "Read": ToolCategory.FILE_READ,
-    "mcp__router__native__read_file": ToolCategory.FILE_READ,
-    "mcp__router__serena__read_file": ToolCategory.FILE_READ,
-    "mcp__filesystem__read_file": ToolCategory.FILE_READ,
-    "mcp__filesystem__read_text_file": ToolCategory.FILE_READ,
-
-    # File write
-    #"Edit": ToolCategory.FILE_WRITE,
-    #"Write": ToolCategory.FILE_WRITE,
-    #"NotebookEdit": ToolCategory.FILE_WRITE,
-    "mcp__router__native__edit_file": ToolCategory.FILE_WRITE,
-    "mcp__router__native__write_file": ToolCategory.FILE_WRITE,
-    "mcp__router__serena__replace_content": ToolCategory.FILE_WRITE,
-    "mcp__router__serena__create_text_file": ToolCategory.FILE_WRITE,
-    "mcp__filesystem__write_file": ToolCategory.FILE_WRITE,
-    "mcp__filesystem__edit_file": ToolCategory.FILE_WRITE,
-
-    # Code query (semantic)
-    "mcp__router__serena__find_symbol": ToolCategory.CODE_QUERY,
-    "mcp__router__serena__get_symbols_overview": ToolCategory.CODE_QUERY,
-    "mcp__router__serena__find_referencing_symbols": ToolCategory.CODE_QUERY,
-    "mcp__plugin_serena_serena__find_symbol": ToolCategory.CODE_QUERY,
-    "mcp__plugin_serena_serena__get_symbols_overview": ToolCategory.CODE_QUERY,
-
-    # Code edit (semantic)
-    "mcp__router__serena__replace_symbol_body": ToolCategory.CODE_EDIT,
-    "mcp__router__serena__insert_after_symbol": ToolCategory.CODE_EDIT,
-    "mcp__router__serena__insert_before_symbol": ToolCategory.CODE_EDIT,
-    "mcp__plugin_serena_serena__replace_symbol_body": ToolCategory.CODE_EDIT,
-
-    # File search
-    #"Glob": ToolCategory.FILE_SEARCH,
-    #"Grep": ToolCategory.FILE_SEARCH,
-    "mcp__router__native__glob": ToolCategory.FILE_SEARCH,
-    "mcp__router__native__grep": ToolCategory.FILE_SEARCH,
-    "mcp__router__serena__search_for_pattern": ToolCategory.FILE_SEARCH,
-    "mcp__router__serena__find_file": ToolCategory.FILE_SEARCH,
-
-    # Shell (dangerous - native Bash can execute arbitrary commands)
-    #"Bash": ToolCategory.SHELL_DANGEROUS,
-    "mcp__router__native__bash": ToolCategory.SHELL_DANGEROUS,
-
-    # Web research
-    "WebFetch": ToolCategory.WEB_RESEARCH,
-    "WebSearch": ToolCategory.WEB_RESEARCH,
-
-    # Subagent
-    "Task": ToolCategory.SUBAGENT,
-
-    # Memory
-    "mcp__router__serena__read_memory": ToolCategory.MEMORY,
-    "mcp__router__serena__write_memory": ToolCategory.MEMORY,
-    "mcp__plugin_serena_serena__read_memory": ToolCategory.MEMORY,
-    "mcp__plugin_serena_serena__write_memory": ToolCategory.MEMORY,
-
-    # User interaction
-    "AskUserQuestion": ToolCategory.USER_INTERACTION,
-
-    # Workflow control
-    "mcp__router__workflow__workflow_set_state": ToolCategory.WORKFLOW_CONTROL,
-    "mcp__router__workflow__workflow_update": ToolCategory.WORKFLOW_CONTROL,
-    "mcp__router__workflow__workflow_start": ToolCategory.WORKFLOW_CONTROL,
-    "mcp__router__workflow__workflow_stop": ToolCategory.WORKFLOW_CONTROL,
-}
-
-
-def get_tool_category(tool_name: str) -> Optional[ToolCategory]:
-    """Get the category for a tool, or None if unknown."""
-    return TOOL_CATEGORIES.get(tool_name)
+from lib.tool_categories import (
+    ToolCategory,
+    TOOL_CATEGORIES,  # noqa: F401 - re-exported for API compatibility
+    FILE_WRITE_TOOLS,
+    WORKFLOW_CONTROL_TOOLS,
+    get_tool_category,
+)
 
 
 @dataclass(frozen=True)

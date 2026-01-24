@@ -55,6 +55,12 @@ try:
 except ImportError:
     resolve_context = None
 
+try:
+    from project_root import find_project_root, find_recent_handoffs
+except ImportError:
+    find_project_root = None
+    find_recent_handoffs = None
+
 
 def load_iterate_state() -> dict:
     """Load iterate workflow state from state server."""
@@ -410,6 +416,68 @@ def suggest_memory_options(query_terms):
         "serena_memories": serena_memories
     }
 
+
+def discover_project_handoffs(working_dir: Path | None = None) -> list[Path]:
+    """Discover handoff files in the current project.
+    
+    Args:
+        working_dir: Working directory to start project detection from.
+                    Defaults to cwd.
+    
+    Returns:
+        List of handoff file paths, sorted by recency (newest first).
+    """
+    if find_project_root is None or find_recent_handoffs is None:
+        return []
+    
+    try:
+        if working_dir is None:
+            working_dir = Path.cwd()
+        
+        project_root = find_project_root(working_dir)
+        return find_recent_handoffs(project_root, max_count=3, max_age_hours=48)
+    except Exception as e:
+        log_debug(f"Handoff discovery failed: {e}")
+        return []
+
+
+def format_handoff_context(handoffs: list[Path], max_chars: int = 1500) -> str:
+    """Format handoff files into context message.
+    
+    Args:
+        handoffs: List of handoff file paths
+        max_chars: Maximum characters for output
+        
+    Returns:
+        Formatted context string, or empty string if no handoffs
+    """
+    if not handoffs:
+        return ""
+    
+    try:
+        # Read the most recent handoff
+        most_recent = handoffs[0]
+        content = most_recent.read_text()
+        
+        # Truncate if needed
+        if len(content) > max_chars - 100:
+            content = content[:max_chars - 100] + "\n\n[truncated...]"
+        
+        header = f"**Previous Session Handoff** ({most_recent.name}):\n\n"
+        result = header + content
+        
+        # Mention if there are other handoffs
+        if len(handoffs) > 1:
+            other_names = [h.name for h in handoffs[1:3]]
+            result += f"\n\n_Other recent handoffs: {', '.join(other_names)}_"
+        
+        return result[:max_chars]
+        
+    except Exception as e:
+        log_debug(f"Failed to format handoff: {e}")
+        return ""
+
+
 def main():
     """Session start hook entry point."""
 
@@ -463,6 +531,13 @@ def main():
         context_summary = get_session_context(Path.cwd())
         if context_summary:
             messages.append(f"Project Context:\n{context_summary}")
+        
+        # Auto-discover project handoffs (only for main agent)
+        handoffs = discover_project_handoffs(Path.cwd())
+        if handoffs:
+            handoff_context = format_handoff_context(handoffs)
+            if handoff_context:
+                messages.append(handoff_context)
 
     # Add cleanup message if files were cleaned
     if cleanup_message:
