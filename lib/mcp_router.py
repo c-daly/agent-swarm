@@ -210,6 +210,7 @@ class TelemetryCollector:
         self._pending_requests: dict[str, tuple[str, str, dict, float]] = {}
         self._session_id = datetime.now(timezone.utc).isoformat()
         self._events: list[dict] = []  # Session events (rolling window)
+        self._socket_events: list[dict] = []  # Socket connection events
         self._data: TelemetryV2 = load_telemetry_v2(self._telemetry_file)
 
     def _save(self) -> None:
@@ -383,11 +384,12 @@ class TelemetryCollector:
             service_event["summary_size"] = event["summary_size"]
 
         # Send to service
-        try:
-            self._telemetry_service.insert_event(service_event)
-        except Exception:
-            # Don't let telemetry failures break routing
-            pass
+        if self._telemetry_service:
+            try:
+                self._telemetry_service.insert_event(service_event)
+            except Exception:
+                # Don't let telemetry failures break routing
+                pass
 
     def get_summary(self) -> dict:
         """Get current telemetry summary."""
@@ -404,11 +406,11 @@ class TelemetryCollector:
             offered = summ.get("offered", 0)
 
             # Get socket events if tracked
-            socket_events = getattr(self, "_socket_events", [])
+            socket_events: list[dict] = self._socket_events
             socket_summary = {}
             if socket_events:
                 # Count by status
-                by_status = {}
+                by_status: dict[str, int] = {}
                 total_duration = 0
                 for evt in socket_events:
                     status = evt.get("status", "unknown")
@@ -899,6 +901,9 @@ class MCPRouter:
         self._total_socket_accepts = 0
         _router_log("socket", f"Accept loop started on port {self._socket_port}")
 
+        # Socket server must exist when this loop runs
+        assert self._socket_server is not None
+
         while self._socket_running:
             try:
                 self._socket_server.settimeout(1.0)  # Check running flag periodically
@@ -974,6 +979,7 @@ class MCPRouter:
             _router_log("socket", f"{log_prefix} Parsed request: method={method} id={request_id}")
 
             # Route the request (same logic as stdio)
+            result: Any = None  # Type annotation for result variable
             if method == "tools/list":
                 # Return all available tools from all backends
                 tools = self._list_all_tools_for_socket()
@@ -1046,13 +1052,13 @@ class MCPRouter:
                             f"{log_prefix} Routing to backend={destination} tool={actual_tool}",
                         )
                         _route_start = time.time()  # noqa: F841 - kept for future duration logging
-                        response = self.route(destination, actual_tool, args)
+                        route_response = self.route(destination, actual_tool, args)
                         route_duration = int((time.time() - _route_start) * 1000)
                         _router_log(
                             "socket", f"{log_prefix} Backend responded in {route_duration}ms"
                         )
 
-                        backend_result = response.full
+                        backend_result = route_response.full
                         if isinstance(backend_result, dict) and "error" in backend_result:
                             _router_log(
                                 "socket",
@@ -1157,9 +1163,6 @@ class MCPRouter:
 
         # Add to telemetry data under socket_events
         with self.telemetry._lock:
-            if not hasattr(self.telemetry, "_socket_events"):
-                self.telemetry._socket_events = []
-
             event = {
                 "ts": datetime.now(timezone.utc).isoformat(),
                 "status": status,
@@ -1196,12 +1199,12 @@ class MCPRouter:
         active = getattr(self, "_active_socket_connections", 0)
         total = getattr(self, "_total_socket_accepts", 0)
 
-        socket_events = []
+        socket_events: list[dict] = []
         if self.telemetry:
-            socket_events = getattr(self.telemetry, "_socket_events", [])
+            socket_events = self.telemetry._socket_events
 
         # Count by status
-        by_status = {}
+        by_status: dict[str, int] = {}
         for evt in socket_events:
             status = evt.get("status", "unknown")
             by_status[status] = by_status.get(status, 0) + 1
@@ -1384,9 +1387,9 @@ class MCPRouter:
             telemetry_id = self.telemetry.track_request(destination, tool_name, args)
 
         # Fire request hooks
-        for hook in self.on_request:
+        for req_hook in self.on_request:
             try:
-                hook(destination, tool_name, args)
+                req_hook(destination, tool_name, args)
             except Exception:
                 pass  # Don't let hooks break routing
 
@@ -1445,9 +1448,9 @@ class MCPRouter:
                 )
 
             # Fire response hooks
-            for hook in self.on_response:
+            for resp_hook in self.on_response:
                 try:
-                    hook(response)
+                    resp_hook(response)
                 except Exception:
                     pass
 
@@ -1497,9 +1500,9 @@ class MCPRouter:
         summary_size = len(response.summary) if response.summary else 0
 
         # Fire response hooks
-        for hook in self.on_response:
+        for resp_hook in self.on_response:
             try:
-                hook(response)
+                resp_hook(response)
             except Exception:
                 pass  # Don't let hooks break response
 
@@ -2112,6 +2115,9 @@ def start_stdio_server(router: MCPRouter):
                 _router_log("stdio", f"RECV tools/call tool={tool_name} id={request_id}")
             elif method not in ("notifications/initialized",):
                 _router_log("stdio", f"RECV method={method} id={request_id}")
+
+            # Result variable can hold various types
+            result: Any = None
 
             # MCP handshake
             if method == "initialize":
