@@ -51,6 +51,18 @@ def _extract_imports(tree: ast.Module) -> Set[str]:
     return imports
 
 
+# Common test utilities/framework imports that are NOT production targets
+_TEST_UTILITIES = frozenset({
+    "Mock", "MagicMock", "patch", "PropertyMock", "AsyncMock",
+    "pytest", "unittest", "nose",
+    "fixture", "parametrize", "mark",
+    "assert_called", "assert_called_once", "assert_called_with",
+    "call", "ANY", "sentinel",
+    "raises", "warns", "deprecated_call",
+    "monkeypatch", "tmp_path", "capsys", "capfd",
+})
+
+
 def _analyze_test_function(
     node: ast.FunctionDef, file_path: str, class_name: str, imports: Set[str]
 ) -> TestInfo:
@@ -74,8 +86,10 @@ def _analyze_test_function(
             if isinstance(func, ast.Attribute) and func.attr in ("patch", "Mock", "MagicMock"):
                 mocks += 1
             # Track function calls that match imports (potential targets)
+            # Filter out test utilities to only track production code
             if isinstance(func, ast.Name) and func.id in imports:
-                targets.add(func.id)
+                if func.id not in _TEST_UTILITIES:
+                    targets.add(func.id)
 
     return TestInfo(
         name=node.name,

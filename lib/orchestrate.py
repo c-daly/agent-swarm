@@ -217,12 +217,12 @@ def get_status() -> dict:
 
 
 def spawn_eligible_tasks(
-    on_spawn: Optional[Callable[[str, str, str], str]] = None
+    on_spawn: Optional[Callable[[str, str, str, str], str]] = None
 ) -> list[str]:
     """Spawn subagents for eligible tasks.
 
     Args:
-        on_spawn: Callback(task_id, description, pr_id) -> subagent_id
+        on_spawn: Callback(task_id, description, pr_id, repo_path) -> subagent_id
                   If None, uses default Task tool spawning.
 
     Returns:

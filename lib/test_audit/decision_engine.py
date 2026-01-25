@@ -129,6 +129,13 @@ def delete_tests_from_file(code: str, tests_to_delete: Set[str]) -> str:
             start = node.lineno - 1  # Convert to 0-indexed
             end = node.end_lineno  # Already 1-indexed, use as exclusive end
             ranges_to_delete.append((start, end))
+        elif isinstance(node, ast.ClassDef):
+            # Also check methods inside test classes
+            for item in node.body:
+                if isinstance(item, ast.FunctionDef) and item.name in tests_to_delete:
+                    start = item.lineno - 1
+                    end = item.end_lineno
+                    ranges_to_delete.append((start, end))
 
     # Sort in reverse order so we can delete without affecting earlier indices
     ranges_to_delete.sort(reverse=True)
