@@ -30,7 +30,7 @@ def main():
 
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input", {})
-    agent_id = input_data.get("agentId")
+    agent_id = input_data.get("agent_id")
 
     # Only apply to subagent Bash calls
     if not agent_id:

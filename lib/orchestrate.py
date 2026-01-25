@@ -259,9 +259,11 @@ def spawn_eligible_tasks(
         worker_id = spawn_worker(task.id, task.description)
 
         # Call custom spawn callback if provided
+        # Pass repo_path explicitly to avoid race condition with global iterate_state
+        task_repo_path = getattr(task, "repo_path", "") or ""
         if on_spawn:
             try:
-                on_spawn(task.id, task.description, task.pr_id)
+                on_spawn(task.id, task.description, task.pr_id, task_repo_path)
             except Exception as e:
                 print(f"[ORCHESTRATE] Spawn callback failed: {e}", file=sys.stderr)
 

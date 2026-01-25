@@ -326,7 +326,7 @@ class IterateWorkflow(WorkflowEngine):
 
         # Check blocked list first
         if tool_name in phase_def.blocked_tools:
-            return False, f"[BLOCKED] {tool_name} not allowed in {phase} phase. Run tests first."
+            return False, f"[BLOCKED] {tool_name} not allowed in {phase} phase. Complete current phase before using this tool."
 
         # Check native__bash commands against per-phase whitelist
         if tool_name == "native__bash" and command:

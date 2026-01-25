@@ -19,6 +19,7 @@ try:
     from workflow_client import workflow_get_state
     from debug_workflow import DebugWorkflow
     from pr_comment_workflow import PRCommentWorkflow
+    from implementer_workflow import ImplementerWorkflow
     from iterate_workflow import is_tool_allowed as iterate_is_tool_allowed, is_active as iterate_is_active
 except ImportError:
     # Fail open if modules not available
@@ -30,12 +31,14 @@ except ImportError:
         return True, ""
     DebugWorkflow = None
     PRCommentWorkflow = None
+    ImplementerWorkflow = None
 
 
 # Workflows using base classes (WorkflowEngine)
 BASE_WORKFLOWS = {
     "debug": DebugWorkflow,
     "pr_comment": PRCommentWorkflow,
+    "implementer": ImplementerWorkflow,
 }
 
 
