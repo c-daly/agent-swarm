@@ -29,6 +29,27 @@ These common commands work directly with mcp-call:
 - `mcp-call gh pr view` - github CLI
 - `mcp-call python script.py` - run python
 
+### Multi-Repo Git Operations
+
+When working in a specific repository (not the plugin directory), use the `--cwd` flag:
+
+```bash
+# Run git commands in a specific repo
+mcp-call --cwd=/home/fearsidhe/projects/LOGOS/logos git status
+mcp-call --cwd=/home/fearsidhe/projects/LOGOS/sophia git log -5
+
+# Run tests in a specific repo
+mcp-call --cwd=/path/to/repo pytest tests/
+
+# Lint a specific repo
+mcp-call --cwd=/path/to/repo ruff check .
+```
+
+The `--cwd` flag ensures commands run in the correct directory, which is essential for:
+- Git operations (finding the correct .git directory)
+- pytest (finding conftest.py and test discovery)
+- Poetry/venv commands (using the correct environment)
+
 ### Serena Tools
 
 For code intelligence, use `mcp-call serena__<tool>`:

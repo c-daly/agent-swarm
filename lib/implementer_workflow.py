@@ -25,24 +25,30 @@ class ImplementerPhase(str, Enum):
     DONE = "done"
 
 
-# Phase definitions - permissive by default
+# Allowed router backend prefixes (normalized form - hook strips mcp__router__ prefix)
+# Full form: mcp__router__<backend>__<tool>
+# Normalized: <backend>__<tool>
+ALLOWED_ROUTER_PREFIXES = (
+    "serena__",      # Code intelligence (find_symbol, replace_content, etc.)
+    "native__",      # File ops (read_file, write_file, glob, grep, bash)
+    "context7__",    # Documentation lookup
+    "workflow__",    # Workflow state management
+    "playwright__",  # Browser automation
+)
+
+# Additional non-router tools allowed
+ALLOWED_EXTRA_TOOLS = frozenset({"Task", "TaskOutput"})
+
+# Phase definitions - minimal, actual checks in is_tool_allowed override
 IMPLEMENTER_PHASES = {
     ImplementerPhase.WORK.value: WorkflowPhase(
         name="work",
-        # All tools allowed - this is a permissive default workflow
-        allowed_tools=frozenset({
-            "Read", "Glob", "Grep", "Edit", "Write", "Bash",
-            "Task", "TaskOutput", "WebSearch", "WebFetch"
-        }),
+        allowed_tools=frozenset(),  # Handled by custom is_tool_allowed
         blocked_tools=frozenset(),
     ),
     ImplementerPhase.VERIFY.value: WorkflowPhase(
         name="verify",
-        # Verification still allows edits - agent may need to fix issues
-        allowed_tools=frozenset({
-            "Read", "Glob", "Grep", "Edit", "Write", "Bash",
-            "Task", "TaskOutput"
-        }),
+        allowed_tools=frozenset(),  # Handled by custom is_tool_allowed
         blocked_tools=frozenset(),
         requires_verification=True,
     ),
@@ -124,9 +130,41 @@ class ImplementerWorkflow:
         state["phase"] = phase
         workflow_client.workflow_set_state(self.workflow_id, state)
 
-    def is_tool_allowed(self, tool_name: str, file_path: Optional[str] = None) -> tuple[bool, str]:
-        """Check tool restriction."""
-        return self.engine.is_tool_allowed(tool_name, file_path=file_path)
+    def is_tool_allowed(
+        self, tool_name: str, file_path: Optional[str] = None  # noqa: ARG002 - kept for API compat
+    ) -> tuple[bool, str]:
+        """Check if tool is allowed - only MCP router tools and subagent management.
+
+        Implementer enforces router-only access (normalized form after hook strips prefix):
+        - serena__* (code intelligence)
+        - native__* (file ops, bash)
+        - context7__* (docs)
+        - workflow__* (workflow state)
+        - playwright__* (browser)
+        - Task, TaskOutput (subagent management)
+
+        Native Claude Code tools (Read, Edit, Bash, etc.) are NOT allowed.
+        """
+        phase = self.get_phase()
+
+        # Done phase - nothing allowed
+        if phase == "done":
+            return False, "Workflow complete - no tools allowed"
+
+        # Check router prefixes
+        for prefix in ALLOWED_ROUTER_PREFIXES:
+            if tool_name.startswith(prefix):
+                return True, f"Router tool allowed in {phase} phase"
+
+        # Check extra allowed tools (Task, TaskOutput)
+        if tool_name in ALLOWED_EXTRA_TOOLS:
+            return True, f"Tool {tool_name} allowed in {phase} phase"
+
+        # Block everything else including native Claude Code tools
+        return False, (
+            f"[BLOCKED] {tool_name} not allowed. Implementer uses router tools only. "
+            f"Use native__* or serena__* tools (via mcp__router__*)."
+        )
 
     def advance(self, **kwargs) -> TransitionResult:
         """Advance to next phase."""

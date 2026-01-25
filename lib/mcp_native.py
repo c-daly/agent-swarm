@@ -647,9 +647,10 @@ class MCPNativeServer:
                 "content": [{"type": "text", "text": text}]
             }
         else:
-            # Format error response
+            # Format error response - prefer stderr over generic error for better debugging
+            error_msg = result.get('stderr') or result.get('error') or 'Unknown error'
             return {
-                "content": [{"type": "text", "text": f"Error: {result.get('error', 'Unknown error')}"}],
+                "content": [{"type": "text", "text": f"Error: {error_msg}"}],
                 "isError": True
             }
 

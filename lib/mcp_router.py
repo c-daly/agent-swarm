@@ -1561,6 +1561,97 @@ class MCPRouter:
             except Exception:
                 pass  # Don't let hooks break routing
 
+        # Special handling for workflow: always proxy to authoritative primary
+        # This ensures all workflow state goes through one workflow_server instance,
+        # even if multiple routers are running (each with their own backends).
+        if destination == "workflow":
+            main_port = self._check_main_router()
+            # Proxy if there's a different primary (we might have lost primary status
+            # or never had it, but still have a local workflow_server)
+            if main_port is not None and main_port != self._socket_port:
+                _router_log(
+                    "route",
+                    f"WORKFLOW_PROXY to authoritative primary port {main_port} "
+                    f"(our port={self._socket_port})",
+                )
+                # Temporarily use main_port for proxy
+                original_main_port = self._main_router_port
+                self._main_router_port = main_port
+                try:
+                    if tool_name.startswith(f"{destination}__"):
+                        prefixed_tool = tool_name
+                    else:
+                        prefixed_tool = f"{destination}__{tool_name}"
+                    proxy_request = {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "tools/call",
+                        "params": {"name": prefixed_tool, "arguments": args},
+                    }
+                    proxy_response = self._proxy_to_main(proxy_request)
+
+                    # Extract result from proxy response
+                    if "error" in proxy_response:
+                        error_msg = str(
+                            proxy_response.get("error", {}).get("message", "Proxy error")
+                        )
+                        response = RouterResponse(
+                            summary=f"Error: {error_msg}",
+                            full={"error": error_msg},
+                            correlation_id=correlation_id,
+                        )
+                    else:
+                        result = proxy_response.get("result", {})
+                        # Parse the envelope if present
+                        if isinstance(result, dict) and "content" in result:
+                            content = result.get("content", [])
+                            if content and isinstance(content[0], dict):
+                                text = content[0].get("text", "{}")
+                                try:
+                                    envelope = json.loads(text)
+                                    response = RouterResponse(
+                                        summary=envelope.get("summary", ""),
+                                        full=envelope.get("full", result),
+                                        correlation_id=correlation_id,
+                                    )
+                                except json.JSONDecodeError:
+                                    response = RouterResponse(
+                                        summary=text[:200],
+                                        full=result,
+                                        correlation_id=correlation_id,
+                                    )
+                            else:
+                                response = RouterResponse(
+                                    summary=str(result)[:200],
+                                    full=result,
+                                    correlation_id=correlation_id,
+                                )
+                        else:
+                            response = RouterResponse(
+                                summary=str(result)[:200],
+                                full=result,
+                                correlation_id=correlation_id,
+                            )
+
+                    # Complete telemetry
+                    if self.telemetry and telemetry_id:
+                        self.telemetry.track_response(
+                            telemetry_id,
+                            error="error" in proxy_response,
+                            error_msg=str(proxy_response.get("error", ""))[:200],
+                        )
+
+                    # Fire response hooks
+                    for resp_hook in self.on_response:
+                        try:
+                            resp_hook(response)
+                        except Exception:
+                            pass
+
+                    return response
+                finally:
+                    self._main_router_port = original_main_port
+
         # Federation: if secondary, proxy to main router
         if not self._is_primary and self._main_router_port:
             _router_log("route", f"PROXY to main router port {self._main_router_port}")

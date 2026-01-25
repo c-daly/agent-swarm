@@ -419,5 +419,107 @@ class TestReentrantLock:
         lock.release()
 
 
+class TestWorkflowProxying:
+    """Tests for workflow state proxying to primary router."""
+
+    def test_workflow_proxied_when_not_primary(self):
+        """Workflow calls should be proxied to primary router when we're not primary."""
+        router = MCPRouter()
+
+        # Simulate: we're not the primary, there's a main router on port 12345
+        router._is_primary = False
+        router._socket_port = 0  # We don't have a socket
+
+        # Mock _check_main_router to return a different port
+        router._check_main_router = lambda: 12345
+
+        # Track if proxy was attempted
+        proxy_called = False
+        proxy_port = None
+
+        def mock_proxy(request):
+            nonlocal proxy_called, proxy_port
+            proxy_called = True
+            proxy_port = router._main_router_port
+            return {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"content": [{"type": "text", "text": '{"summary":"test","full":{}}'}]},
+            }
+
+        router._proxy_to_main = mock_proxy
+
+        # Call route for workflow
+        router.route("workflow", "workflow_is_active", {"workflow_id": "test"})
+
+        assert proxy_called, "Workflow call should have been proxied"
+        assert proxy_port == 12345, f"Should proxy to port 12345, got {proxy_port}"
+
+    def test_workflow_local_when_primary(self):
+        """Primary router should handle workflow calls locally, not proxy."""
+        router = MCPRouter()
+
+        # Simulate: we ARE the primary on port 42549
+        router._is_primary = True
+        router._socket_port = 42549
+
+        # Mock _check_main_router to return OUR port
+        router._check_main_router = lambda: 42549
+
+        # Track if proxy was attempted
+        proxy_called = False
+
+        def mock_proxy(request):
+            nonlocal proxy_called
+            proxy_called = True
+            return {"error": "Should not be called"}
+
+        router._proxy_to_main = mock_proxy
+
+        # Register a mock workflow server
+        router.register_server("workflow", ["echo", "test"], {}, "workflow")
+
+        # Call route for workflow - since we're primary, it should try local handling
+        try:
+            router.route("workflow", "workflow_is_active", {"workflow_id": "test"})
+        except Exception:
+            pass  # Expected - no real backend
+
+        assert not proxy_called, "Primary should NOT proxy workflow calls"
+        router.shutdown()
+
+    def test_workflow_proxy_when_different_primary_exists(self):
+        """Even if we think we're primary, proxy if a different primary owns the port."""
+        router = MCPRouter()
+
+        # Simulate: we think we're primary on port 9999, but another router owns 42549
+        router._is_primary = True
+        router._socket_port = 9999  # Our socket
+
+        # Mock _check_main_router to return a DIFFERENT port
+        router._check_main_router = lambda: 42549
+
+        # Track if proxy was attempted
+        proxy_called = False
+        proxy_port = None
+
+        def mock_proxy(request):
+            nonlocal proxy_called, proxy_port
+            proxy_called = True
+            proxy_port = router._main_router_port
+            return {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"content": [{"type": "text", "text": '{"summary":"ok","full":{}}'}]},
+            }
+
+        router._proxy_to_main = mock_proxy
+
+        router.route("workflow", "workflow_get_state", {"workflow_id": "iterate"})
+
+        assert proxy_called, "Should proxy when another router is authoritative"
+        assert proxy_port == 42549, f"Should proxy to authoritative port 42549, got {proxy_port}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
