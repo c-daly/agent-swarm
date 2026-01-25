@@ -1,7 +1,8 @@
 # lib/test_audit/decision_engine.py
 """Decision engine for test health scoring."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
+from typing import Dict, List, Set
 
 from lib.test_audit.test_parser import TestInfo
 
@@ -60,3 +61,46 @@ def score_test_health(test: TestInfo, is_in_minimum_set: bool) -> HealthScore:
         confidence=confidence,
         reason=f"Covers {len(test.targets)} function(s) with {test.assertions} assertion(s)",
     )
+
+
+@dataclass
+class DecisionResult:
+    keeps: Set[str] = field(default_factory=set)
+    deletes: Set[str] = field(default_factory=set)
+    needs_review: Set[str] = field(default_factory=set)
+    scores: Dict[str, HealthScore] = field(default_factory=dict)
+
+
+def process_decisions(
+    tests: List[TestInfo],
+    minimum_set: Set[str],
+    confidence_threshold: float = 0.75,
+) -> DecisionResult:
+    """Process all tests and separate by confidence.
+
+    Args:
+        tests: List of TestInfo objects
+        minimum_set: Set of test names in minimum covering set
+        confidence_threshold: Minimum confidence for automatic decision
+
+    Returns:
+        DecisionResult with keeps, deletes, and needs_review sets
+    """
+    result = DecisionResult()
+
+    for test in tests:
+        is_in_minimum_set = test.name in minimum_set
+        score = score_test_health(test, is_in_minimum_set)
+        result.scores[test.name] = score
+
+        if score.verdict == Verdict.REVIEW:
+            result.needs_review.add(test.name)
+        elif score.confidence >= confidence_threshold:
+            if score.verdict == Verdict.KEEP:
+                result.keeps.add(test.name)
+            elif score.verdict == Verdict.DELETE:
+                result.deletes.add(test.name)
+        else:
+            result.needs_review.add(test.name)
+
+    return result
