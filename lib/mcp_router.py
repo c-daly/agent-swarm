@@ -805,6 +805,10 @@ class MCPRouter:
                         f"Not deleting port file: contains {file_port}, we are {self._socket_port}",
                         "WARN",
                     )
+            except ValueError:
+                # Port file contains non-numeric data, safe to delete as corrupted
+                _router_log("federation", "Deleting corrupted port file", "WARN")
+                self._port_file.unlink()
             except Exception:
                 pass
 

@@ -46,17 +46,22 @@ def _build_coverage_data(
             min_set_lines |= coverage.get(test_name, set())
 
         # Build CoverageInfo for each test
+        # Use both full test_id and just function name as keys to handle matching
         result: Dict[str, CoverageInfo] = {}
         for test_id, lines in coverage.items():
-            # Extract just the test function name for matching
-            test_name = test_id.split("::")[-1] if "::" in test_id else test_id
             unique_lines = lines - min_set_lines
-
-            result[test_name] = CoverageInfo(
+            info = CoverageInfo(
                 is_in_minimum_set=test_id in minimum_set,
                 is_truly_redundant=len(unique_lines) == 0 and test_id not in minimum_set,
                 unique_lines=len(unique_lines),
             )
+            # Store under full test_id to avoid collisions
+            result[test_id] = info
+            # Also store under just function name for backward compatibility
+            # (later entries may overwrite, but full id takes precedence in lookup)
+            test_name = test_id.split("::")[-1] if "::" in test_id else test_id
+            if test_name not in result:
+                result[test_name] = info
 
         return result
 
