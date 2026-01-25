@@ -1,5 +1,4 @@
 # tests/test_audit/test_code_analyzer.py
-import pytest
 from lib.test_audit.code_analyzer import find_entry_points
 
 
