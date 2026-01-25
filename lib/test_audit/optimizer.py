@@ -42,3 +42,21 @@ def find_minimum_covering_set(
         uncovered -= coverage[best_test]
 
     return selected
+
+
+def find_coverage_gaps(
+    coverage: Dict[str, Set[str]], all_functions: Set[str]
+) -> Set[str]:
+    """Find functions that have no test coverage.
+
+    Args:
+        coverage: Mapping of test names to functions they cover
+        all_functions: Set of all functions that should be tested
+
+    Returns:
+        Set of function names with no test coverage
+    """
+    covered: Set[str] = set()
+    for functions in coverage.values():
+        covered |= functions
+    return all_functions - covered

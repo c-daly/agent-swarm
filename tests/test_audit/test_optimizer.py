@@ -1,5 +1,9 @@
 # tests/test_audit/test_optimizer.py
-from lib.test_audit.optimizer import find_minimum_covering_set, map_test_coverage
+from lib.test_audit.optimizer import (
+    find_coverage_gaps,
+    find_minimum_covering_set,
+    map_test_coverage,
+)
 from lib.test_audit.test_parser import TestInfo
 
 
@@ -43,3 +47,16 @@ def test_find_minimum_covering_set():
 
     # Should pick test_a (covers 2) and test_b (covers remaining 1)
     assert result == {"test_a", "test_b"}
+
+
+def test_find_coverage_gaps():
+    """Identify functions with no test coverage."""
+    coverage = {
+        "test_a": {"process", "validate"},
+        "test_b": {"transform"},
+    }
+    all_functions = {"process", "validate", "transform", "helper", "cleanup"}
+
+    gaps = find_coverage_gaps(coverage, all_functions)
+
+    assert gaps == {"helper", "cleanup"}
