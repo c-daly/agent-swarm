@@ -133,3 +133,48 @@ def test_also_keep():
     assert "test_keep_this" in result
     assert "test_delete_this" not in result
     assert "test_also_keep" in result
+
+
+def test_delete_entire_class_when_all_methods_deleted():
+    """Delete entire class when all its test methods are deleted."""
+    original = '''
+def test_standalone():
+    assert True
+
+class TestFoo:
+    """Test class that will be emptied."""
+
+    def test_method_a(self):
+        assert True
+
+    def test_method_b(self):
+        assert False
+'''
+    # Delete all test methods in the class
+    tests_to_delete = {"test_method_a", "test_method_b"}
+
+    result = delete_tests_from_file(original, tests_to_delete)
+
+    assert "test_standalone" in result
+    assert "class TestFoo" not in result  # Entire class should be gone
+    assert "test_method_a" not in result
+    assert "test_method_b" not in result
+
+
+def test_keep_class_when_some_methods_remain():
+    """Keep class shell when only some methods are deleted."""
+    original = '''
+class TestBar:
+    def test_keep_me(self):
+        assert True
+
+    def test_delete_me(self):
+        assert False
+'''
+    tests_to_delete = {"test_delete_me"}
+
+    result = delete_tests_from_file(original, tests_to_delete)
+
+    assert "class TestBar" in result
+    assert "test_keep_me" in result
+    assert "test_delete_me" not in result

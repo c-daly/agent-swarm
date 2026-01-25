@@ -130,12 +130,25 @@ def delete_tests_from_file(code: str, tests_to_delete: Set[str]) -> str:
             end = node.end_lineno  # Already 1-indexed, use as exclusive end
             ranges_to_delete.append((start, end))
         elif isinstance(node, ast.ClassDef):
-            # Also check methods inside test classes
-            for item in node.body:
-                if isinstance(item, ast.FunctionDef) and item.name in tests_to_delete:
-                    start = item.lineno - 1
-                    end = item.end_lineno
-                    ranges_to_delete.append((start, end))
+            # Check if ALL test methods in the class are being deleted
+            test_methods = [
+                item for item in node.body
+                if isinstance(item, ast.FunctionDef) and item.name.startswith("test_")
+            ]
+            methods_to_delete = [m for m in test_methods if m.name in tests_to_delete]
+
+            if test_methods and len(methods_to_delete) == len(test_methods):
+                # All test methods deleted - remove entire class
+                start = node.lineno - 1
+                end = node.end_lineno
+                ranges_to_delete.append((start, end))
+            else:
+                # Only delete individual methods
+                for item in node.body:
+                    if isinstance(item, ast.FunctionDef) and item.name in tests_to_delete:
+                        start = item.lineno - 1
+                        end = item.end_lineno
+                        ranges_to_delete.append((start, end))
 
     # Sort in reverse order so we can delete without affecting earlier indices
     ranges_to_delete.sort(reverse=True)
