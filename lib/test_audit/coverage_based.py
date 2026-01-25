@@ -38,8 +38,10 @@ def collect_per_test_coverage(
         project_root = Path(__file__).parent.parent.parent
 
     # Run pytest with coverage context tracking
+    # Note: We intentionally don't use check=True because we want coverage data
+    # even if some tests fail - failed tests still produce coverage information
     print("Running pytest with per-test coverage tracking...")
-    subprocess.run(
+    result = subprocess.run(
         [
             "python", "-m", "pytest", test_path,
             f"--cov={source_path}",
@@ -52,6 +54,18 @@ def collect_per_test_coverage(
         cwd=project_root,
         timeout=600,
     )
+
+    if result.returncode != 0:
+        # Extract summary line from pytest output (e.g., "5 failed, 10 passed")
+        summary = ""
+        for line in result.stdout.splitlines()[-5:]:
+            if "passed" in line or "failed" in line:
+                summary = line.strip()
+                break
+        print(f"Warning: pytest exited with code {result.returncode}")
+        if summary:
+            print(f"  {summary}")
+        print("  Continuing with coverage analysis of executed tests...")
 
     return _parse_coverage_database(project_root / ".coverage")
 
