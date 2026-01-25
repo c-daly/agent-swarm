@@ -14,8 +14,9 @@ import json
 import sys
 import os
 
-# Add lib to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'lib'))
+# Add lib to path - resolve symlinks to get real script location
+script_dir = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, os.path.join(script_dir, '..', 'lib'))
 
 from workflow_client import call_tool, list_tools
 

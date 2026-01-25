@@ -127,8 +127,17 @@ def build_tdd_context(agent_id: str, task_desc: str, group: str = "default", rep
 
 ### Tools Available
 
-Use standard Claude Code tools: `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`.
-Serena symbolic tools are also available: `mcp__plugin_serena_serena__*`
+You have ONE tool: **Bash**
+
+Use Bash to run `mcp-call` commands:
+- Shell: `mcp-call pytest`, `mcp-call git status`, `mcp-call ruff check .`
+- Read files: `mcp-call serena__read_file '{{"relative_path": "path/to/file"}}'`
+- Search: `mcp-call serena__search_for_pattern '{{"pattern": "..."}}'`
+- List dir: `mcp-call serena__list_dir '{{"relative_path": "."}}'`
+- Edit: `mcp-call serena__replace_content '{{"relative_path": "...", "old": "...", "new": "..."}}'`
+- Symbols: `mcp-call serena__get_symbols_overview '{{"relative_path": "..."}}'`
+
+**DO NOT** use Read, Write, Edit, Glob, Grep directly. Use mcp-call via Bash.
 
 ### TDD Workflow (Follow This Order)
 
@@ -190,7 +199,7 @@ def build_implement_context(agent_id: str, task_desc: str, group: str, repo_path
 **Goal:** Write minimal code to make tests pass.
 
 **Steps:**
-1. Check side-effects before changes with `mcp__plugin_serena_serena__find_referencing_symbols`
+1. Check side-effects before changes with `mcp-call serena__find_referencing_symbols '{"name_path_pattern": "..."}'`
 2. Follow existing code patterns
 3. Run tests frequently: `{cd_cmd}pytest <test_file> -x`
 4. When tests pass, advance: `python3 lib/iterate_workflow.py advance`
@@ -271,14 +280,13 @@ If you need a blocked tool, STOP and report to orchestrator.
 def main():
     # Read hook input
     input_data = json.loads(sys.stdin.read())
-
-    # Extract info
-    session_id = input_data.get("sessionId", "unknown")[:8]
-    agent_type = input_data.get("agentType", "unknown")
+    # Extract info - Claude Code uses snake_case for field names
+    session_id = input_data.get("session_id", "unknown")[:8]
+    agent_type = input_data.get("agent_type", "unknown")
     task_desc = input_data.get("task", "implementation task")
 
-    # Use Claude Code's agentId if provided, otherwise generate one
-    agent_id = input_data.get("agentId") or f"sub-{uuid.uuid4().hex[:8]}"
+    # Use Claude Code's agent_id if provided, otherwise generate one
+    agent_id = input_data.get("agent_id") or f"sub-{uuid.uuid4().hex[:8]}"
 
     # Register agent type for telemetry (non-blocking)
     try:
