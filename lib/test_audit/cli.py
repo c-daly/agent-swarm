@@ -3,7 +3,7 @@
 import argparse
 from pathlib import Path
 
-from lib.test_audit.decision_engine import DecisionResult, process_decisions
+from lib.test_audit.decision_engine import DecisionResult, delete_tests_from_file, process_decisions
 from lib.test_audit.optimizer import find_minimum_covering_set, map_test_coverage
 from lib.test_audit.test_parser import parse_test_file
 
@@ -17,6 +17,16 @@ def main():
         type=float,
         default=0.75,
         help="Confidence threshold for automatic decisions",
+    )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Interactively review tests flagged for review",
+    )
+    parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Actually delete tests marked for deletion",
     )
     args = parser.parse_args()
 
@@ -64,6 +74,29 @@ def main():
     for name in sorted(result.needs_review):
         score = result.scores[name]
         print(f"  {name} - {score.reason}")
+
+    # Interactive review if requested
+    if args.interactive and result.needs_review:
+        print("\n--- Interactive Review ---")
+        result = interactive_review(result)
+
+    # Execute deletions if requested
+    if args.execute and result.deletes:
+        print("\n--- Executing Deletions ---")
+        # Group tests by file
+        tests_by_file: dict[Path, set[str]] = {}
+        for test in all_tests:
+            if test.name in result.deletes:
+                file_path = Path(test.file_path)
+                if file_path not in tests_by_file:
+                    tests_by_file[file_path] = set()
+                tests_by_file[file_path].add(test.name)
+
+        for file_path, tests_to_delete in tests_by_file.items():
+            code = file_path.read_text()
+            new_code = delete_tests_from_file(code, tests_to_delete)
+            file_path.write_text(new_code)
+            print(f"  Deleted {len(tests_to_delete)} test(s) from {file_path}")
 
 
 def interactive_review(result: DecisionResult) -> DecisionResult:
