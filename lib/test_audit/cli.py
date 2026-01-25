@@ -123,7 +123,7 @@ def main():
     coverage_data = None
     if args.coverage:
         print("Collecting actual coverage data (this may take a while)...")
-        project_root = args.path.parent if args.path.name == "tests" else args.path.parent.parent
+        project_root = args.path.parent if args.path.name == "tests" else args.path
         coverage_data = _build_coverage_data(str(args.path), args.source, project_root)
         if coverage_data:
             print(f"Collected coverage data for {len(coverage_data)} tests")

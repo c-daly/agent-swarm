@@ -81,41 +81,43 @@ def _parse_coverage_database(
         )
 
     conn = sqlite3.connect(str(coverage_db))
-    cursor = conn.cursor()
+    try:
+        cursor = conn.cursor()
 
-    # Get contexts (test names) - exclude empty context
-    cursor.execute("SELECT id, context FROM context WHERE context != ''")
-    contexts = {row[0]: row[1] for row in cursor.fetchall()}
+        # Get contexts (test names) - exclude empty context
+        cursor.execute("SELECT id, context FROM context WHERE context != ''")
+        contexts = {row[0]: row[1] for row in cursor.fetchall()}
 
-    # Get file mappings
-    cursor.execute("SELECT id, path FROM file")
-    files = {row[0]: row[1] for row in cursor.fetchall()}
+        # Get file mappings
+        cursor.execute("SELECT id, path FROM file")
+        files = {row[0]: row[1] for row in cursor.fetchall()}
 
-    # Build coverage per test from line_bits table
-    test_coverage: Dict[str, Set[Tuple[str, int]]] = defaultdict(set)
+        # Build coverage per test from line_bits table
+        test_coverage: Dict[str, Set[Tuple[str, int]]] = defaultdict(set)
 
-    cursor.execute("""
-        SELECT context_id, file_id, numbits FROM line_bits
-        WHERE context_id IN (SELECT id FROM context WHERE context != '')
-    """)
+        cursor.execute("""
+            SELECT context_id, file_id, numbits FROM line_bits
+            WHERE context_id IN (SELECT id FROM context WHERE context != '')
+        """)
 
-    for context_id, file_id, numbits in cursor.fetchall():
-        if context_id not in contexts:
-            continue
+        for context_id, file_id, numbits in cursor.fetchall():
+            if context_id not in contexts:
+                continue
 
-        context = contexts[context_id]
-        test_name = _parse_test_name(context)
-        if not test_name:
-            continue
+            context = contexts[context_id]
+            test_name = _parse_test_name(context)
+            if not test_name:
+                continue
 
-        file_path = files.get(file_id, "unknown")
+            file_path = files.get(file_id, "unknown")
 
-        # Decode numbits blob to line numbers
-        for line_no in _decode_numbits(numbits):
-            test_coverage[test_name].add((file_path, line_no))
+            # Decode numbits blob to line numbers
+            for line_no in _decode_numbits(numbits):
+                test_coverage[test_name].add((file_path, line_no))
 
-    conn.close()
-    return dict(test_coverage)
+        return dict(test_coverage)
+    finally:
+        conn.close()
 
 
 def _parse_test_name(context: str) -> str | None:
