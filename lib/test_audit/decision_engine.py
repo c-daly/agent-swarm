@@ -1,5 +1,6 @@
 # lib/test_audit/decision_engine.py
 """Decision engine for test health scoring."""
+import ast
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Set
@@ -104,3 +105,38 @@ def process_decisions(
             result.needs_review.add(test.name)
 
     return result
+
+
+def delete_tests_from_file(code: str, tests_to_delete: Set[str]) -> str:
+    """Remove specified test functions from source code.
+
+    Args:
+        code: Source code of the test file
+        tests_to_delete: Set of test function names to remove
+
+    Returns:
+        Modified source code with tests removed
+    """
+    tree = ast.parse(code)
+    lines = code.splitlines(keepends=True)
+
+    # Find line ranges to delete (in reverse order to preserve indices)
+    ranges_to_delete = []
+
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name in tests_to_delete:
+            # Get start and end lines (1-indexed)
+            start = node.lineno - 1  # Convert to 0-indexed
+            end = node.end_lineno  # Already 1-indexed, use as exclusive end
+            ranges_to_delete.append((start, end))
+
+    # Sort in reverse order so we can delete without affecting earlier indices
+    ranges_to_delete.sort(reverse=True)
+
+    for start, end in ranges_to_delete:
+        del lines[start:end]
+        # Also remove trailing blank lines after deletion point
+        while start < len(lines) and lines[start].strip() == "":
+            del lines[start]
+
+    return "".join(lines)

@@ -1,6 +1,7 @@
 # tests/test_audit/test_decision_engine.py
 from lib.test_audit.decision_engine import (
     Verdict,
+    delete_tests_from_file,
     process_decisions,
     score_test_health,
 )
@@ -111,3 +112,24 @@ def test_process_decisions_separates_by_confidence():
     assert "test_healthy" in result.keeps
     assert "test_no_assert" in result.deletes
     assert "test_mock_heavy" in result.needs_review
+
+
+def test_delete_tests_from_file():
+    """Delete specified test functions from a file."""
+    original = '''
+def test_keep_this():
+    assert True
+
+def test_delete_this():
+    assert False
+
+def test_also_keep():
+    assert 1 == 1
+'''
+    tests_to_delete = {"test_delete_this"}
+
+    result = delete_tests_from_file(original, tests_to_delete)
+
+    assert "test_keep_this" in result
+    assert "test_delete_this" not in result
+    assert "test_also_keep" in result
