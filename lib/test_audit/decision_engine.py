@@ -3,7 +3,7 @@
 import ast
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set
 
 from lib.test_audit.test_parser import TestInfo
 
@@ -21,12 +21,25 @@ class HealthScore:
     reason: str
 
 
-def score_test_health(test: TestInfo, is_in_minimum_set: bool) -> HealthScore:
+@dataclass
+class CoverageInfo:
+    """Coverage information for a test from actual pytest coverage data."""
+    is_in_minimum_set: bool
+    is_truly_redundant: bool  # All lines covered by minimum set
+    unique_lines: int  # Lines only this test covers
+
+
+def score_test_health(
+    test: TestInfo,
+    is_in_minimum_set: bool,
+    coverage_info: Optional[CoverageInfo] = None,
+) -> HealthScore:
     """Score a test's health and return a verdict.
 
     Args:
         test: TestInfo with assertions, mocks, targets
-        is_in_minimum_set: Whether this test is needed for coverage
+        is_in_minimum_set: Whether this test is needed for coverage (static analysis)
+        coverage_info: Optional coverage data from actual pytest run
 
     Returns:
         HealthScore with verdict, confidence, and reason
@@ -47,12 +60,35 @@ def score_test_health(test: TestInfo, is_in_minimum_set: bool) -> HealthScore:
             reason=f"Excessive mocks ({test.mocks}) - may be testing implementation not behavior",
         )
 
-    # Not in minimum set = redundant
+    # Use coverage-based analysis if available (more accurate)
+    if coverage_info is not None:
+        if coverage_info.is_in_minimum_set:
+            confidence = min(0.95, 0.8 + (test.assertions * 0.03))
+            return HealthScore(
+                verdict=Verdict.KEEP,
+                confidence=confidence,
+                reason=f"In minimum coverage set with {test.assertions} assertion(s)",
+            )
+        elif coverage_info.is_truly_redundant:
+            return HealthScore(
+                verdict=Verdict.DELETE,
+                confidence=0.9,  # High confidence - actual coverage data
+                reason="Truly redundant - all lines covered by other tests",
+            )
+        else:
+            # Not in minimum set but adds unique coverage
+            return HealthScore(
+                verdict=Verdict.KEEP,
+                confidence=0.85,
+                reason=f"Adds {coverage_info.unique_lines} unique line(s) of coverage",
+            )
+
+    # Fall back to static analysis (less accurate)
     if not is_in_minimum_set:
         return HealthScore(
             verdict=Verdict.DELETE,
-            confidence=0.8,
-            reason="Redundant - coverage provided by other tests",
+            confidence=0.6,  # Lower confidence for static analysis
+            reason="Redundant (static analysis) - coverage may be provided by other tests",
         )
 
     # Healthy test - keep it
@@ -76,13 +112,15 @@ def process_decisions(
     tests: List[TestInfo],
     minimum_set: Set[str],
     confidence_threshold: float = 0.75,
+    coverage_data: Optional[Dict[str, CoverageInfo]] = None,
 ) -> DecisionResult:
     """Process all tests and separate by confidence.
 
     Args:
         tests: List of TestInfo objects
-        minimum_set: Set of test names in minimum covering set
+        minimum_set: Set of test names in minimum covering set (static analysis)
         confidence_threshold: Minimum confidence for automatic decision
+        coverage_data: Optional dict of test_name -> CoverageInfo from actual coverage
 
     Returns:
         DecisionResult with keeps, deletes, and needs_review sets
@@ -91,7 +129,8 @@ def process_decisions(
 
     for test in tests:
         is_in_minimum_set = test.name in minimum_set
-        score = score_test_health(test, is_in_minimum_set)
+        coverage_info = coverage_data.get(test.name) if coverage_data else None
+        score = score_test_health(test, is_in_minimum_set, coverage_info)
         result.scores[test.name] = score
 
         if score.verdict == Verdict.REVIEW:

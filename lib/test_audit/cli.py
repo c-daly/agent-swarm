@@ -2,10 +2,72 @@
 """Command-line interface for test audit."""
 import argparse
 from pathlib import Path
+from typing import Dict, Optional
 
-from lib.test_audit.decision_engine import DecisionResult, delete_tests_from_file, process_decisions
+from lib.test_audit.decision_engine import (
+    CoverageInfo,
+    DecisionResult,
+    delete_tests_from_file,
+    process_decisions,
+)
 from lib.test_audit.optimizer import find_minimum_covering_set, map_test_coverage
 from lib.test_audit.test_parser import parse_test_file
+
+
+def _build_coverage_data(
+    test_path: str, source_path: str, project_root: Path
+) -> Optional[Dict[str, CoverageInfo]]:
+    """Build coverage info dict from actual pytest coverage data.
+
+    Returns:
+        Dict mapping test_name -> CoverageInfo, or None if collection fails
+    """
+    try:
+        from lib.test_audit.coverage_based import (
+            collect_per_test_coverage,
+            find_minimum_covering_set as find_min_set_by_lines,
+        )
+    except ImportError:
+        print("Warning: coverage_based module not available")
+        return None
+
+    try:
+        # Collect per-test coverage
+        coverage = collect_per_test_coverage(test_path, source_path, project_root)
+        if not coverage:
+            return None
+
+        # Find minimum set by actual line coverage
+        minimum_set = find_min_set_by_lines(coverage)
+
+        # Calculate lines covered by minimum set
+        min_set_lines = set()
+        for test_name in minimum_set:
+            min_set_lines |= coverage.get(test_name, set())
+
+        # Build CoverageInfo for each test
+        # Use both full test_id and just function name as keys to handle matching
+        result: Dict[str, CoverageInfo] = {}
+        for test_id, lines in coverage.items():
+            unique_lines = lines - min_set_lines
+            info = CoverageInfo(
+                is_in_minimum_set=test_id in minimum_set,
+                is_truly_redundant=len(unique_lines) == 0 and test_id not in minimum_set,
+                unique_lines=len(unique_lines),
+            )
+            # Store under full test_id to avoid collisions
+            result[test_id] = info
+            # Also store under just function name for backward compatibility
+            # (later entries may overwrite, but full id takes precedence in lookup)
+            test_name = test_id.split("::")[-1] if "::" in test_id else test_id
+            if test_name not in result:
+                result[test_name] = info
+
+        return result
+
+    except Exception as e:
+        print(f"Warning: Failed to collect coverage data: {e}")
+        return None
 
 
 def main():
@@ -28,6 +90,17 @@ def main():
         action="store_true",
         help="Actually delete tests marked for deletion",
     )
+    parser.add_argument(
+        "--coverage",
+        action="store_true",
+        help="Use actual pytest coverage data (more accurate, slower)",
+    )
+    parser.add_argument(
+        "--source",
+        type=str,
+        default="lib",
+        help="Source directory for coverage measurement (default: lib)",
+    )
     args = parser.parse_args()
 
     # Find and parse all test files
@@ -43,7 +116,7 @@ def main():
         print("No tests found.")
         return
 
-    # Calculate coverage and minimum set
+    # Calculate coverage and minimum set (static analysis)
     coverage = map_test_coverage(all_tests)
     all_functions = set()
     for targets in coverage.values():
@@ -51,12 +124,25 @@ def main():
 
     minimum_set = find_minimum_covering_set(coverage, all_functions)
 
+    # Optionally collect actual coverage data
+    coverage_data = None
+    if args.coverage:
+        print("Collecting actual coverage data (this may take a while)...")
+        project_root = args.path.parent if args.path.name == "tests" else args.path
+        coverage_data = _build_coverage_data(str(args.path), args.source, project_root)
+        if coverage_data:
+            print(f"Collected coverage data for {len(coverage_data)} tests")
+        else:
+            print("Falling back to static analysis")
+
     # Process decisions
-    result = process_decisions(all_tests, minimum_set, args.confidence)
+    result = process_decisions(all_tests, minimum_set, args.confidence, coverage_data)
 
     # Output summary
     print("\nTest Audit Summary")
     print("==================")
+    mode = "coverage-based" if coverage_data else "static analysis"
+    print(f"Analysis mode: {mode}")
     print(f"Total tests: {len(all_tests)}")
     print(f"Functions covered: {len(all_functions)}")
     print()
