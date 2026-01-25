@@ -792,10 +792,19 @@ class MCPRouter:
                 self._socket_server.close()
             except Exception:
                 pass
-        # Only delete port file if we're the primary (we created it)
+        # Only delete port file if we're the primary AND the file contains our port
+        # This prevents accidentally deleting another router's port file
         if self._is_primary and self._port_file.exists():
             try:
-                self._port_file.unlink()
+                file_port = int(self._port_file.read_text().strip())
+                if file_port == self._socket_port:
+                    self._port_file.unlink()
+                else:
+                    _router_log(
+                        "federation",
+                        f"Not deleting port file: contains {file_port}, we are {self._socket_port}",
+                        "WARN",
+                    )
             except Exception:
                 pass
 
