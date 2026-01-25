@@ -2,7 +2,7 @@
 """Build call graphs from Python code."""
 import ast
 from dataclasses import dataclass, field
-from typing import Dict, List
+from typing import Dict, List, Set
 
 
 @dataclass
@@ -44,3 +44,23 @@ def _extract_calls(func_node: ast.FunctionDef) -> List[str]:
                 # method calls like self.method() - just get the method name
                 calls.append(node.func.attr)
     return calls
+
+
+def find_reachable(graph: Dict[str, FunctionInfo], entry_points: List[str]) -> Set[str]:
+    """Find all functions reachable from entry points via BFS."""
+    reachable: Set[str] = set()
+    queue = list(entry_points)
+
+    while queue:
+        func_name = queue.pop(0)
+        if func_name in reachable:
+            continue
+        if func_name not in graph:
+            continue
+
+        reachable.add(func_name)
+        for called in graph[func_name].calls:
+            if called not in reachable:
+                queue.append(called)
+
+    return reachable
