@@ -4,29 +4,48 @@
 
 ## Tools Available
 
-Native Claude Code tools (`Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`) are NOT available to subagents.
+You have ONE tool: **Bash**
 
-**Use these MCP router tools instead:**
+Use Bash to run `mcp-call` commands:
 
-| Operation | Tool |
-|-----------|------|
-| Run commands | `mcp__plugin_agent-swarm_router__native__bash` |
-| Read files | `mcp__plugin_agent-swarm_router__native__read_file` |
-| Write files | `mcp__plugin_agent-swarm_router__native__write_file` |
-| Edit files | `mcp__plugin_agent-swarm_router__native__edit_file` |
-| Find files | `mcp__plugin_agent-swarm_router__native__glob` |
-| Search content | `mcp__plugin_agent-swarm_router__native__grep` |
+| Operation | Command |
+|-----------|---------|
+| Run shell commands | `mcp-call git status`, `mcp-call pytest`, `mcp-call ruff check .` |
+| Read files | `mcp-call serena__read_file '{"relative_path": "path/to/file"}'` |
+| List directory | `mcp-call serena__list_dir '{"relative_path": "."}'` |
+| Find files | `mcp-call serena__find_file '{"file_name_pattern": "*.py"}'` |
+| Search code | `mcp-call serena__search_for_pattern '{"pattern": "def main"}'` |
+| Get symbols | `mcp-call serena__get_symbols_overview '{"relative_path": "file.py"}'` |
+| Find symbol | `mcp-call serena__find_symbol '{"name_path_pattern": "MyClass"}'` |
+| Replace content | `mcp-call serena__replace_content '{"relative_path": "file.py", ...}'` |
 
-Serena tools: use `mcp__plugin_agent-swarm_router__serena__*` versions.
+### Shell Aliases
+
+These common commands work directly with mcp-call:
+- `mcp-call pytest tests/` - run tests
+- `mcp-call ruff check .` - lint code
+- `mcp-call mypy src/` - type check
+- `mcp-call git status` - git operations
+- `mcp-call gh pr view` - github CLI
+- `mcp-call python script.py` - run python
+
+### Serena Tools
+
+For code intelligence, use `mcp-call serena__<tool>`:
+- `serena__read_file` - read file contents
+- `serena__list_dir` - list directory
+- `serena__find_file` - find files by pattern
+- `serena__search_for_pattern` - grep-like search
+- `serena__get_symbols_overview` - get file symbols
+- `serena__find_symbol` - find symbol by name
+- `serena__replace_content` - replace text in file
+- `serena__replace_symbol_body` - replace entire symbol
 
 ## CRITICAL: Token Efficiency Rules
-
-You MUST follow these constraints to avoid wasting tokens:
 
 ### File Reading Limits
 - **MAX 5 file reads** before you must write a batch script
 - Use write + bash to create and run scripts for multiple files
-- **NO cat/head/tail** - use the read_file tool only
 
 ### Search Limits
 - **MAX 5 searches** before you must batch
@@ -35,7 +54,6 @@ You MUST follow these constraints to avoid wasting tokens:
 
 ### Duplicate Prevention
 - **Track what you've read** - don't read the same file twice
-- Keep a mental list of files already examined
 
 ### Script Requirements
 When you need to:
@@ -68,24 +86,24 @@ Subagents handle git operations in their REVIEW phase (after tests pass).
 
 The orchestrator's prompt will tell you if you're the first task. If so:
 
-1. Create feature branch: `git checkout -b feature/<task-name>`
+1. Create feature branch: `mcp-call git checkout -b feature/<task-name>`
 2. Make your changes (tests, implementation)
-3. Stage files: `git add <files>`
+3. Stage files: `mcp-call git add <files>`
 
 ### If Continuing Existing Branch
 
-1. Verify you're on the correct branch: `git branch --show-current`
-2. If not, switch: `git checkout feature/<task-name>`
+1. Verify you're on the correct branch: `mcp-call git branch --show-current`
+2. If not, switch: `mcp-call git checkout feature/<task-name>`
 3. Make your changes
-4. Stage files: `git add <files>`
+4. Stage files: `mcp-call git add <files>`
 
 ### In REVIEW Phase (Subagent)
 
 When your tests pass, you enter REVIEW phase and handle git operations:
 
-1. Commit: `git commit -m "feat: <description>"`
-2. Push: `git push -u origin feature/<task-name>`
-3. Create PR: `gh pr create --title "..." --body "..."`
+1. Commit: `mcp-call git commit -m "feat: <description>"`
+2. Push: `mcp-call git push -u origin feature/<task-name>`
+3. Create PR: `mcp-call gh pr create --title "..." --body "..."`
 
 ### External Review (Greptile)
 
@@ -106,11 +124,8 @@ You have access to multiple memory systems. Use them strategically to avoid repe
 ### Before Starting Your Task
 
 1. **Check Serena memories** (project-specific learnings):
-   - `mcp__plugin_agent-swarm_router__serena__list_memories` to see available memories
-   - `mcp__plugin_agent-swarm_router__serena__read_memory` if a memory name matches your task
-
-2. **Check knowledge graph** (structured facts/relations):
-   - `mcp__memory__search_nodes(query='<topic>')` to find relevant nodes
+   - `mcp-call serena__list_memories` to see available memories
+   - `mcp-call serena__read_memory '{"memory_name": "..."}'` if relevant
 
 ### After Completing Your Task
 
@@ -120,7 +135,7 @@ If you learned something useful, record it:
 2. **Pitfalls found** - What didn't work or caused issues?
 3. **Key decisions** - What choices did you make and why?
 
-Use `mcp__plugin_agent-swarm_router__serena__write_memory` to persist significant learnings.
+Use `mcp-call serena__write_memory '{"memory_name": "...", "content": "..."}'` to persist significant learnings.
 
 ### When to Use Memory
 

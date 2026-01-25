@@ -9,7 +9,7 @@ from typing import FrozenSet, Optional
 import fnmatch
 from pathlib import Path
 
-from lib.tool_categories import (
+from tool_categories import (
     ToolCategory,
     TOOL_CATEGORIES,  # noqa: F401 - re-exported for API compatibility
     FILE_WRITE_TOOLS,
