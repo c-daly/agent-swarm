@@ -3,7 +3,7 @@
 import argparse
 from pathlib import Path
 
-from lib.test_audit.decision_engine import process_decisions
+from lib.test_audit.decision_engine import DecisionResult, process_decisions
 from lib.test_audit.optimizer import find_minimum_covering_set, map_test_coverage
 from lib.test_audit.test_parser import parse_test_file
 
@@ -64,6 +64,34 @@ def main():
     for name in sorted(result.needs_review):
         score = result.scores[name]
         print(f"  {name} - {score.reason}")
+
+
+def interactive_review(result: DecisionResult) -> DecisionResult:
+    """Interactively review tests marked for review.
+
+    Args:
+        result: DecisionResult with needs_review set
+
+    Returns:
+        Updated DecisionResult with user decisions applied
+    """
+    for name in list(result.needs_review):
+        score = result.scores[name]
+        print(f"\n{name}")
+        print(f"  Reason: {score.reason}")
+        print(f"  Confidence: {score.confidence:.0%}")
+
+        choice = input("  [k]eep / [d]elete / [s]kip: ").strip().lower()
+
+        if choice == "k":
+            result.keeps.add(name)
+            result.needs_review.remove(name)
+        elif choice == "d":
+            result.deletes.add(name)
+            result.needs_review.remove(name)
+        # 's' or anything else = skip (leave in needs_review)
+
+    return result
 
 
 if __name__ == "__main__":
