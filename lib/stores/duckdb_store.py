@@ -647,3 +647,31 @@ class DuckDBStore(AnalyticsStore, TraceStore):
                 was_retrieved = TRUE
             WHERE content_id = ?
         """, [content_id])
+
+    def get_summarization_callback_rate(self, days: int = 7) -> dict:
+        """Get summarization callback rate for the past N days.
+
+        Returns:
+            Dict with total_offered, total_retrieved, callback_rate, days
+        """
+        result = self.conn.execute(
+            """
+            SELECT
+                COUNT(*) as total_offered,
+                COUNT(*) FILTER (WHERE was_retrieved = TRUE) as total_retrieved
+            FROM content_retrievals
+            WHERE created_at >= CURRENT_DATE - (? * INTERVAL '1' DAY)
+            """,
+            [days],
+        ).fetchone()
+
+        total_offered = result[0] or 0
+        total_retrieved = result[1] or 0
+        callback_rate = total_retrieved / total_offered if total_offered > 0 else 0.0
+
+        return {
+            "total_offered": total_offered,
+            "total_retrieved": total_retrieved,
+            "callback_rate": callback_rate,
+            "days": days,
+        }

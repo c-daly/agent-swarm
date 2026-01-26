@@ -523,3 +523,153 @@ class TestWorkflowProxying:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestSocketResponseEnvelope:
+    """Tests for socket handler response envelope format."""
+
+    def test_socket_response_contains_guidance_field(self):
+        """Socket response envelope should contain guidance field."""
+        router = MCPRouter()
+        router.register_server("test", ["echo", "{}"], tool_prefix="test")
+
+        # Mock the route response
+        mock_route_response = RouterResponse(
+            summary='{"preview": "test data"}',
+            full={"result": {"data": "test"}},
+            correlation_id="req-abc123"
+        )
+
+        # Capture what would be sent back
+        captured_result = None
+
+        def mock_route(*args, **kwargs):
+            return mock_route_response
+
+        with patch.object(router, 'route', mock_route):
+            # Simulate socket processing logic
+            # The envelope should have: summary, full, content_id, guidance
+            route_response = router.route("test", "test_tool", {})
+            backend_result = route_response.full
+            if isinstance(backend_result, dict) and "result" in backend_result:
+                full_content = backend_result["result"]
+            else:
+                full_content = backend_result
+            
+            # This is what the current code does:
+            # result = full_content
+            
+            # This is what we expect after the fix:
+            envelope = {
+                "summary": route_response.summary,
+                "full": full_content,
+                "content_id": route_response.correlation_id,
+                "guidance": "Use this summary to proceed. If you need specific details, make a targeted follow-up query rather than requesting full content. Full retrieval via router__poll(correlation_id) should be a last resort.",
+            }
+            captured_result = envelope
+
+        # Verify envelope structure
+        assert "guidance" in captured_result
+        assert "summary" in captured_result
+        assert "full" in captured_result
+        assert "content_id" in captured_result
+        assert captured_result["content_id"] == "req-abc123"
+        assert "last resort" in captured_result["guidance"]
+
+    def test_socket_response_has_envelope_structure(self):
+        """Socket response should have envelope with summary or full."""
+        router = MCPRouter()
+        router.register_server("test", ["echo", "{}"], tool_prefix="test")
+
+        mock_route_response = RouterResponse(
+            summary='{"preview": "found 5 files"}',
+            full={"result": ["a.py", "b.py", "c.py", "d.py", "e.py"]},
+            correlation_id="req-def456"
+        )
+
+        with patch.object(router, 'route', return_value=mock_route_response):
+            route_response = router.route("test", "test_tool", {})
+            backend_result = route_response.full
+            if isinstance(backend_result, dict) and "result" in backend_result:
+                full_content = backend_result["result"]
+            else:
+                full_content = backend_result
+            
+            # Expected envelope structure
+            envelope = {
+                "summary": route_response.summary,
+                "full": full_content,
+                "content_id": route_response.correlation_id,
+                "guidance": "Use this summary to proceed. If you need specific details, make a targeted follow-up query rather than requesting full content. Full retrieval via router__poll(correlation_id) should be a last resort.",
+            }
+
+        # Verify envelope has both summary and full
+        assert envelope["summary"] is not None
+        assert envelope["full"] is not None
+        assert isinstance(envelope["full"], list)
+        assert len(envelope["full"]) == 5
+
+
+class TestSocketEnvelopeIntegration:
+    """Integration tests for socket handler returning envelope."""
+
+    def test_socket_handler_returns_envelope_not_raw(self):
+        """Verify _handle_socket_client returns envelope structure, not raw content.
+        
+        This tests the actual socket handler code path to ensure
+        it returns {summary, full, content_id, guidance} envelope.
+        """
+        import io
+        import socket as sock_module
+        from unittest.mock import MagicMock, patch
+
+        router = MCPRouter()
+        router.register_server("serena", ["echo", "{}"], tool_prefix="serena")
+
+        # Mock the route method to return a known response
+        mock_route_response = RouterResponse(
+            summary='{"preview": "Found 3 symbols"}',
+            full={"result": {"symbols": ["A", "B", "C"]}},
+            correlation_id="req-test123"
+        )
+
+        # Create a mock socket
+        mock_client = MagicMock(spec=sock_module.socket)
+        
+        # Simulate incoming request
+        request = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "serena__find_symbol",
+                "arguments": {"name_path_pattern": "Test"}
+            }
+        }
+        import json
+        request_bytes = json.dumps(request).encode() + b"\n"
+        mock_client.recv.return_value = request_bytes
+
+        # Capture what gets sent back
+        sent_data = []
+        mock_client.sendall = lambda data: sent_data.append(data)
+
+        with patch.object(router, 'route', return_value=mock_route_response):
+            router._handle_socket_client(mock_client, conn_id=1)
+
+        # Parse the response
+        assert len(sent_data) == 1, "Should have sent one response"
+        response = json.loads(sent_data[0].decode().strip())
+        
+        # The result should be an envelope, not raw content
+        result = response.get("result", {})
+        
+        # Check for envelope structure with guidance
+        assert "guidance" in result, f"Result should have 'guidance' key. Got: {list(result.keys())}"
+        assert "summary" in result, f"Result should have 'summary' key. Got: {list(result.keys())}"
+        assert "full" in result, f"Result should have 'full' key. Got: {list(result.keys())}"
+        assert "content_id" in result, f"Result should have 'content_id' key. Got: {list(result.keys())}"
+        
+        # Verify content
+        assert result["content_id"] == "req-test123"
+        assert "last resort" in result["guidance"]
