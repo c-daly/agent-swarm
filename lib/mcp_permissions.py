@@ -151,8 +151,9 @@ class PermissionChecker:
     def _apply_rules(self, effective: dict, rules: dict):
         """Apply a layer's rules to effective permissions.
         
-        Each layer can add to allowed or blocked sets.
-        More specific layers override by adding patterns.
+        More specific layers override less specific ones:
+        - If this layer allows a tool, remove it from blocked
+        - If this layer blocks a tool, remove it from allowed
         """
         if not rules:
             return
@@ -160,8 +161,15 @@ class PermissionChecker:
         allowed = rules.get("allowed", [])
         blocked = rules.get("blocked", [])
         
-        effective["allowed"].update(allowed)
-        effective["blocked"].update(blocked)
+        # Adding to allowed removes from blocked (more specific wins)
+        for pattern in allowed:
+            effective["allowed"].add(pattern)
+            effective["blocked"].discard(pattern)
+        
+        # Adding to blocked removes from allowed (more specific wins)
+        for pattern in blocked:
+            effective["blocked"].add(pattern)
+            effective["allowed"].discard(pattern)
     
     def _get_guidance(self, block_type: str, **kwargs) -> str:
         """Get guidance message for a block type."""
