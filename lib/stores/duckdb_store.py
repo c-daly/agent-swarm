@@ -655,13 +655,14 @@ class DuckDBStore(AnalyticsStore, TraceStore):
             Dict with total_offered, total_retrieved, callback_rate, days
         """
         result = self.conn.execute(
-            f"""
+            """
             SELECT
                 COUNT(*) as total_offered,
                 COUNT(*) FILTER (WHERE was_retrieved = TRUE) as total_retrieved
             FROM content_retrievals
-            WHERE created_at >= CURRENT_DATE - INTERVAL '{int(days)}' DAY
-            """
+            WHERE created_at >= CURRENT_DATE - (? * INTERVAL '1' DAY)
+            """,
+            [days],
         ).fetchone()
 
         total_offered = result[0] or 0
