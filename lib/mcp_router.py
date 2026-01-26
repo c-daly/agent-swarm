@@ -1728,6 +1728,49 @@ class MCPRouter:
                     },
                 },
             },
+            {
+                "name": "router__register_agent",
+                "description": "Register an agent with the permission system.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "agent_id": {"type": "string", "description": "Unique agent identifier"},
+                        "agent_type": {"type": "string", "description": "Agent type (e.g., implementer, explorer)"},
+                        "roles": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional list of roles",
+                        },
+                    },
+                    "required": ["agent_id", "agent_type"],
+                },
+            },
+            {
+                "name": "router__update_agent_phase",
+                "description": "Update an agent's current workflow phase.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "agent_id": {"type": "string", "description": "Agent identifier"},
+                        "workflow": {"type": "string", "description": "Workflow name (e.g., iterate, debug)"},
+                        "phase": {"type": "string", "description": "Phase within workflow"},
+                    },
+                    "required": ["agent_id", "workflow", "phase"],
+                },
+            },
+            {
+                "name": "router__check_permission",
+                "description": "Check if a tool call would be permitted.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "tool": {"type": "string", "description": "Tool name to check"},
+                        "args": {"type": "object", "description": "Tool arguments"},
+                        "agent_id": {"type": "string", "description": "Optional agent ID for context"},
+                    },
+                    "required": ["tool"],
+                },
+            },
         ]
 
         # Get tools from all backends

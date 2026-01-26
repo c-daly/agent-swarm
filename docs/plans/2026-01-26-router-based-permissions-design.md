@@ -259,3 +259,38 @@ When router blocks a call, return actionable feedback:
 - Automatic migration of existing `permission_store.py`
 - UI for permission management
 - Real-time permission updates (requires router restart)
+
+
+## Implementation Notes (Added During Development)
+
+### Simplified Agent Context
+
+Instead of maintaining an agent registry, agents pass context inline with each tool call:
+
+```python
+args = {
+    "file_path": "src/main.py",      # Actual tool argument
+    "_agent_id": "sub-abc123",        # Optional: agent identifier
+    "_agent_type": "implementer",     # Agent type for permission lookup
+    "_workflow": "iterate",           # Current workflow
+    "_phase": "implement",            # Current phase
+    "_roles": ["editor"],             # Optional: assigned roles
+}
+```
+
+The router extracts `_*` prefixed fields before forwarding to the backend.
+
+### Pattern Specificity
+
+When both `allowed` and `blocked` patterns match a tool call, the more specific pattern wins (longer pattern = more specific):
+
+- Global blocks `Bash`
+- Phase allows `Bash(pytest*)`
+- For `Bash` with command `pytest tests/` → **Allowed** (more specific pattern wins)
+
+### Router Built-in Tools
+
+New tools added for permission management:
+- `router__register_agent` - Register agent (optional, for registry-based approach)
+- `router__update_agent_phase` - Update agent's workflow phase
+- `router__check_permission` - Test if a tool call would be permitted
