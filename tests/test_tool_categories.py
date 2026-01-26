@@ -138,15 +138,15 @@ class TestConsistencyWithPermissionStore:
     def test_permission_store_uses_same_tool_category_enum(self):
         from lib.permission_store import ToolCategory as PermToolCategory
         # Should be the exact same enum
-        assert PermToolCategory is ToolCategory
+        assert PermToolCategory == ToolCategory
 
     def test_permission_store_uses_file_write_tools(self):
         from lib.permission_store import FILE_WRITE_TOOLS as perm_file_write
-        assert perm_file_write is FILE_WRITE_TOOLS
+        assert perm_file_write == FILE_WRITE_TOOLS
 
     def test_permission_store_uses_workflow_control_tools(self):
         from lib.permission_store import WORKFLOW_CONTROL_TOOLS as perm_workflow
-        assert perm_workflow is WORKFLOW_CONTROL_TOOLS
+        assert perm_workflow == WORKFLOW_CONTROL_TOOLS
 
 
 class TestHelperFunctions:

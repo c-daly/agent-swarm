@@ -1,0 +1,129 @@
+# Router-based permissions configuration
+# Layers: global -> roles -> agents -> workflow/phase
+# More specific layers override less specific ones
+# Superblocked rules cannot be overridden
+
+global:
+  # Default allowed tools for all callers
+  allowed: [mcp__router__*, Read, Glob, Grep, WebSearch, WebFetch, AskUserQuestion]
+  # Default blocked tools (can be overridden by more specific layers)
+  blocked: [Bash, Edit, Write, NotebookEdit]
+  # Never overridable - always blocked
+  superblocked: [Bash(rm -rf*), Bash(sudo*), Bash(chmod 777*), Bash(curl*|*sh), Bash(wget*|*sh)]
+
+roles:
+  # Read-only access for research agents
+  read_only:
+    allowed: [Read, Glob, Grep, WebSearch, WebFetch]
+    blocked: [Edit, Write, Task, Bash]
+  
+  # Editor role for implementation
+  editor:
+    allowed: [Edit, Write, NotebookEdit]
+    blocked: []
+  
+  # Shell access for testing
+  shell_safe:
+    allowed: [Bash(pytest*), Bash(python -m pytest*), Bash(ruff*), Bash(black*), Bash(mypy*)]
+    blocked: []
+  
+  # Full shell access (dangerous)
+  shell_full:
+    allowed: [Bash]
+    blocked: []
+  
+  # Workflow control
+  workflow_control:
+    allowed: [mcp__router__workflow__*]
+    blocked: []
+
+agents:
+  # Explorer - research only
+  explorer:
+    allowed: [Read, Glob, Grep, WebSearch, WebFetch, mcp__router__serena__*, mcp__plugin_serena_serena__*]
+    blocked: [Task, Edit, Write, Bash]
+  
+  # Implementer - can edit code
+  implementer:
+    allowed: [Edit, Write, Read, Glob, Grep, Bash(pytest*), Bash(python*), Bash(ruff*)]
+    blocked: [Task, Bash(rm*), Bash(git push*)]
+  
+  # Orchestrator - delegates to subagents
+  orchestrator:
+    allowed: [Task, Read, Glob, Grep, mcp__router__workflow__*]
+    blocked: [Edit, Write, Bash]
+  
+  # Researcher - web and code research
+  researcher:
+    allowed: [Read, Glob, Grep, WebSearch, WebFetch, mcp__router__serena__find_symbol, mcp__router__serena__search_for_pattern]
+    blocked: [Edit, Write, Task, Bash]
+  
+  # Reviewer - read-only analysis
+  reviewer:
+    allowed: [Read, Glob, Grep, mcp__router__serena__*]
+    blocked: [Edit, Write, Task, Bash]
+  
+  # Debugger - can read and run tests
+  debugger:
+    allowed: [Read, Glob, Grep, Bash(pytest*), Bash(python*)]
+    blocked: [Edit, Write, Task]
+  
+  # Architect - planning and design
+  architect:
+    allowed: [Read, Glob, Grep, WebSearch, mcp__router__serena__*]
+    blocked: [Edit, Write, Bash]
+
+workflows:
+  # Iterate workflow (TDD-style)
+  iterate:
+    orchestrate:
+      allowed: [Task, Read, Glob, Grep, mcp__router__workflow__*]
+      blocked: [Edit, Write, NotebookEdit, Bash]
+    
+    test_writing:
+      allowed: [Edit, Write, Read, Glob, Grep, Bash(pytest*)]
+      blocked: []
+    
+    implement:
+      allowed: [Edit, Write, Read, Glob, Grep, Bash(pytest*), Bash(python*), Bash(ruff*)]
+      blocked: []
+    
+    test:
+      allowed: [Read, Bash(pytest*), Bash(python -m pytest*)]
+      blocked: [Edit, Write]
+    
+    coverage:
+      allowed: [Edit, Write, Read, Glob, Grep, Bash(pytest*), WebSearch]
+      blocked: []
+    
+    review:
+      allowed: [Read, Glob, Grep, WebSearch]
+      blocked: [Edit, Write, Bash]
+  
+  # Debug workflow
+  debug:
+    triage:
+      allowed: [Read, Glob, Grep, Bash(pytest*), mcp__router__serena__*]
+      blocked: [Edit, Write]
+    
+    investigate:
+      allowed: [Read, Glob, Grep, Bash(pytest*), Bash(python*), mcp__router__serena__*]
+      blocked: [Edit, Write]
+    
+    fix:
+      allowed: [Edit, Write, Read, Glob, Grep, Bash(pytest*)]
+      blocked: []
+    
+    verify:
+      allowed: [Read, Bash(pytest*)]
+      blocked: [Edit, Write]
+  
+  # PR review workflow
+  pr_review:
+    analyze:
+      allowed: [Read, Glob, Grep, Bash(gh pr*), mcp__router__serena__*]
+      blocked: [Edit, Write, Bash]
+    
+    comment:
+      allowed: [Read, Bash(gh pr comment*), Bash(gh pr review*)]
+      blocked: [Edit, Write]
