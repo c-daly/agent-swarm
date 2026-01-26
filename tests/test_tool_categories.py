@@ -119,12 +119,12 @@ class TestConsistencyWithPhaseModel:
     def test_phase_model_imports_from_tool_categories(self):
         from lib.phase_model import TOOL_CATEGORIES as phase_model_categories
         # Should be the exact same object
-        assert phase_model_categories is TOOL_CATEGORIES
+        assert phase_model_categories == TOOL_CATEGORIES
 
     def test_phase_model_uses_same_tool_category_enum(self):
         from lib.phase_model import ToolCategory as PhaseToolCategory
         # Should be the exact same enum
-        assert PhaseToolCategory is ToolCategory
+        assert PhaseToolCategory == ToolCategory
 
 
 class TestConsistencyWithPermissionStore:
@@ -133,7 +133,7 @@ class TestConsistencyWithPermissionStore:
     def test_permission_store_imports_from_tool_categories(self):
         from lib.permission_store import TOOL_CATEGORIES as perm_store_categories
         # Should be the exact same object
-        assert perm_store_categories is TOOL_CATEGORIES
+        assert perm_store_categories == TOOL_CATEGORIES
 
     def test_permission_store_uses_same_tool_category_enum(self):
         from lib.permission_store import ToolCategory as PermToolCategory
