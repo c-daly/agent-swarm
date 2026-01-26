@@ -310,6 +310,37 @@ class TelemetryCollector:
             # Save immediately for real-time updates
             self._save()
 
+    def track_blocked(
+        self, tool_name: str, reason: str, agent_type: str = ""
+    ) -> None:
+        """Track a blocked permission call.
+        
+        Args:
+            tool_name: Tool that was blocked
+            reason: Reason for blocking
+            agent_type: Agent type that attempted the call
+        """
+        with self._lock:
+            event = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "tool": tool_name,
+                "blocked": True,
+                "reason": reason,
+                "agent_type": agent_type,
+            }
+            
+            # Add to session events
+            self._events.append(event)
+            if len(self._events) > self._max_events:
+                self._events = self._events[-self._max_events:]
+            
+            # Update v2 telemetry - increment blocked count
+            day_key = self._get_today_key()
+            day_data = ensure_day(self._data, day_key)
+            day_data["blocked_count"] = day_data.get("blocked_count", 0) + 1
+            
+            self._save()
+
     def _update_v2_telemetry(
         self, event: dict, error: bool, full_size: int, summary_size: int, duration_ms: int
     ) -> None:
@@ -1246,6 +1277,13 @@ class MCPRouter:
                             f"{log_prefix} BLOCKED tool={tool_name} reason={blocked_response.get('reason', '')}",
                             "WARN"
                         )
+                        # Track blocked call in telemetry
+                        if self.telemetry:
+                            self.telemetry.track_blocked(
+                                tool_name,
+                                blocked_response.get("reason", ""),
+                                blocked_response.get("agent_type", ""),
+                            )
                         result = {
                             "content": [
                                 {"type": "text", "text": json.dumps(blocked_response, indent=2)}
@@ -1330,6 +1368,17 @@ class MCPRouter:
                             "blocked_response": blocked,
                         }, indent=2)}]
                     }
+                elif tool_name == "router__reload_permissions":
+                    if self.permissions:
+                        self.permissions.reload_config()
+                        result = {
+                            "content": [{"type": "text", "text": "Permissions config reloaded"}]
+                        }
+                    else:
+                        result = {
+                            "content": [{"type": "text", "text": "Permissions not enabled"}],
+                            "isError": True,
+                        }
                 elif "__" in tool_name:
                     prefix, actual_tool = tool_name.split("__", 1)
                     # Find backend by prefix
@@ -1770,6 +1819,11 @@ class MCPRouter:
                     },
                     "required": ["tool"],
                 },
+            },
+            {
+                "name": "router__reload_permissions",
+                "description": "Reload permissions config from disk.",
+                "inputSchema": {"type": "object", "properties": {}},
             },
         ]
 
