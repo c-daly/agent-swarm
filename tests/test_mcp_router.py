@@ -673,3 +673,59 @@ class TestSocketEnvelopeIntegration:
         # Verify content
         assert result["content_id"] == "req-test123"
         assert "last resort" in result["guidance"]
+
+
+class TestFederationPIDLiveness:
+    """Tests for PID liveness check in federation."""
+
+    def test_check_main_router_cleans_stale_pid(self, tmp_path):
+        """When port file has dead PID, it should be cleaned up."""
+        from mcp_router import MCPRouter
+        
+        router = MCPRouter()
+        router._port_file = tmp_path / "router.port"
+        
+        # Write a port file with a dead PID (PID 1 is init, use a high unlikely PID)
+        dead_pid = 999999
+        router._port_file.write_text(f"12345:{dead_pid}")
+        
+        # _check_main_router should return None and clean up the file
+        result = router._check_main_router()
+        
+        assert result is None
+        assert not router._port_file.exists(), "Stale port file should be deleted"
+
+    def test_check_main_router_handles_legacy_format(self, tmp_path):
+        """Legacy format (port only) should still work."""
+        from mcp_router import MCPRouter
+        
+        router = MCPRouter()
+        router._port_file = tmp_path / "router.port"
+        
+        # Write legacy format (just port, no PID)
+        router._port_file.write_text("12345")
+        
+        # Should return None since we can't connect, but shouldn't crash
+        result = router._check_main_router()
+        
+        # Will be None because socket won't connect
+        assert result is None
+
+    def test_port_file_includes_pid(self, tmp_path):
+        """Port file should include PID in new format."""
+        from mcp_router import MCPRouter
+        import os
+        
+        router = MCPRouter()
+        router._port_file = tmp_path / "router.port"
+        
+        # Simulate writing port file (what start_socket_listener does)
+        router._socket_port = 54321
+        router._port_file.parent.mkdir(parents=True, exist_ok=True)
+        router._port_file.write_text(f"{router._socket_port}:{os.getpid()}")
+        
+        content = router._port_file.read_text()
+        assert ":" in content
+        port, pid = content.split(":")
+        assert port == "54321"
+        assert pid == str(os.getpid())

@@ -37,9 +37,22 @@ def check_existing_socket() -> int | None:
         return None
 
     try:
-        pid = int(PID_FILE.read_text().strip())
-        port = int(PORT_FILE.read_text().strip())
+        # Try new format (port:pid in single file) first
+        if PORT_FILE.exists():
+            port_content = PORT_FILE.read_text().strip()
+            if ":" in port_content:
+                port_str, pid_str = port_content.split(":", 1)
+                port, pid = int(port_str), int(pid_str)
+            else:
+                # Legacy: separate files
+                port = int(port_content)
+                pid = int(PID_FILE.read_text().strip()) if PID_FILE.exists() else None
+        else:
+            return None
     except (ValueError, OSError):
+        return None
+    
+    if pid is None:
         return None
 
     # Check if process is running
@@ -84,8 +97,9 @@ def _cleanup_stale_files():
 def write_socket_info(port: int):
     """Write current process info for socket sharing."""
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    PID_FILE.write_text(str(os.getpid()))
-    PORT_FILE.write_text(str(port))
+    # New format: port:pid in single file (PID_FILE kept for backwards compat)
+    PORT_FILE.write_text(f"{port}:{os.getpid()}")
+    PID_FILE.write_text(str(os.getpid()))  # Legacy compatibility
 
 
 if __name__ == "__main__":
