@@ -611,12 +611,16 @@ class MCPRouter:
     ) -> tuple[bool, Optional[dict]]:
         """Check if a tool call is permitted.
         
-        Extracts agent context from args._agent_id and checks against
-        permission rules based on agent type, roles, and workflow phase.
+        Extracts agent context from args metadata fields:
+        - _agent_id: Agent identifier
+        - _agent_type: Agent type (e.g., "implementer", "explorer")
+        - _roles: List of roles assigned to the agent
+        - _workflow: Current workflow (e.g., "iterate", "debug")
+        - _phase: Current phase within workflow (e.g., "orchestrate", "implement")
         
         Args:
             tool_name: Full tool name being called
-            args: Tool arguments (may contain _agent_id)
+            args: Tool arguments (may contain _* metadata fields)
         
         Returns:
             (allowed: bool, blocked_response: dict or None)
@@ -624,28 +628,18 @@ class MCPRouter:
         if not self.permissions:
             return True, None  # Permissions not enabled
         
-        # Extract and remove agent_id from args (it's metadata, not tool input)
-        agent_id = args.pop("_agent_id", None)
-        
-        # Get agent info if registered
-        agent_type = ""
-        roles = []
-        workflow = ""
-        phase = ""
-        
-        if agent_id and self.agent_registry:
-            agent_info = self.agent_registry.get(agent_id)
-            if agent_info:
-                agent_type = agent_info.agent_type
-                roles = agent_info.roles
-                workflow = agent_info.workflow or ""
-                phase = agent_info.phase or ""
+        # Extract and remove metadata from args (not tool input)
+        agent_id = args.pop("_agent_id", "")
+        agent_type = args.pop("_agent_type", "")
+        roles = args.pop("_roles", [])
+        workflow = args.pop("_workflow", "")
+        phase = args.pop("_phase", "")
         
         # Check permission
         allowed, response = self.permissions.check(
             tool=tool_name,
             args=args,
-            agent_id=agent_id or "",
+            agent_id=agent_id,
             agent_type=agent_type,
             roles=roles,
             workflow=workflow,

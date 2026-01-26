@@ -72,7 +72,6 @@ class TestRouterPermissionCheck:
         """Router should have permission checker."""
         router = MCPRouter(enable_telemetry=False)
         assert router.permissions is not None
-        assert router.agent_registry is not None
     
     def test_global_allowed(self, temp_permissions):
         """Globally allowed tools should pass."""
@@ -97,78 +96,84 @@ class TestRouterPermissionCheck:
         router = MCPRouter(enable_telemetry=False)
         router.permissions.reload_config()
         
-        # Even with agent_id that might have permissions, superblocked fails
+        # Even with agent_type that might have permissions, superblocked fails
         allowed, response = router._check_permission(
             "Bash", 
-            {"command": "rm -rf /", "_agent_id": "test-agent"}
+            {"command": "rm -rf /", "_agent_type": "implementer"}
         )
         assert not allowed
         assert "superblocked" in response["reason"]
     
-    def test_agent_context_from_registry(self, temp_permissions):
-        """Permission check uses agent registry for context."""
+    def test_agent_type_from_metadata(self, temp_permissions):
+        """Permission check uses inline _agent_type metadata."""
         router = MCPRouter(enable_telemetry=False)
         router.permissions.reload_config()
-        
-        # Register an implementer agent
-        router.register_agent("agent-123", "implementer")
         
         # Implementer can use Edit (overrides global block)
         allowed, response = router._check_permission(
             "Edit",
-            {"file_path": "test.py", "_agent_id": "agent-123"}
+            {"file_path": "test.py", "_agent_type": "implementer"}
         )
         assert allowed
-
-
-class TestAgentRegistration:
-    """Test agent registration via router."""
     
-    def test_register_agent(self):
-        """Can register an agent."""
-        router = MCPRouter(enable_telemetry=False)
-        
-        result = router.register_agent("agent-001", "explorer", ["read_only"])
-        
-        assert result["agent_id"] == "agent-001"
-        assert result["agent_type"] == "explorer"
-        assert "read_only" in result["roles"]
-    
-    def test_update_agent_phase(self):
-        """Can update agent's workflow phase."""
-        router = MCPRouter(enable_telemetry=False)
-        router.register_agent("agent-001", "implementer")
-        
-        result = router.update_agent_phase("agent-001", "iterate", "implement")
-        
-        assert result["workflow"] == "iterate"
-        assert result["phase"] == "implement"
-    
-    def test_phase_affects_permissions(self, temp_permissions):
-        """Agent phase affects permission evaluation."""
+    def test_explorer_blocked_from_task(self, temp_permissions):
+        """Explorer agent type cannot use Task."""
         router = MCPRouter(enable_telemetry=False)
         router.permissions.reload_config()
         
-        # Register agent and set to orchestrate phase
-        router.register_agent("agent-001", "orchestrator")
-        router.update_agent_phase("agent-001", "iterate", "orchestrate")
-        
-        # In orchestrate phase, Edit should be blocked
         allowed, response = router._check_permission(
-            "Edit",
-            {"file_path": "test.py", "_agent_id": "agent-001"}
+            "Task",
+            {"prompt": "test", "_agent_type": "explorer"}
         )
         assert not allowed
+
+
+class TestPhasePermissions:
+    """Test workflow phase based permissions."""
+    
+    def test_orchestrate_phase_blocks_edit(self, temp_permissions):
+        """In orchestrate phase, Edit should be blocked."""
+        router = MCPRouter(enable_telemetry=False)
+        router.permissions.reload_config()
         
-        # Update to implement phase
-        router.update_agent_phase("agent-001", "iterate", "implement")
-        
-        # Now Edit should be allowed
         allowed, response = router._check_permission(
             "Edit",
-            {"file_path": "test.py", "_agent_id": "agent-001"}
+            {"file_path": "test.py", "_workflow": "iterate", "_phase": "orchestrate"}
+        )
+        assert not allowed
+    
+    def test_implement_phase_allows_edit(self, temp_permissions):
+        """In implement phase, Edit should be allowed."""
+        router = MCPRouter(enable_telemetry=False)
+        router.permissions.reload_config()
+        
+        allowed, response = router._check_permission(
+            "Edit",
+            {"file_path": "test.py", "_workflow": "iterate", "_phase": "implement"}
         )
         assert allowed
+    
+    def test_implement_phase_allows_pytest(self, temp_permissions):
+        """In implement phase, Bash(pytest*) should be allowed."""
+        router = MCPRouter(enable_telemetry=False)
+        router.permissions.reload_config()
+        
+        allowed, response = router._check_permission(
+            "Bash",
+            {"command": "pytest tests/", "_workflow": "iterate", "_phase": "implement"}
+        )
+        assert allowed
+    
+    def test_implement_phase_blocks_other_bash(self, temp_permissions):
+        """In implement phase, non-pytest Bash should still be blocked."""
+        router = MCPRouter(enable_telemetry=False)
+        router.permissions.reload_config()
+        
+        allowed, response = router._check_permission(
+            "Bash",
+            {"command": "echo hello", "_workflow": "iterate", "_phase": "implement"}
+        )
+        assert not allowed
 
 
 class TestBlockedResponse:
@@ -195,3 +200,26 @@ class TestBlockedResponse:
         allowed, response = router._check_permission("Edit", {})
         
         assert response["tool"] == "Edit"
+    
+    def test_metadata_stripped_from_args(self, temp_permissions):
+        """Metadata fields should be stripped from args."""
+        router = MCPRouter(enable_telemetry=False)
+        router.permissions.reload_config()
+        
+        args = {
+            "file_path": "test.py",
+            "_agent_id": "agent-123",
+            "_agent_type": "implementer",
+            "_workflow": "iterate",
+            "_phase": "implement",
+        }
+        
+        allowed, _ = router._check_permission("Edit", args)
+        
+        # Metadata should be removed
+        assert "_agent_id" not in args
+        assert "_agent_type" not in args
+        assert "_workflow" not in args
+        assert "_phase" not in args
+        # Real args should remain
+        assert "file_path" in args

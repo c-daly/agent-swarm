@@ -59,7 +59,13 @@ def _get_router_port() -> int:
             "Is the router running?"
         )
     try:
-        return int(port_file.read_text().strip())
+        content = port_file.read_text().strip()
+        # Handle both formats: "port:pid" (new) and "port" (legacy)
+        if ":" in content:
+            port_str = content.split(":")[0]
+        else:
+            port_str = content
+        return int(port_str)
     except ValueError as e:
         raise WorkflowClientError(f"Invalid port in {port_file}: {e}")
 

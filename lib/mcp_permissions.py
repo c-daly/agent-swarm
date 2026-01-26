@@ -242,9 +242,20 @@ class PermissionChecker:
                 if phase in workflow_phases:
                     self._apply_rules(effective, workflow_phases[phase])
         
-        # 3. Check blocked first (more specific blocks override less specific allows)
-        matched, pattern = self._matches_any(tool, args, list(effective["blocked"]))
-        if matched:
+        # 3. Check if explicitly allowed (more specific allows override less specific blocks)
+        allowed_match, allowed_pattern = self._matches_any(tool, args, list(effective["allowed"]))
+        blocked_match, blocked_pattern = self._matches_any(tool, args, list(effective["blocked"]))
+        
+        if allowed_match and blocked_match:
+            # Both match - prefer more specific pattern (longer pattern = more specific)
+            if len(allowed_pattern) >= len(blocked_pattern):
+                return True, None
+            # Blocked pattern is more specific
+        elif allowed_match:
+            return True, None
+        
+        # 4. Check if blocked
+        if blocked_match:
             # Determine block source for better guidance
             if workflow and phase:
                 block_type = "phase_blocked"
@@ -262,7 +273,7 @@ class PermissionChecker:
                 agent_type=agent_type,
                 agent_id=agent_id,
                 phase=phase_str,
-                rule_that_blocked=pattern,
+                rule_that_blocked=blocked_pattern,
                 guidance=self._get_guidance(
                     block_type, 
                     tool=tool, 
@@ -270,11 +281,6 @@ class PermissionChecker:
                     phase=phase_str,
                 ),
             )
-        
-        # 4. Must be explicitly allowed
-        matched, _ = self._matches_any(tool, args, list(effective["allowed"]))
-        if matched:
-            return True, None
         
         # 5. Default deny
         return False, BlockedResponse(
