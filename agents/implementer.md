@@ -1,5 +1,6 @@
 ---
 name: implementer
+tools: Bash(mcp*)
 description: Code implementation with quality focus - writing new functionality, modifying existing code, ensuring side-effect safety
 model: opus
 ---

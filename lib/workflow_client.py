@@ -136,6 +136,18 @@ def _call_tool(tool_name: str, arguments: dict) -> Any:
 
             result = response.get("result", {})
 
+            # Handle new response envelope format (summary/full/content_id)
+            if isinstance(result, dict) and "full" in result:
+                full = result.get("full", {})
+                # Check for error in full response
+                if full.get("isError"):
+                    content = full.get("content", [{}])
+                    if content:
+                        error_text = content[0].get("text", "Unknown error")
+                        _log(tool_name, f"Tool returned error: {error_text}", "ERROR")
+                        raise WorkflowClientError(error_text)
+                result = full  # Use full content for extraction below
+
             # Handle error in result
             if isinstance(result, dict) and result.get("isError"):
                 content = result.get("content", [{}])
