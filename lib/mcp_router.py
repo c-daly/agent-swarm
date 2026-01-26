@@ -80,6 +80,14 @@ except ImportError:
     BlockedResponse = None  # type: ignore
     PERMISSIONS_AVAILABLE = False
 
+# Import tool translator for native -> MCP tool translation
+try:
+    from tool_translator import ToolTranslator
+    TRANSLATOR_AVAILABLE = True
+except ImportError:
+    ToolTranslator = None  # type: ignore
+    TRANSLATOR_AVAILABLE = False
+
 # Import v2 telemetry schema functions (optional - deprecated)
 try:
     from telemetry_schema_v2 import (
@@ -584,6 +592,12 @@ class MCPRouter:
         else:
             self.permissions = None
             self.agent_registry = None
+
+        # Tool translation (native -> MCP)
+        if TRANSLATOR_AVAILABLE:
+            self.translator = ToolTranslator()
+        else:
+            self.translator = None
 
     def _cache_workflow_state(self, tool_name: str, args: dict, response: dict) -> None:
         """Cache workflow state from set/update/start operations."""
@@ -1295,6 +1309,16 @@ class MCPRouter:
                         response_bytes = json.dumps(response).encode() + b"\n"
                         client.sendall(response_bytes)
                         return
+
+                # Translate native tools to MCP equivalents (e.g., Read -> mcp__router__native__read_file)
+                # This happens after permission check (which uses original tool name) but before routing
+                if self.translator and self.translator.has_mapping(tool_name):
+                    original_tool = tool_name
+                    tool_name, args = self.translator.translate(tool_name, args)
+                    _router_log(
+                        "socket",
+                        f"{log_prefix} Translated {original_tool} -> {tool_name}",
+                    )
 
                 # Handle router built-in tools first
                 if tool_name == "router__ping":
@@ -2763,6 +2787,12 @@ def start_stdio_server(router: MCPRouter):
                         sys.stdout.write(json.dumps(response) + "\n")
                         sys.stdout.flush()
                         continue
+
+                # Translate native tools to MCP equivalents (e.g., Read -> mcp__router__native__read_file)
+                if router.translator and router.translator.has_mapping(tool_name):
+                    original_tool = tool_name
+                    tool_name, args = router.translator.translate(tool_name, args)
+                    _router_log("stdio", f"Translated {original_tool} -> {tool_name}")
 
                 # Handle router's own tools first
                 if tool_name == "router__ping":
