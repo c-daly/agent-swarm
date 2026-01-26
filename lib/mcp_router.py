@@ -2737,6 +2737,32 @@ def start_stdio_server(router: MCPRouter):
                 tool_name = params.get("name", "")
                 args = params.get("arguments", {})
 
+                # Check permissions before processing (skip for router built-in tools)
+                if not tool_name.startswith("router__"):
+                    allowed, blocked_response = router._check_permission(tool_name, args)
+                    if not allowed:
+                        _router_log(
+                            "stdio",
+                            f"BLOCKED tool={tool_name} reason={blocked_response.get('reason', '')}",
+                            "WARN"
+                        )
+                        if router.telemetry:
+                            router.telemetry.track_blocked(
+                                tool_name,
+                                blocked_response.get("reason", ""),
+                                blocked_response.get("agent_type", ""),
+                            )
+                        result = {
+                            "content": [
+                                {"type": "text", "text": json.dumps(blocked_response, indent=2)}
+                            ],
+                            "isError": True,
+                        }
+                        response = {"jsonrpc": "2.0", "id": request_id, "result": result}
+                        sys.stdout.write(json.dumps(response) + "\n")
+                        sys.stdout.flush()
+                        continue
+
                 # Handle router's own tools first
                 if tool_name == "router__ping":
                     result = {"content": [{"type": "text", "text": "pong! Router is working."}]}
@@ -2773,6 +2799,62 @@ def start_stdio_server(router: MCPRouter):
                     result = {
                         "content": [{"type": "text", "text": json.dumps(allowed, indent=2)}]
                     }
+
+                elif tool_name == "router__register_agent":
+                    agent_id = args.get("agent_id", "")
+                    agent_type = args.get("agent_type", "")
+                    roles = args.get("roles", [])
+                    if not agent_id or not agent_type:
+                        result = {
+                            "content": [{"type": "text", "text": "Error: agent_id and agent_type required"}],
+                            "isError": True,
+                        }
+                    else:
+                        reg_result = router.register_agent(agent_id, agent_type, roles)
+                        result = {
+                            "content": [{"type": "text", "text": json.dumps(reg_result, indent=2)}]
+                        }
+
+                elif tool_name == "router__update_agent_phase":
+                    agent_id = args.get("agent_id", "")
+                    workflow = args.get("workflow", "")
+                    phase = args.get("phase", "")
+                    if not agent_id or not workflow or not phase:
+                        result = {
+                            "content": [{"type": "text", "text": "Error: agent_id, workflow, and phase required"}],
+                            "isError": True,
+                        }
+                    else:
+                        update_result = router.update_agent_phase(agent_id, workflow, phase)
+                        result = {
+                            "content": [{"type": "text", "text": json.dumps(update_result, indent=2)}]
+                        }
+
+                elif tool_name == "router__check_permission":
+                    check_tool = args.get("tool", "")
+                    check_args = args.get("args", {})
+                    agent_id = args.get("agent_id", "")
+                    if agent_id:
+                        check_args["_agent_id"] = agent_id
+                    allowed, blocked = router._check_permission(check_tool, check_args)
+                    result = {
+                        "content": [{"type": "text", "text": json.dumps({
+                            "allowed": allowed,
+                            "blocked_response": blocked,
+                        }, indent=2)}]
+                    }
+
+                elif tool_name == "router__reload_permissions":
+                    if router.permissions:
+                        router.permissions.reload_config()
+                        result = {
+                            "content": [{"type": "text", "text": "Permissions config reloaded"}]
+                        }
+                    else:
+                        result = {
+                            "content": [{"type": "text", "text": "Permissions not enabled"}],
+                            "isError": True,
+                        }
 
                 # Parse prefix__toolname for backend routing
                 elif "__" in tool_name:
