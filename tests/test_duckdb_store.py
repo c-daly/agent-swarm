@@ -151,3 +151,33 @@ def test_duckdb_store_persistence(tmp_path):
     calls = store2.query_tool_calls(session_id="persist_test")
     assert len(calls) == 1
     assert calls[0].tool == "TestTool"
+
+
+def test_get_summarization_callback_rate_empty(tmp_path):
+    """Callback rate returns zeros when no data."""
+    store = DuckDBStore(str(tmp_path))
+    result = store.get_summarization_callback_rate(days=7)
+    
+    assert result["total_offered"] == 0
+    assert result["total_retrieved"] == 0
+    assert result["callback_rate"] == 0.0
+    assert result["days"] == 7
+
+
+def test_get_summarization_callback_rate_with_data(tmp_path):
+    """Callback rate calculates correctly from content_retrievals."""
+    store = DuckDBStore(str(tmp_path))
+    
+    # Create 3 summaries
+    store.record_content_creation("c001")
+    store.record_content_creation("c002")
+    store.record_content_creation("c003")
+    
+    # Retrieve 1 of them
+    store.record_content_retrieval("c002")
+    
+    result = store.get_summarization_callback_rate(days=7)
+    
+    assert result["total_offered"] == 3
+    assert result["total_retrieved"] == 1
+    assert result["callback_rate"] == pytest.approx(0.333, rel=0.01)
