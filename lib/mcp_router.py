@@ -1189,6 +1189,13 @@ class MCPRouter:
                                 "guidance": "Use this summary to proceed. If you need specific details, make a targeted follow-up query rather than requesting full content. Full retrieval via router__poll(correlation_id) should be a last resort.",
                             }
                             result = envelope
+
+                            # Track content creation for callback rate analysis
+                            if route_response.correlation_id and hasattr(self, '_duckdb_store') and self._duckdb_store:
+                                try:
+                                    self._duckdb_store.record_content_creation(route_response.correlation_id)
+                                except Exception:
+                                    pass  # Non-critical telemetry
                             result_size = len(json.dumps(result)) if result else 0
                             _router_log("socket", f"{log_prefix} Success result_size={result_size}")
                 else:
