@@ -51,6 +51,7 @@ def _router_log(component: str, message: str, level: str = "INFO") -> None:
 
 if TYPE_CHECKING:
     from lib.telemetry_service import TelemetryService
+    from lib.stores.duckdb_store import DuckDBStore
 
 try:
     import anthropic
@@ -512,6 +513,16 @@ class MCPRouter:
         self.telemetry: Optional[TelemetryCollector] = (
             TelemetryCollector() if enable_telemetry else None
         )
+
+        # DuckDB store for callback rate telemetry (lazy import to avoid circular deps)
+        self._duckdb_store: Optional["DuckDBStore"] = None
+        if enable_telemetry:
+            try:
+                from lib.stores.duckdb_store import DuckDBStore
+                state_dir = Path(__file__).parent.parent / ".state"
+                self._duckdb_store = DuckDBStore(data_dir=str(state_dir))
+            except Exception:
+                pass  # Non-critical - telemetry continues without callback tracking
 
         # Socket listener for external clients (hooks, CLIs)
         self._socket_server: Optional[socket.socket] = None
