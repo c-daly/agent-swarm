@@ -69,6 +69,16 @@ except ImportError:
     openai = None  # type: ignore
     OPENAI_AVAILABLE = False
 
+# Import permission checker
+try:
+    from mcp_permissions import PermissionChecker, AgentRegistry, BlockedResponse
+    PERMISSIONS_AVAILABLE = True
+except ImportError:
+    PermissionChecker = None  # type: ignore
+    AgentRegistry = None  # type: ignore
+    BlockedResponse = None  # type: ignore
+    PERMISSIONS_AVAILABLE = False
+
 # Import v2 telemetry schema functions (optional - deprecated)
 try:
     from telemetry_schema_v2 import (
@@ -535,6 +545,14 @@ class MCPRouter:
         self._is_primary: bool = False  # True if we own the socket listener
         self._main_router_port: int = 0  # Port of main router (if we're secondary)
 
+        # Permission enforcement
+        if PERMISSIONS_AVAILABLE:
+            self.permissions = PermissionChecker()
+            self.agent_registry = AgentRegistry()
+        else:
+            self.permissions = None
+            self.agent_registry = None
+
     def _cache_workflow_state(self, tool_name: str, args: dict, response: dict) -> None:
         """Cache workflow state from set/update/start operations."""
         if tool_name == "workflow_set_state":
@@ -587,6 +605,102 @@ class MCPRouter:
             cleared = list(self._workflow_state_cache.keys())
             self._workflow_state_cache.clear()
             return {"cleared": cleared, "all": True}
+
+    def _check_permission(
+        self, tool_name: str, args: dict
+    ) -> tuple[bool, Optional[dict]]:
+        """Check if a tool call is permitted.
+        
+        Extracts agent context from args._agent_id and checks against
+        permission rules based on agent type, roles, and workflow phase.
+        
+        Args:
+            tool_name: Full tool name being called
+            args: Tool arguments (may contain _agent_id)
+        
+        Returns:
+            (allowed: bool, blocked_response: dict or None)
+        """
+        if not self.permissions:
+            return True, None  # Permissions not enabled
+        
+        # Extract and remove agent_id from args (it's metadata, not tool input)
+        agent_id = args.pop("_agent_id", None)
+        
+        # Get agent info if registered
+        agent_type = ""
+        roles = []
+        workflow = ""
+        phase = ""
+        
+        if agent_id and self.agent_registry:
+            agent_info = self.agent_registry.get(agent_id)
+            if agent_info:
+                agent_type = agent_info.agent_type
+                roles = agent_info.roles
+                workflow = agent_info.workflow or ""
+                phase = agent_info.phase or ""
+        
+        # Check permission
+        allowed, response = self.permissions.check(
+            tool=tool_name,
+            args=args,
+            agent_id=agent_id or "",
+            agent_type=agent_type,
+            roles=roles,
+            workflow=workflow,
+            phase=phase,
+        )
+        
+        if response:
+            return False, response.to_dict()
+        return True, None
+
+    def register_agent(
+        self, agent_id: str, agent_type: str, roles: list[str] = None
+    ) -> dict:
+        """Register an agent with the permission system.
+        
+        Called when a Task spawns a new subagent.
+        
+        Args:
+            agent_id: Unique agent identifier
+            agent_type: Agent type (e.g., "implementer", "explorer")
+            roles: Optional list of roles to assign
+        
+        Returns:
+            Dict with agent registration info
+        """
+        if not self.agent_registry:
+            return {"error": "Agent registry not available"}
+        
+        info = self.agent_registry.register(agent_id, agent_type, roles or [])
+        _router_log("permissions", f"Registered agent {agent_id} type={agent_type} roles={roles}")
+        return {
+            "agent_id": info.agent_id,
+            "agent_type": info.agent_type,
+            "roles": info.roles,
+        }
+
+    def update_agent_phase(
+        self, agent_id: str, workflow: str, phase: str
+    ) -> dict:
+        """Update an agent's current workflow phase.
+        
+        Args:
+            agent_id: Agent identifier
+            workflow: Workflow name (e.g., "iterate", "debug")
+            phase: Phase within workflow (e.g., "orchestrate", "implement")
+        
+        Returns:
+            Dict with update status
+        """
+        if not self.agent_registry:
+            return {"error": "Agent registry not available"}
+        
+        self.agent_registry.update_phase(agent_id, workflow, phase)
+        _router_log("permissions", f"Updated agent {agent_id} phase={workflow}/{phase}")
+        return {"agent_id": agent_id, "workflow": workflow, "phase": phase}
 
     def _init_summarizer(self, provider: str, model: Optional[str]) -> Callable[[str], str]:
         """Initialize summarizer and return the LLM call function.
@@ -1129,6 +1243,26 @@ class MCPRouter:
                     "socket", f"{log_prefix} ROUTE tool={tool_name} args_keys={list(args.keys())}"
                 )
 
+                # Check permissions before processing (skip for router built-in tools)
+                if not tool_name.startswith("router__"):
+                    allowed, blocked_response = self._check_permission(tool_name, args)
+                    if not allowed:
+                        _router_log(
+                            "socket",
+                            f"{log_prefix} BLOCKED tool={tool_name} reason={blocked_response.get('reason', '')}",
+                            "WARN"
+                        )
+                        result = {
+                            "content": [
+                                {"type": "text", "text": json.dumps(blocked_response, indent=2)}
+                            ],
+                            "isError": True,
+                        }
+                        response = {"jsonrpc": "2.0", "id": request_id, "result": result}
+                        response_bytes = json.dumps(response).encode() + b"\n"
+                        client.sendall(response_bytes)
+                        return
+
                 # Handle router built-in tools first
                 if tool_name == "router__ping":
                     result = {"content": [{"type": "text", "text": "pong! Router is working."}]}
@@ -1160,6 +1294,47 @@ class MCPRouter:
                     allowed = self.get_allowed_tools(agent_type)
                     result = {
                         "content": [{"type": "text", "text": json.dumps(allowed, indent=2)}]
+                    }
+                elif tool_name == "router__register_agent":
+                    agent_id = args.get("agent_id", "")
+                    agent_type = args.get("agent_type", "")
+                    roles = args.get("roles", [])
+                    if not agent_id or not agent_type:
+                        result = {
+                            "content": [{"type": "text", "text": "Error: agent_id and agent_type required"}],
+                            "isError": True,
+                        }
+                    else:
+                        reg_result = self.register_agent(agent_id, agent_type, roles)
+                        result = {
+                            "content": [{"type": "text", "text": json.dumps(reg_result, indent=2)}]
+                        }
+                elif tool_name == "router__update_agent_phase":
+                    agent_id = args.get("agent_id", "")
+                    workflow = args.get("workflow", "")
+                    phase = args.get("phase", "")
+                    if not agent_id or not workflow or not phase:
+                        result = {
+                            "content": [{"type": "text", "text": "Error: agent_id, workflow, and phase required"}],
+                            "isError": True,
+                        }
+                    else:
+                        update_result = self.update_agent_phase(agent_id, workflow, phase)
+                        result = {
+                            "content": [{"type": "text", "text": json.dumps(update_result, indent=2)}]
+                        }
+                elif tool_name == "router__check_permission":
+                    check_tool = args.get("tool", "")
+                    check_args = args.get("args", {})
+                    agent_id = args.get("agent_id", "")
+                    if agent_id:
+                        check_args["_agent_id"] = agent_id
+                    allowed, blocked = self._check_permission(check_tool, check_args)
+                    result = {
+                        "content": [{"type": "text", "text": json.dumps({
+                            "allowed": allowed,
+                            "blocked_response": blocked,
+                        }, indent=2)}]
                     }
                 elif "__" in tool_name:
                     prefix, actual_tool = tool_name.split("__", 1)
