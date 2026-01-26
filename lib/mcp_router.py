@@ -756,7 +756,7 @@ class MCPRouter:
 
                 # Write port to file for client/secondary discovery
                 self._port_file.parent.mkdir(parents=True, exist_ok=True)
-                self._port_file.write_text(str(self._socket_port))
+                self._port_file.write_text(f"{self._socket_port}:{os.getpid()}")
 
                 # Start accept loop in background thread
                 self._socket_thread = Thread(target=self._socket_accept_loop, daemon=True)
@@ -807,7 +807,8 @@ class MCPRouter:
         # This prevents accidentally deleting another router's port file
         if self._is_primary and self._port_file.exists():
             try:
-                file_port = int(self._port_file.read_text().strip())
+                content = self._port_file.read_text().strip()
+                file_port = int(content.split(":")[0]) if ":" in content else int(content)
                 if file_port == self._socket_port:
                     self._port_file.unlink()
                 else:
@@ -838,7 +839,24 @@ class MCPRouter:
 
         sock = None
         try:
-            port = int(self._port_file.read_text().strip())
+            content = self._port_file.read_text().strip()
+            # New format: port:pid, legacy format: just port
+            if ":" in content:
+                port_str, pid_str = content.split(":", 1)
+                port, pid = int(port_str), int(pid_str)
+                # Check if process is still alive
+                try:
+                    os.kill(pid, 0)  # Signal 0 = check existence
+                except OSError:
+                    # Process dead - clean up stale file
+                    _router_log("federation", f"Primary PID {pid} dead, cleaning up port file")
+                    try:
+                        self._port_file.unlink()
+                    except OSError:
+                        pass
+                    return None
+            else:
+                port = int(content)  # Legacy format
             # Try to connect and ping
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(2.0)
@@ -993,7 +1011,7 @@ class MCPRouter:
 
         # Update port file
         self._port_file.parent.mkdir(parents=True, exist_ok=True)
-        self._port_file.write_text(str(self._socket_port))
+        self._port_file.write_text(f"{self._socket_port}:{os.getpid()}")
 
         # Start accept loop in background thread
         self._socket_thread = Thread(target=self._socket_accept_loop, daemon=True)

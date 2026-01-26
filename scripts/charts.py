@@ -153,7 +153,7 @@ def _load_telemetry_v3():
     daily_summaries = {}
     try:
         daily_results = _duckdb_store.conn.execute("""
-            SELECT 
+            SELECT
                 CAST(timestamp AS TIMESTAMP)::DATE as day,
                 COUNT(*) as calls,
                 SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as errors,
@@ -162,13 +162,18 @@ def _load_telemetry_v3():
                 SUM(COALESCE(cache_read_tokens, 0)) as cache_read,
                 SUM(COALESCE(cache_creation_tokens, 0)) as cache_create,
                 SUM(duration_ms) as duration_ms,
-                COUNT(DISTINCT session_id) as sessions
+                COUNT(DISTINCT session_id) as sessions,
+                SUM(CASE WHEN was_summarized THEN 1 ELSE 0 END) as summarizations_accepted,
+                SUM(COALESCE(original_size, 0)) as total_original_size,
+                SUM(COALESCE(summary_size, 0)) as total_summary_size
             FROM events
             GROUP BY CAST(timestamp AS TIMESTAMP)::DATE
             ORDER BY day
         """).fetchall()
         for row in daily_results:
             day_str = str(row[0])
+            original_size = row[10] or 0
+            summary_size = row[11] or 0
             daily_summaries[day_str] = {
                 "calls": row[1],
                 "errors": row[2],
@@ -179,9 +184,40 @@ def _load_telemetry_v3():
                 "cache_create": row[6] or 0,
                 "duration_ms": row[7] or 0,
                 "sessions": row[8],
+                "summarizations_accepted": row[9] or 0,
+                "total_original_size": original_size,
+                "total_summary_size": summary_size,
+                "tokens_saved": (original_size - summary_size) // 4 if original_size > summary_size else 0,
+                "avg_compression_ratio": round(summary_size / original_size, 2) if original_size > 0 else 0,
             }
     except Exception as e:
         print(f"⚠️  Error building daily summaries: {e}", file=sys.stderr)
+
+    # Add by_session data for token trend chart
+    try:
+        session_results = _duckdb_store.conn.execute("""
+            SELECT
+                CAST(timestamp AS TIMESTAMP)::DATE as day,
+                session_id,
+                SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)) as tokens,
+                COUNT(*) as calls
+            FROM events
+            WHERE session_id IS NOT NULL
+            GROUP BY CAST(timestamp AS TIMESTAMP)::DATE, session_id
+            ORDER BY day
+        """).fetchall()
+        for row in session_results:
+            day_str = str(row[0])
+            session_id = row[1]
+            if day_str in daily_summaries:
+                if "by_session" not in daily_summaries[day_str]:
+                    daily_summaries[day_str]["by_session"] = {}
+                daily_summaries[day_str]["by_session"][session_id] = {
+                    "tokens": row[2] or 0,
+                    "calls": row[3] or 0,
+                }
+    except Exception as e:
+        print(f"⚠️  Error building by_session data: {e}", file=sys.stderr)
     
     return {
         "events": events,
@@ -3319,31 +3355,19 @@ def chart_session_comparison():
     if telemetry is None:
         print("⚠️  No telemetry data found")
         return None
-    events = telemetry.get("events", [])
 
-    if not events:
-        print("⚠️  No events found")
+    daily_summaries = telemetry.get("daily_summaries", {})
+    if not daily_summaries:
+        print("⚠️  No daily summaries found")
         return None
 
-    # Group by date (session proxy)
-    daily_data = defaultdict(lambda: {"calls": 0, "tokens": 0, "errors": 0, "duration": 0})
+    # Sort by date and take last 14 days
+    sorted_days = sorted(daily_summaries.items())[-14:]
 
-    for e in events:
-        ts = e.get("ts", "")[:10]  # YYYY-MM-DD
-        if ts:
-            daily_data[ts]["calls"] += 1
-            daily_data[ts]["tokens"] += e.get("tokens_est", 0)
-            daily_data[ts]["duration"] += e.get("duration_ms", 0)
-            if e.get("status") == "error":
-                daily_data[ts]["errors"] += 1
-
-    # Sort by date
-    sorted_days = sorted(daily_data.items())[-14:]  # Last 14 days
-
-    labels = [d[0][5:] for d in sorted_days]  # MM-DD
-    calls = [d[1]["calls"] for d in sorted_days]
-    tokens = [d[1]["tokens"] for d in sorted_days]
-    errors = [d[1]["errors"] for d in sorted_days]
+    labels = [day[5:] for day, _ in sorted_days]  # MM-DD
+    calls = [summary.get("calls", 0) for _, summary in sorted_days]
+    tokens = [summary.get("tokens", 0) for _, summary in sorted_days]
+    errors = [summary.get("errors", 0) for _, summary in sorted_days]
 
     html = f"""<!DOCTYPE html>
 <html>
