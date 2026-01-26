@@ -1,0 +1,59 @@
+# Router-based permissions configuration
+# Layers: global -> roles -> agents -> workflow/phase
+# More specific layers override less specific ones
+# Superblocked rules cannot be overridden
+
+global:
+  allowed: [mcp__router__*]
+  blocked: [Bash, Edit, Write]
+  superblocked: [Bash(rm -rf*), Bash(sudo*), Bash(chmod 777*)]
+
+roles:
+  read_only:
+    allowed: [Read, Glob, Grep, WebSearch, WebFetch]
+    blocked: []
+  editor:
+    allowed: [Edit, Write, Bash(mcp-call*)]
+    blocked: []
+  workflow_control:
+    allowed: [mcp__router__workflow__*]
+    blocked: []
+  shell_access:
+    allowed: [Bash]
+    blocked: []
+
+agents:
+  explorer:
+    allowed: [Read, Glob, Grep, WebSearch, WebFetch]
+    blocked: [Task, Edit, Write]
+  implementer:
+    allowed: [Edit, Write, Read, Glob, Grep]
+    blocked: [Bash(rm*), Task]
+  orchestrator:
+    allowed: [Task, Read, Glob, Grep]
+    blocked: [Edit, Write, Bash]
+  researcher:
+    allowed: [Read, Glob, Grep, WebSearch, WebFetch]
+    blocked: [Edit, Write, Task]
+  reviewer:
+    allowed: [Read, Glob, Grep]
+    blocked: [Edit, Write, Task, Bash]
+
+workflows:
+  debug:
+    triage:
+      allowed: [Read, Glob, Grep]
+      blocked: [Edit, Write]
+    fix:
+      allowed: [Edit, Write]
+      blocked: []
+  iterate:
+    orchestrate:
+      allowed: [Task, Read, Glob, Grep]
+      blocked: [Edit, Write, Bash]
+    implement:
+      allowed: [Edit, Write, Bash(pytest*), Bash(python*)]
+      blocked: []
+    verify:
+      allowed: [Read, Glob, Grep, Bash(pytest*)]
+      blocked: [Edit, Write]
