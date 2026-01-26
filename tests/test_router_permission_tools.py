@@ -178,3 +178,50 @@ class TestTelemetryTracking:
         last_event = router.telemetry._events[-1]
         assert last_event["blocked"] is True
         assert last_event["tool"] == "Edit"
+
+
+class TestPermissionsEnvVar:
+    """Test MCP_ROUTER_PERMISSIONS_DISABLED environment variable."""
+
+    def test_env_var_disables_permissions(self, monkeypatch):
+        """Setting env var disables permission checking."""
+        monkeypatch.setenv("MCP_ROUTER_PERMISSIONS_DISABLED", "1")
+
+        # Need to reimport to pick up env var
+        import importlib
+        import mcp_router
+        importlib.reload(mcp_router)
+
+        router = mcp_router.MCPRouter(enable_telemetry=False)
+        assert router.permissions is None
+
+        # Clean up - reload without env var
+        monkeypatch.delenv("MCP_ROUTER_PERMISSIONS_DISABLED", raising=False)
+        importlib.reload(mcp_router)
+
+    def test_env_var_true_disables_permissions(self, monkeypatch):
+        """Setting env var to 'true' disables permission checking."""
+        monkeypatch.setenv("MCP_ROUTER_PERMISSIONS_DISABLED", "true")
+
+        import importlib
+        import mcp_router
+        importlib.reload(mcp_router)
+
+        router = mcp_router.MCPRouter(enable_telemetry=False)
+        assert router.permissions is None
+
+        monkeypatch.delenv("MCP_ROUTER_PERMISSIONS_DISABLED", raising=False)
+        importlib.reload(mcp_router)
+
+    def test_permissions_enabled_by_default(self, monkeypatch):
+        """Permissions are enabled when env var is not set."""
+        monkeypatch.delenv("MCP_ROUTER_PERMISSIONS_DISABLED", raising=False)
+
+        import importlib
+        import mcp_router
+        importlib.reload(mcp_router)
+
+        router = mcp_router.MCPRouter(enable_telemetry=False)
+        assert router.permissions is not None
+
+        importlib.reload(mcp_router)

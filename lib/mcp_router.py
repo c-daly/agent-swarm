@@ -70,9 +70,10 @@ except ImportError:
     OPENAI_AVAILABLE = False
 
 # Import permission checker
+# Set MCP_ROUTER_PERMISSIONS_DISABLED=1 to disable permission enforcement
 try:
     from mcp_permissions import PermissionChecker, AgentRegistry, BlockedResponse
-    PERMISSIONS_AVAILABLE = True
+    PERMISSIONS_AVAILABLE = os.environ.get("MCP_ROUTER_PERMISSIONS_DISABLED", "").lower() not in ("1", "true", "yes")
 except ImportError:
     PermissionChecker = None  # type: ignore
     AgentRegistry = None  # type: ignore
