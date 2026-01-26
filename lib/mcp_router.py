@@ -1181,7 +1181,14 @@ class MCPRouter:
                                 full_content = backend_result["result"]
                             else:
                                 full_content = backend_result
-                            result = full_content
+                            # Return envelope with summary, full content, and guidance
+                            envelope = {
+                                "summary": route_response.summary,
+                                "full": full_content,
+                                "content_id": route_response.correlation_id,
+                                "guidance": "Use this summary to proceed. If you need specific details, make a targeted follow-up query rather than requesting full content. Full retrieval via router__poll(correlation_id) should be a last resort.",
+                            }
+                            result = envelope
                             result_size = len(json.dumps(result)) if result else 0
                             _router_log("socket", f"{log_prefix} Success result_size={result_size}")
                 else:
