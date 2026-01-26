@@ -230,6 +230,35 @@ def render_dashboard(
     return "\n".join(sections)
 
 
+
+
+def get_callback_rate_chart(service: TelemetryService) -> str:
+    """Render summarization callback rate stats.
+
+    Args:
+        service: TelemetryService instance.
+
+    Returns:
+        Formatted string showing callback rate metrics.
+    """
+    try:
+        stats = service._store.get_summarization_callback_rate(days=7)
+    except Exception:
+        return "Callback Rate: [No data available]"
+
+    lines = [
+        "=" * 40,
+        "SUMMARIZATION CALLBACK RATE (7 days)",
+        "=" * 40,
+        f"Summaries Offered:  {stats['total_offered']:>10}",
+        f"Full Retrievals:    {stats['total_retrieved']:>10}",
+        f"Callback Rate:      {stats['callback_rate']:>10.1%}",
+        "",
+        "Target: <10% (summaries are sufficient)",
+        "=" * 40,
+    ]
+    return "\n".join(lines)
+
 # -----------------------------------------------------------------------------
 # JSON Chart Endpoints (Telemetry v3)
 # -----------------------------------------------------------------------------
