@@ -200,10 +200,27 @@ def find_memory_file(directory: Path) -> Optional[Path]:
     return None
 
 
+def _count_git_children(directory: Path) -> int:
+    """Count immediate child directories that contain .git."""
+    count = 0
+    try:
+        for child in directory.iterdir():
+            if child.is_dir() and (child / ".git").exists():
+                count += 1
+    except PermissionError:
+        pass
+    return count
+
+
 def detect_level(path: Path, working_dir: Path, user_dir: Path) -> str:
     """Detect what level of hierarchy this path represents."""
     if path == user_dir:
         return "user"
+
+    # Check for workspace (directory containing multiple repos)
+    git_children = _count_git_children(path)
+    if git_children >= 2:
+        return "workspace"
 
     # Check for .git to identify repo root
     if (path / ".git").exists():
@@ -382,3 +399,125 @@ if __name__ == "__main__":
     else:
         print(f"Unknown command: {command}")
         sys.exit(1)
+
+
+# ============================================================================
+# Enhanced functionality: workspace detection, scope inference, save utilities
+# ============================================================================
+
+# Global indicator phrases for user-level scope
+GLOBAL_INDICATOR_PATTERNS = [
+    r"\balways\b",
+    r"\bnever\b",
+    r"\bI prefer\b",
+    r"\bI like\b",
+    r"\bI want\b",
+    r"\bI don't like\b",
+    r"\bI hate\b",
+]
+
+
+def _find_repo_root(path: Path) -> Optional[Path]:
+    """Walk up to find the nearest .git directory (repo root)."""
+    current = path.resolve()
+    filesystem_root = Path(current.anchor)
+
+    while current != filesystem_root:
+        if (current / ".git").exists():
+            return current
+        current = current.parent
+
+    return None
+
+
+def _has_path_reference(content: str, working_dir: Path) -> bool:
+    """Check if content mentions file paths within working_dir."""
+    # Look for common file path patterns
+    # Match things like: file.py, ./path/to/file, src/module.ts
+    path_patterns = [
+        r"\b([\w-]+\.(?:py|js|ts|jsx|tsx|md|json|yaml|yml|toml))\b",
+        r"(\./[\w/.-]+)",
+        r"(src/[\w/.-]+)",
+        r"(lib/[\w/.-]+)",
+        r"(tests?/[\w/.-]+)",
+    ]
+
+    for pattern in path_patterns:
+        matches = re.findall(pattern, content, re.IGNORECASE)
+        for match in matches:
+            # findall returns the captured group
+            if isinstance(match, tuple):
+                match = match[0] if match else ""
+            if not match:
+                continue
+            # Try to find it as a file
+            candidate = working_dir / match
+            if candidate.exists():
+                return True
+
+    return False
+
+
+def infer_scope(content: str, working_dir: Path) -> tuple[str, Path]:
+    """
+    Infer the appropriate scope for saving content.
+
+    Args:
+        content: The content to analyze
+        working_dir: Current working directory
+
+    Returns:
+        Tuple of (scope_name, target_path) where:
+        - scope_name is 'user', 'component', or 'repo'
+        - target_path is the directory where content should be saved
+    """
+    # Check for global indicator phrases -> user scope
+    for pattern in GLOBAL_INDICATOR_PATTERNS:
+        if re.search(pattern, content, re.IGNORECASE):
+            return ("user", Path.home() / ".claude")
+
+    # Check for file path references -> component scope
+    if _has_path_reference(content, working_dir):
+        return ("component", working_dir)
+
+    # Default to repo scope - find repo root
+    repo_root = _find_repo_root(working_dir)
+    if repo_root:
+        return ("repo", repo_root)
+
+    # Fallback to working directory if not in a repo
+    return ("repo", working_dir)
+
+
+def save_at_scope(content: str, file_type: str, working_dir: Path) -> Path:
+    """
+    Save content to the appropriate scope location.
+
+    Args:
+        content: The content to save
+        file_type: The filename to save to (e.g., 'MEMORY.md', 'DECISIONS.md')
+        working_dir: Current working directory
+
+    Returns:
+        Path where the content was saved
+    """
+    scope, target_dir = infer_scope(content, working_dir)
+
+    # Ensure .context directory exists
+    context_dir = target_dir / ".context"
+    context_dir.mkdir(parents=True, exist_ok=True)
+
+    target_file = context_dir / file_type
+
+    # Append content (with separator if file exists)
+    if target_file.exists():
+        existing = target_file.read_text()
+        if not existing.endswith("\n"):
+            existing += "\n"
+        new_content = existing + "\n" + content + "\n"
+    else:
+        new_content = content + "\n"
+
+    target_file.write_text(new_content)
+
+    return target_file

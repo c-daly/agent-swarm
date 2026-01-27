@@ -84,15 +84,14 @@ def allow(reason: str = "") -> dict:
     return result
 
 
-def block(reason: str) -> dict:
-    """Return block decision."""
-    return {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": reason
-        }
-    }
+def block(reason: str):
+    """Block tool by exiting with code 2 (stderr used as message).
+
+    Exit code 2 is the reliable blocking mechanism - JSON deny responses
+    are sometimes ignored (Claude Code bug #4669).
+    """
+    print(reason, file=sys.stderr)
+    sys.exit(2)
 
 
 def main():
@@ -104,10 +103,9 @@ def main():
         print(json.dumps(allow()))
         return
 
-    # Skip if /iterate is not active - base-enforcement handles no-workflow case
+    # Skip if /iterate is not active - exit silently to let other hooks decide
     if not is_active():
-        print(json.dumps(allow()))
-        return
+        sys.exit(0)
 
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input", {})
@@ -131,20 +129,19 @@ def main():
         if cmd.startswith("mcp-call ") or cmd.startswith(f"{mcp_call_path} "):
             print(json.dumps(allow("Subagent mcp-call allowed")))
             return
-        # Non-mcp-call bash falls through to phase blocking
+        # Block non-mcp-call bash for subagents
+        block("[SUBAGENT] Only mcp-call allowed. Use: mcp-call <tool> '<args>'")
 
     # Orchestrator cannot use editing tools - reserved for subagents
     if not agent_id and tool_name in ORCHESTRATOR_BLOCKED_TOOLS:
-        print(json.dumps(block(f"[ORCHESTRATOR] Tool '{tool_name}' is reserved for subagents")))
-        return
+        block(f"[ORCHESTRATOR] Tool '{tool_name}' is reserved for subagents")
 
     if agent_id:
         # Use agent-specific phase enforcement
         allowed, reason, phase_name = is_tool_allowed_for_agent(tool_name, agent_id, command=command)
         if not allowed:
             full_reason = f"[ITERATE:{phase_name}] {reason}"
-            print(json.dumps(block(full_reason)))
-            return
+            block(full_reason)
     else:
         # Use global iterate workflow phase enforcement
         allowed, reason = is_tool_allowed(tool_name, command=command)
@@ -152,8 +149,7 @@ def main():
             phase = get_phase()
             phase_name = phase.value if phase else "unknown"
             full_reason = f"[ITERATE:{phase_name}] {reason}"
-            print(json.dumps(block(full_reason)))
-            return
+            block(full_reason)
 
     print(json.dumps(allow()))
 

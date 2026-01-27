@@ -1,4 +1,7 @@
 """Tests for SummarizationService."""
+from unittest.mock import Mock
+
+from lib.llm_client import LLMClient
 from lib.summarization_service import SummarizationService
 from lib.workflow_state_service import WorkflowStateService
 
@@ -115,3 +118,72 @@ def test_summarization_stats_accuracy():
     assert result2["was_summarized"] is False
     assert result2["original_size"] == 4
     assert result2["summary_size"] is None
+
+
+def test_llm_client_used_for_summarization():
+    """LLM client is used when provided and returns content."""
+    workflow_state = WorkflowStateService()
+    mock_llm = Mock(spec=LLMClient)
+    mock_llm.summarize.return_value = "LLM generated summary"
+    
+    service = SummarizationService(workflow_state, threshold=100, llm_client=mock_llm)
+    
+    large_content = "x" * 500
+    result = service.process(large_content)
+    
+    # Verify LLM was called
+    mock_llm.summarize.assert_called_once_with(large_content)
+    
+    # Check that LLM summary was used
+    assert result["content"]["summary"] == "LLM generated summary"
+    assert result["summary_size"] == len("LLM generated summary")
+
+
+def test_fallback_to_truncation_when_llm_returns_empty():
+    """Falls back to truncation when LLM returns empty string."""
+    workflow_state = WorkflowStateService()
+    mock_llm = Mock(spec=LLMClient)
+    mock_llm.summarize.return_value = ""
+    
+    service = SummarizationService(workflow_state, threshold=100, llm_client=mock_llm)
+    
+    large_content = "x" * 500
+    result = service.process(large_content)
+    
+    # Verify LLM was called
+    mock_llm.summarize.assert_called_once_with(large_content)
+    
+    # Should fall back to truncation
+    assert result["content"]["summary"] == "x" * 100 + "..."
+    assert result["summary_size"] == 103
+
+
+def test_no_llm_client_uses_truncation():
+    """Without LLM client, truncation is used."""
+    workflow_state = WorkflowStateService()
+    service = SummarizationService(workflow_state, threshold=100)
+    
+    large_content = "y" * 200
+    result = service.process(large_content)
+    
+    # Should use truncation
+    assert result["content"]["summary"] == "y" * 100 + "..."
+    assert result["summary_size"] == 103
+
+
+def test_llm_client_not_called_for_small_content():
+    """LLM client is not called for content under threshold."""
+    workflow_state = WorkflowStateService()
+    mock_llm = Mock(spec=LLMClient)
+    
+    service = SummarizationService(workflow_state, threshold=100, llm_client=mock_llm)
+    
+    small_content = "small content"
+    result = service.process(small_content)
+    
+    # LLM should not be called
+    mock_llm.summarize.assert_not_called()
+    
+    # Content passes through unchanged
+    assert result["content"] == small_content
+    assert result["was_summarized"] is False

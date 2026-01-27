@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/subagent-tool-redirect.py",
+            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/native-tool-blocking.py",
             "timeout": 3
           },
           {

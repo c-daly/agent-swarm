@@ -69,15 +69,14 @@ def allow(reason: str = "") -> dict:
     return result
 
 
-def block(reason: str) -> dict:
-    """Return block decision."""
-    return {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": reason
-        }
-    }
+def block(reason: str):
+    """Block tool by exiting with code 2 (stderr used as message).
+
+    Exit code 2 is the reliable blocking mechanism - JSON deny responses
+    are sometimes ignored (Claude Code bug #4669).
+    """
+    print(reason, file=sys.stderr)
+    sys.exit(2)
 
 
 def main():
@@ -101,11 +100,10 @@ def main():
 
     # Block editing tools if no workflow is active
     if not is_any_workflow_active():
-        print(json.dumps(block(
+        block(
             f"[NO WORKFLOW] {tool_name} blocked. "
             f"Start /iterate or /orchestrate to edit files."
-        )))
-        return
+        )
 
     # Workflow is active - allow (workflow-specific hooks handle phase rules)
     print(json.dumps(allow("Workflow active")))

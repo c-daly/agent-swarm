@@ -58,8 +58,7 @@ def main():
     try:
         input_data = json.loads(sys.stdin.read())
     except json.JSONDecodeError:
-        # Invalid input, allow and skip tracking
-        print(json.dumps({"decision": "allow"}))
+        # Invalid input, skip tracking (exit 0, no output)
         return
 
     tool_name = input_data.get("tool_name", "")
@@ -103,13 +102,8 @@ def main():
     latest[tool_name] = request_id
     save_json(latest_file, latest)
 
-    # Allow the tool to proceed (we're just tracking, not blocking)
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "allow"
-        }
-    }))
+    # Just tracking, don't affect permission decision (exit 0, no output)
+    # Other hooks handle allow/deny decisions
 
 
 if __name__ == "__main__":

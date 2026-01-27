@@ -144,6 +144,102 @@ class RouterResponse:
         )
 
 
+def format_response_envelope(summary: str, correlation_id: str) -> dict:
+    """Format a response envelope with summary and retrieval instruction.
+    
+    Creates a standardized response format that includes only the summary,
+    with instructions on how to retrieve full content if needed.
+    
+    Args:
+        summary: The summary of the response (can be None or empty)
+        correlation_id: Unique ID for retrieving full content later
+        
+    Returns:
+        Dict with summary, correlation_id, instruction, and full_available flag
+    """
+    return {
+        "summary": summary if summary is not None else "",
+        "correlation_id": correlation_id,
+        "instruction": f"To retrieve full content, call router__get_full with correlation_id='{correlation_id}'",
+        "full_available": True,
+    }
+
+
+class ResponseCache:
+    """Cache for storing full response content with TTL support.
+    
+    Stores full responses by correlation_id for later retrieval,
+    tracks retrieval counts for telemetry, and supports TTL expiration.
+    """
+    
+    def __init__(self, ttl_seconds: float = 300.0):
+        """Initialize the cache.
+        
+        Args:
+            ttl_seconds: Time-to-live for cached entries in seconds (default 5 min)
+        """
+        self._cache: dict[str, tuple[Any, float]] = {}  # id -> (content, timestamp)
+        self._retrieval_counts: dict[str, int] = {}
+        self._ttl_seconds = ttl_seconds
+        self._lock = Lock()
+    
+    def store(self, correlation_id: str, content: Any) -> None:
+        """Store content by correlation_id.
+        
+        Args:
+            correlation_id: Unique identifier for the content
+            content: The full content to store
+        """
+        import time
+        with self._lock:
+            self._cache[correlation_id] = (content, time.time())
+            self._retrieval_counts[correlation_id] = 0
+    
+    def get(self, correlation_id: str) -> Optional[Any]:
+        """Retrieve content by correlation_id.
+        
+        Increments retrieval count on successful retrieval.
+        Returns None if content doesn't exist or has expired.
+        
+        Args:
+            correlation_id: Unique identifier for the content
+            
+        Returns:
+            The stored content or None if not found/expired
+        """
+        import time
+        with self._lock:
+            if correlation_id not in self._cache:
+                return None
+            
+            content, stored_at = self._cache[correlation_id]
+            
+            # Check TTL expiration
+            if time.time() - stored_at > self._ttl_seconds:
+                # Expired - clean up
+                del self._cache[correlation_id]
+                if correlation_id in self._retrieval_counts:
+                    del self._retrieval_counts[correlation_id]
+                return None
+            
+            # Increment retrieval count
+            self._retrieval_counts[correlation_id] = self._retrieval_counts.get(correlation_id, 0) + 1
+            
+            return content
+    
+    def get_retrieval_count(self, correlation_id: str) -> int:
+        """Get the number of times content was retrieved.
+        
+        Args:
+            correlation_id: Unique identifier for the content
+            
+        Returns:
+            Number of times get() returned content for this ID
+        """
+        with self._lock:
+            return self._retrieval_counts.get(correlation_id, 0)
+
+
 @dataclass
 class ServerConfig:
     """Configuration for a registered MCP server."""
@@ -350,6 +446,22 @@ class TelemetryCollector:
             
             self._save()
 
+    def track_full_retrieval(self, correlation_id: str) -> None:
+        """Track when full content is retrieved via get_full.
+        
+        This helps measure how often summaries are sufficient vs
+        when users need the full content.
+        
+        Args:
+            correlation_id: The correlation ID of the retrieved content
+        """
+        with self._lock:
+            day_key = self._get_today_key()
+            day_data = ensure_day(self._data, day_key)
+            day_data["full_retrievals"] = day_data.get("full_retrievals", 0) + 1
+            
+            self._save()
+
     def _update_v2_telemetry(
         self, event: dict, error: bool, full_size: int, summary_size: int, duration_ms: int
     ) -> None:
@@ -487,6 +599,7 @@ class TelemetryCollector:
                         "calls_summarized": offered,
                         "tokens_saved_est": tokens_saved,
                     },
+                    "full_retrievals": day_data.get("full_retrievals", 0),
                 },
                 "socket": socket_summary,
                 "recent_events": self._events[-10:],  # Last 10
