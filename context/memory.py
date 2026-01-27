@@ -212,21 +212,27 @@ class Memory:
                 
                 similarity = _compute_similarity(p1.content, p2.content)
                 if similarity >= similarity_threshold:
-                    # Merge p2 into p1 (keep the higher confidence one)
+                    # Determine keeper (higher confidence) and merger (to be deleted)
                     if p2.confidence > p1.confidence:
-                        p1, p2 = p2, p1
-                    
+                        keeper, merger = p2, p1
+                    else:
+                        keeper, merger = p1, p2
+
                     # Combine observation counts and confidence
-                    p1.observation_count += p2.observation_count
-                    p1.confidence = min(0.95, p1.confidence + (1 - p1.confidence) * 0.1)
-                    
+                    keeper.observation_count += merger.observation_count
+                    keeper.confidence = min(0.95, keeper.confidence + (1 - keeper.confidence) * 0.1)
+
                     # Merge source episodes
-                    for ep in p2.source_episodes:
-                        if ep not in p1.source_episodes:
-                            p1.source_episodes.append(ep)
-                    p1.source_episodes = p1.source_episodes[-10:]
-                    
-                    merged_ids.add(p2.id)
+                    for ep in merger.source_episodes:
+                        if ep not in keeper.source_episodes:
+                            keeper.source_episodes.append(ep)
+                    keeper.source_episodes = keeper.source_episodes[-10:]
+
+                    merged_ids.add(merger.id)
+
+                    # If p1 was merged into p2, stop comparing p1 with other patterns
+                    if merger.id == p1.id:
+                        break
         
         # Remove merged patterns
         for pid in merged_ids:
