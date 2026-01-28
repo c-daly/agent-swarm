@@ -18,6 +18,8 @@ class SummarizationResult(TypedDict, total=False):
     was_summarized: bool
     original_size: int
     summary_size: int | None  # None if not summarized
+    input_tokens: int | None  # Tokens in original content (from LLM)
+    output_tokens: int | None  # Tokens in summary (from LLM)
 
 
 class SummarizationService:
@@ -41,51 +43,62 @@ class SummarizationService:
     
     def process(self, content: Any) -> SummarizationResult:
         """Process content, summarizing if over threshold.
-        
+
         Returns:
             SummarizationResult with content and statistics
         """
         content_str = str(content) if not isinstance(content, str) else content
         original_size = len(content_str)
-        
+
         if original_size <= self._threshold:
             return {
                 "content": content,
                 "was_summarized": False,
                 "original_size": original_size,
                 "summary_size": None,
+                "input_tokens": None,
+                "output_tokens": None,
             }
-        
+
         content_id = self._generate_content_id()
         self._workflow_state.store_content(content_id, content)
-        
-        summary = self._generate_summary(content_str)
+
+        summary_text, input_tokens, output_tokens = self._generate_summary(content_str)
         summary_dict = {
-            "summary": summary,
+            "summary": summary_text,
             "content_id": content_id,
             "full_available": True,
         }
-        
+
         return {
             "content": summary_dict,
             "was_summarized": True,
             "original_size": original_size,
-            "summary_size": len(summary),
+            "summary_size": len(summary_text),
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
         }
     
     def _generate_content_id(self) -> str:
         """Generate unique content ID."""
         return f"c{uuid.uuid4().hex[:12]}"
     
-    def _generate_summary(self, content: str) -> str:
+    def _generate_summary(self, content: str) -> tuple[str, int | None, int | None]:
         """Generate summary of content.
-        
+
         Uses LLM summarization if available, otherwise truncates.
+
+        Returns:
+            Tuple of (summary_text, input_tokens, output_tokens)
         """
         if self._llm_client:
-            llm_summary = self._llm_client.summarize(content)
-            if llm_summary:
-                return llm_summary
-        
-        # Fallback to truncation
-        return content[:self._threshold] + "..."
+            response = self._llm_client.summarize(content)
+            if response["text"]:
+                return (
+                    response["text"],
+                    response.get("input_tokens"),
+                    response.get("output_tokens"),
+                )
+
+        # Fallback to truncation (no token counts available)
+        return content[:self._threshold] + "...", None, None

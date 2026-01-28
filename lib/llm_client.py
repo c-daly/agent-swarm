@@ -1,6 +1,6 @@
 """Shared LLM client module for OpenAI and Anthropic providers."""
 import os
-from typing import Optional, Literal
+from typing import Optional, Literal, TypedDict
 
 try:
     from openai import OpenAI
@@ -11,6 +11,14 @@ try:
     from anthropic import Anthropic
 except ImportError:
     Anthropic = None
+
+
+class LLMResponse(TypedDict, total=False):
+    """Response from an LLM call including token usage."""
+
+    text: str
+    input_tokens: int
+    output_tokens: int
 
 
 class LLMClient:
@@ -55,17 +63,19 @@ class LLMClient:
 
         return None
 
-    def call(self, prompt: str) -> str:
+    def call(self, prompt: str) -> LLMResponse:
         """Make a general LLM call.
 
         Args:
             prompt: The prompt to send to the LLM.
 
         Returns:
-            The LLM response text, or empty string on failure.
+            LLMResponse with text and token usage, or empty response on failure.
         """
+        empty: LLMResponse = {"text": "", "input_tokens": 0, "output_tokens": 0}
+
         if not self._client:
-            return ""
+            return empty
 
         try:
             if self.provider == "openai":
@@ -73,7 +83,11 @@ class LLMClient:
                     model=self.model,
                     messages=[{"role": "user", "content": prompt}],
                 )
-                return response.choices[0].message.content or ""
+                return {
+                    "text": response.choices[0].message.content or "",
+                    "input_tokens": response.usage.prompt_tokens if response.usage else 0,
+                    "output_tokens": response.usage.completion_tokens if response.usage else 0,
+                }
 
             elif self.provider == "anthropic":
                 response = self._client.messages.create(
@@ -81,24 +95,28 @@ class LLMClient:
                     max_tokens=1024,
                     messages=[{"role": "user", "content": prompt}],
                 )
-                return response.content[0].text if response.content else ""
+                return {
+                    "text": response.content[0].text if response.content else "",
+                    "input_tokens": response.usage.input_tokens if response.usage else 0,
+                    "output_tokens": response.usage.output_tokens if response.usage else 0,
+                }
 
         except Exception:
-            return ""
+            return empty
 
-        return ""
+        return empty
 
-    def summarize(self, content: str) -> str:
+    def summarize(self, content: str) -> LLMResponse:
         """Summarize the given content.
 
         Args:
             content: The content to summarize.
 
         Returns:
-            A summary of the content, or empty string on failure.
+            LLMResponse with summary text and token usage.
         """
         if not content:
-            return ""
+            return {"text": "", "input_tokens": 0, "output_tokens": 0}
 
         prompt = (
             "Please summarize the following content concisely, "

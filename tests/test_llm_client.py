@@ -44,13 +44,17 @@ class TestLLMClientCall:
                 mock_client = MagicMock()
                 mock_response = MagicMock()
                 mock_response.choices = [MagicMock(message=MagicMock(content="test response"))]
+                mock_response.usage.prompt_tokens = 10
+                mock_response.usage.completion_tokens = 5
                 mock_client.chat.completions.create.return_value = mock_response
                 mock_openai.return_value = mock_client
 
                 client = LLMClient(provider="openai")
                 result = client.call("test prompt")
 
-                assert result == "test response"
+                assert result["text"] == "test response"
+                assert result["input_tokens"] == 10
+                assert result["output_tokens"] == 5
                 mock_client.chat.completions.create.assert_called_once()
 
     def test_call_anthropic_success(self):
@@ -60,13 +64,17 @@ class TestLLMClientCall:
                 mock_client = MagicMock()
                 mock_response = MagicMock()
                 mock_response.content = [MagicMock(text="test response")]
+                mock_response.usage.input_tokens = 15
+                mock_response.usage.output_tokens = 8
                 mock_client.messages.create.return_value = mock_response
                 mock_anthropic.return_value = mock_client
 
                 client = LLMClient(provider="anthropic")
                 result = client.call("test prompt")
 
-                assert result == "test response"
+                assert result["text"] == "test response"
+                assert result["input_tokens"] == 15
+                assert result["output_tokens"] == 8
                 mock_client.messages.create.assert_called_once()
 
     def test_call_no_client_returns_empty(self):
