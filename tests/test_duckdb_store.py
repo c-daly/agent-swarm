@@ -181,3 +181,151 @@ def test_get_summarization_callback_rate_with_data(tmp_path):
     assert result["total_offered"] == 3
     assert result["total_retrieved"] == 1
     assert result["callback_rate"] == pytest.approx(0.333, rel=0.01)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Summarization Metrics Tests
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def store_with_summarization_data(tmp_path):
+    """Create DuckDBStore with events that have summarization data."""
+    store = DuckDBStore(str(tmp_path))
+
+    # Event 1: Summarized, original=1000, summary=200 (compression=0.2, saved=200 tokens)
+    store.insert_event({
+        "timestamp": "2026-01-20T10:00:00Z",
+        "session_id": "summ_session",
+        "agent_id": "summ_session",
+        "tool": "mcp__router__serena__read_file",
+        "backend": "serena",
+        "duration_ms": 100,
+        "status": "success",
+        "input_tokens": 500,
+        "output_tokens": 200,
+        "was_summarized": True,
+        "original_size": 1000,
+        "summary_size": 200,
+    })
+
+    # Event 2: Summarized, original=2000, summary=400 (compression=0.2, saved=400 tokens)
+    store.insert_event({
+        "timestamp": "2026-01-20T10:00:01Z",
+        "session_id": "summ_session",
+        "agent_id": "summ_session",
+        "tool": "mcp__router__native__read_file",
+        "backend": "native",
+        "duration_ms": 50,
+        "status": "success",
+        "input_tokens": 400,
+        "output_tokens": 100,
+        "was_summarized": True,
+        "original_size": 2000,
+        "summary_size": 400,
+    })
+
+    # Event 3: Summarized, original=500, summary=200 (compression=0.4, saved=75 tokens)
+    store.insert_event({
+        "timestamp": "2026-01-20T10:00:02Z",
+        "session_id": "summ_session",
+        "agent_id": "summ_session",
+        "tool": "mcp__router__serena__find_symbol",
+        "backend": "serena",
+        "duration_ms": 200,
+        "status": "success",
+        "input_tokens": 200,
+        "output_tokens": 50,
+        "was_summarized": True,
+        "original_size": 500,
+        "summary_size": 200,
+    })
+
+    # Event 4: NOT summarized (should be excluded from summarization metrics)
+    store.insert_event({
+        "timestamp": "2026-01-20T10:00:03Z",
+        "session_id": "summ_session",
+        "agent_id": "summ_session",
+        "tool": "Bash",
+        "backend": "native",
+        "duration_ms": 300,
+        "status": "success",
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "was_summarized": False,
+        "original_size": None,
+        "summary_size": None,
+    })
+
+    return store
+
+
+def test_daily_summary_summarizations_offered(store_with_summarization_data):
+    """summarizations_offered counts events where was_summarized=True."""
+    summary = store_with_summarization_data.get_daily_summary(day=date(2026, 1, 20))
+
+    assert summary is not None
+    # 3 events have was_summarized=True
+    assert summary.summarizations_offered == 3
+
+
+def test_daily_summary_summarizations_accepted(store_with_summarization_data):
+    """summarizations_accepted equals summarizations_offered for now."""
+    summary = store_with_summarization_data.get_daily_summary(day=date(2026, 1, 20))
+
+    assert summary is not None
+    # For now, accepted = offered (all summaries are implicitly accepted)
+    assert summary.summarizations_accepted == summary.summarizations_offered
+    assert summary.summarizations_accepted == 3
+
+
+def test_daily_summary_avg_compression_ratio(store_with_summarization_data):
+    """avg_compression_ratio is average of (summary_size/original_size)."""
+    summary = store_with_summarization_data.get_daily_summary(day=date(2026, 1, 20))
+
+    assert summary is not None
+    # Event 1: 200/1000 = 0.2
+    # Event 2: 400/2000 = 0.2
+    # Event 3: 200/500 = 0.4
+    # Average: (0.2 + 0.2 + 0.4) / 3 = 0.8 / 3 = 0.2666...
+    expected_ratio = (0.2 + 0.2 + 0.4) / 3
+    assert float(summary.avg_compression_ratio) == pytest.approx(expected_ratio, rel=0.01)
+
+
+def test_daily_summary_tokens_saved(store_with_summarization_data):
+    """tokens_saved is sum of (original_size - summary_size) / 4."""
+    summary = store_with_summarization_data.get_daily_summary(day=date(2026, 1, 20))
+
+    assert summary is not None
+    # Event 1: (1000 - 200) / 4 = 200
+    # Event 2: (2000 - 400) / 4 = 400
+    # Event 3: (500 - 200) / 4 = 75
+    # Total: 200 + 400 + 75 = 675
+    assert summary.tokens_saved == 675
+
+
+def test_daily_summary_no_summarization_data(tmp_path):
+    """All summarization metrics are zero when no summarized events exist."""
+    store = DuckDBStore(str(tmp_path))
+
+    # Insert event without summarization data
+    store.insert_event({
+        "timestamp": "2026-01-20T10:00:00Z",
+        "session_id": "no_summ",
+        "agent_id": "no_summ",
+        "tool": "Bash",
+        "backend": "native",
+        "duration_ms": 100,
+        "status": "success",
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "was_summarized": False,
+    })
+
+    summary = store.get_daily_summary(day=date(2026, 1, 20))
+
+    assert summary is not None
+    assert summary.summarizations_offered == 0
+    assert summary.summarizations_accepted == 0
+    assert summary.avg_compression_ratio == 0.0
+    assert summary.tokens_saved == 0

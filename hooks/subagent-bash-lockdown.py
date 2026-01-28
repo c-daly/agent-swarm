@@ -22,6 +22,16 @@ def is_mcp_call(command: str) -> bool:
     )
 
 
+def block(reason: str):
+    """Block tool by exiting with code 2 (stderr used as message).
+
+    Exit code 2 is the reliable blocking mechanism - JSON deny responses
+    are sometimes ignored (Claude Code bug #4669).
+    """
+    print(reason, file=sys.stderr)
+    sys.exit(2)
+
+
 def main():
     try:
         input_data = json.loads(sys.stdin.read())
@@ -30,7 +40,8 @@ def main():
 
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input", {})
-    agent_id = input_data.get("agent_id")
+    # Claude Code uses camelCase 'agentId'
+    agent_id = input_data.get("agentId") or input_data.get("agent_id")
 
     # Only apply to subagent Bash calls
     if not agent_id:
@@ -43,17 +54,10 @@ def main():
 
     if not is_mcp_call(command):
         # Block - only mcp-call allowed
-        print(json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": (
-                    "[SUBAGENT LOCKDOWN] Only mcp-call is allowed in subagents. "
-                    "Use: mcp-call <tool_name> '<json_args>'"
-                )
-            }
-        }))
-        sys.exit(0)
+        block(
+            "[SUBAGENT LOCKDOWN] Only mcp-call is allowed in subagents. "
+            "Use: mcp-call <tool_name> '<json_args>'"
+        )
 
     # Allow mcp-call
     sys.exit(0)

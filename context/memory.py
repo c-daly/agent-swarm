@@ -104,6 +104,19 @@ class Episode:
             return "pattern"
 
 
+def _compute_similarity(content1: str, content2: str) -> float:
+    """Compute Jaccard similarity between two strings."""
+    words1 = set(content1.lower().split())
+    words2 = set(content2.lower().split())
+    
+    intersection = len(words1 & words2)
+    union = len(words1 | words2)
+    
+    if union == 0:
+        return 0.0
+    return intersection / union
+
+
 @dataclass
 class Memory:
     """Semantic memory store for a scope."""
@@ -172,6 +185,62 @@ class Memory:
         ]
         for pid in to_remove:
             del self.patterns[pid]
+
+    def compact(
+        self,
+        similarity_threshold: float = 0.7,
+        min_confidence: float = 0.2,
+    ):
+        """
+        Compact memory by merging similar patterns and pruning low confidence.
+        
+        Args:
+            similarity_threshold: Merge patterns with similarity >= this value
+            min_confidence: Remove patterns with confidence < this value
+        """
+        # First, merge similar patterns
+        patterns_list = list(self.patterns.values())
+        merged_ids = set()
+        
+        for i, p1 in enumerate(patterns_list):
+            if p1.id in merged_ids:
+                continue
+            
+            for j, p2 in enumerate(patterns_list[i + 1:], start=i + 1):
+                if p2.id in merged_ids:
+                    continue
+                
+                similarity = _compute_similarity(p1.content, p2.content)
+                if similarity >= similarity_threshold:
+                    # Determine keeper (higher confidence) and merger (to be deleted)
+                    if p2.confidence > p1.confidence:
+                        keeper, merger = p2, p1
+                    else:
+                        keeper, merger = p1, p2
+
+                    # Combine observation counts and confidence
+                    keeper.observation_count += merger.observation_count
+                    keeper.confidence = min(0.95, keeper.confidence + (1 - keeper.confidence) * 0.1)
+
+                    # Merge source episodes
+                    for ep in merger.source_episodes:
+                        if ep not in keeper.source_episodes:
+                            keeper.source_episodes.append(ep)
+                    keeper.source_episodes = keeper.source_episodes[-10:]
+
+                    merged_ids.add(merger.id)
+
+                    # If p1 was merged into p2, stop comparing p1 with other patterns
+                    if merger.id == p1.id:
+                        break
+        
+        # Remove merged patterns
+        for pid in merged_ids:
+            if pid in self.patterns:
+                del self.patterns[pid]
+        
+        # Then prune low confidence
+        self.prune(min_confidence)
 
     def get_by_category(self, category: str) -> list[Pattern]:
         """Get all patterns in a category, sorted by confidence."""
@@ -376,6 +445,112 @@ class EpisodeStore:
                     self.add_episode(ep)
 
 
+def find_duplicate_patterns(parent_dir: Path) -> list[dict]:
+    """
+    Scan child .context/MEMORY.md files and find patterns that appear in 2+ children.
+    
+    Args:
+        parent_dir: Parent directory to scan for child memories
+        
+    Returns:
+        List of {pattern, sources, confidence} for patterns appearing in multiple children
+    """
+    # Collect patterns from all child directories
+    pattern_sources: dict[str, list[tuple[str, float, str]]] = {}  # content -> [(source, confidence, category)]
+    
+    for child_dir in parent_dir.iterdir():
+        if not child_dir.is_dir():
+            continue
+        
+        memory_json = child_dir / ".context" / "MEMORY.json"
+        if not memory_json.exists():
+            continue
+        
+        try:
+            data = json.loads(memory_json.read_text())
+            memory = Memory.from_dict(data)
+            
+            for pattern in memory.patterns.values():
+                # Normalize content for comparison
+                content_key = pattern.content.strip().lower()
+                
+                if content_key not in pattern_sources:
+                    pattern_sources[content_key] = []
+                
+                pattern_sources[content_key].append((
+                    str(child_dir),
+                    pattern.confidence,
+                    pattern.category,
+                ))
+        except (json.JSONDecodeError, KeyError):
+            continue
+    
+    # Find patterns appearing in 2+ children
+    duplicates = []
+    for content_key, sources in pattern_sources.items():
+        if len(sources) >= 2:
+            # Calculate average confidence
+            avg_confidence = sum(s[1] for s in sources) / len(sources)
+            # Use the most common category
+            categories = [s[2] for s in sources]
+            most_common_category = max(set(categories), key=categories.count)
+            
+            # Find original content (not lowercased)
+            original_content = None
+            for child_dir in parent_dir.iterdir():
+                if not child_dir.is_dir():
+                    continue
+                memory_json = child_dir / ".context" / "MEMORY.json"
+                if not memory_json.exists():
+                    continue
+                try:
+                    data = json.loads(memory_json.read_text())
+                    memory = Memory.from_dict(data)
+                    for pattern in memory.patterns.values():
+                        if pattern.content.strip().lower() == content_key:
+                            original_content = pattern.content
+                            break
+                    if original_content:
+                        break
+                except (json.JSONDecodeError, KeyError):
+                    continue
+            
+            duplicates.append({
+                "pattern": original_content or content_key,
+                "sources": [s[0] for s in sources],
+                "confidence": avg_confidence,
+                "category": most_common_category,
+            })
+    
+    return duplicates
+
+
+def propose_promotions(working_dir: Path) -> list[dict]:
+    """
+    Suggest promoting duplicate patterns from children to parent scope.
+    
+    Args:
+        working_dir: Directory to analyze (will scan children for duplicates)
+        
+    Returns:
+        List of {pattern, from_scope, to_scope, reason} promotion suggestions
+    """
+    duplicates = find_duplicate_patterns(working_dir)
+    
+    promotions = []
+    for dup in duplicates:
+        promotions.append({
+            "pattern": dup["pattern"],
+            "from_scope": dup["sources"],
+            "to_scope": str(working_dir),
+            "reason": f"Pattern appears in {len(dup['sources'])} child scopes with avg confidence {dup['confidence']:.2f}",
+            "category": dup["category"],
+            "confidence": dup["confidence"],
+        })
+    
+    return promotions
+
+
 class Distiller:
     """Distills episodes into memory patterns."""
 
@@ -453,6 +628,46 @@ class Distiller:
 
         return self.memory
 
+    def distill_with_promotions(
+        self,
+        since: Optional[datetime] = None,
+        clear_episodes: bool = True,
+        auto_promote: bool = False,
+    ) -> dict:
+        """
+        Distill episodes and check for promotion opportunities.
+        
+        Args:
+            since: Only process episodes since this time
+            clear_episodes: Whether to clear processed episodes
+            auto_promote: If True, automatically apply promotions
+            
+        Returns:
+            Dict with 'memory' and 'promotions' keys
+        """
+        # First do normal distillation
+        memory = self.distill(since=since, clear_episodes=clear_episodes)
+        
+        # Check for promotion opportunities
+        promotions = propose_promotions(self.scope_path)
+        
+        if auto_promote and promotions:
+            for promo in promotions:
+                # Add promoted pattern to this scope's memory
+                self.memory.add_pattern(
+                    content=promo["pattern"],
+                    category=promo["category"],
+                    confidence=promo["confidence"],
+                )
+            
+            # Save updated memory
+            self._save_memory()
+        
+        return {
+            "memory": memory,
+            "promotions": promotions,
+        }
+
     def _save_memory(self):
         """Save memory to disk."""
         memory_file = self._find_memory_file()
@@ -513,6 +728,7 @@ if __name__ == "__main__":
         print("  show [dir]            - Show current memory")
         print("  episodes [dir]        - Show pending episodes")
         print("  log <task> <outcome>  - Log an episode (reads learnings from stdin)")
+        print("  promote [dir]         - Show promotion suggestions")
         sys.exit(1)
 
     command = sys.argv[1]
@@ -550,6 +766,19 @@ if __name__ == "__main__":
 
         episode = log_episode(work_dir, task, outcome, learnings)
         print(f"Logged episode: {episode.id}")
+
+    elif command == "promote":
+        promotions = propose_promotions(work_dir)
+        if not promotions:
+            print("No promotion suggestions found.")
+        else:
+            print(f"Found {len(promotions)} promotion suggestions:\n")
+            for promo in promotions:
+                print(f"Pattern: {promo['pattern']}")
+                print(f"  From: {', '.join(promo['from_scope'])}")
+                print(f"  To: {promo['to_scope']}")
+                print(f"  Reason: {promo['reason']}")
+                print()
 
     else:
         print(f"Unknown command: {command}")

@@ -5,6 +5,7 @@ Stores full content in WorkflowStateService for later retrieval.
 import uuid
 from typing import Any, TypedDict
 
+from lib.llm_client import LLMClient
 from lib.workflow_state_service import WorkflowStateService
 
 
@@ -31,10 +32,12 @@ class SummarizationService:
     def __init__(
         self, 
         workflow_state: WorkflowStateService, 
-        threshold: int = 2000
+        threshold: int = 2000,
+        llm_client: LLMClient | None = None,
     ) -> None:
         self._workflow_state = workflow_state
         self._threshold = threshold
+        self._llm_client = llm_client
     
     def process(self, content: Any) -> SummarizationResult:
         """Process content, summarizing if over threshold.
@@ -77,6 +80,12 @@ class SummarizationService:
     def _generate_summary(self, content: str) -> str:
         """Generate summary of content.
         
-        Currently truncates. Future: use LLM summarization.
+        Uses LLM summarization if available, otherwise truncates.
         """
+        if self._llm_client:
+            llm_summary = self._llm_client.summarize(content)
+            if llm_summary:
+                return llm_summary
+        
+        # Fallback to truncation
         return content[:self._threshold] + "..."

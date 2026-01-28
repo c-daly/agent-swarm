@@ -6,12 +6,7 @@ available via separate request for clean metrics.
 NOTE: Tests require response format refactoring for MCP router.
 """
 
-import pytest
-
-pytestmark = pytest.mark.skip(
-    reason="Integration test: requires response format refactoring for MCP router"
-)
-import json  # noqa: E402
+import json
 
 
 class TestSummaryOnlyResponse:

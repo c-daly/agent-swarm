@@ -285,8 +285,9 @@ def main():
     agent_type = input_data.get("agent_type", "unknown")
     task_desc = input_data.get("task", "implementation task")
 
-    # Use Claude Code's agent_id if provided, otherwise generate one
-    agent_id = input_data.get("agent_id") or f"sub-{uuid.uuid4().hex[:8]}"
+    # Use Claude Code's agentId if provided, otherwise generate one
+    # Claude Code uses camelCase 'agentId'
+    agent_id = input_data.get("agentId") or input_data.get("agent_id") or f"sub-{uuid.uuid4().hex[:8]}"
 
     # Register agent type for telemetry (non-blocking)
     try:

@@ -178,6 +178,19 @@ class DuckDBStore(AnalyticsStore, TraceStore):
                     COUNT(*) as tool_calls,
                     0 as cache_hits
                 FROM day_events
+            ),
+            summarization_stats AS (
+                SELECT
+                    COUNT(*) as summarizations_offered,
+                    COUNT(*) as summarizations_accepted,
+                    COALESCE(CAST(AVG(
+                        CAST(summary_size AS DECIMAL) / CAST(original_size AS DECIMAL)
+                    ) AS DECIMAL), 0.0) as avg_compression_ratio,
+                    COALESCE(SUM((original_size - summary_size) / 4), 0) as tokens_saved
+                FROM day_events
+                WHERE was_summarized = TRUE
+                  AND original_size IS NOT NULL
+                  AND summary_size IS NOT NULL
             )
             SELECT
                 '{day_str}'::DATE as date,
@@ -186,11 +199,11 @@ class DuckDBStore(AnalyticsStore, TraceStore):
                 COALESCE(e.tool_calls, 0) as tool_calls,
                 COALESCE(e.cache_hits, 0) as cache_hits,
                 0.0 as cache_ratio,
-                0 as summarizations_offered,
-                0 as summarizations_accepted,
-                0.0 as avg_compression_ratio,
-                0 as tokens_saved
-            FROM event_stats e
+                COALESCE(s.summarizations_offered, 0) as summarizations_offered,
+                COALESCE(s.summarizations_accepted, 0) as summarizations_accepted,
+                COALESCE(s.avg_compression_ratio, 0.0) as avg_compression_ratio,
+                COALESCE(s.tokens_saved, 0) as tokens_saved
+            FROM event_stats e, summarization_stats s
         """).fetchone()
 
         if result is None or result[1] == 0:  # No sessions means no data

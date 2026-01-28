@@ -11,8 +11,10 @@ Runs inventory.py to inject available MCP servers, skills, and capabilities.
 """
 
 import json
+import re
 import sys
 import subprocess
+import time
 from pathlib import Path
 
 # Add lib and context to path
@@ -60,6 +62,322 @@ try:
 except ImportError:
     find_project_root = None
     find_recent_handoffs = None
+
+
+# Maximum age for HANDOFF.md files to be included (in hours)
+HANDOFF_MAX_AGE_HOURS = 48
+
+
+def load_memory_patterns(scope_path: Path) -> list[dict]:
+    """Load patterns from .context/MEMORY.md file.
+    
+    Parses the markdown format and returns structured pattern data.
+    
+    Args:
+        scope_path: Path to the scope directory containing .context/MEMORY.md
+        
+    Returns:
+        List of pattern dicts with keys: content, category, confidence, last_reinforced
+    """
+    memory_file = scope_path / ".context" / "MEMORY.md"
+    
+    if not memory_file.exists():
+        return []
+    
+    try:
+        content = memory_file.read_text()
+    except Exception:
+        return []
+    
+    patterns = []
+    current_category = None
+    
+    # Map section headers to category names
+    category_map = {
+        "patterns observed": "pattern",
+        "pitfalls discovered": "pitfall",
+        "preferences inferred": "preference",
+        "effective approaches": "approach",
+    }
+    
+    content_lines = content.split("\n")
+    i = 0
+    while i < len(content_lines):
+        line = content_lines[i]
+        
+        # Check for section header
+        if line.startswith("## "):
+            header = line[3:].strip().lower()
+            current_category = category_map.get(header)
+            i += 1
+            continue
+        
+        # Check for pattern entry (starts with "- ")
+        if line.startswith("- ") and current_category:
+            pattern_content = line[2:].strip()
+            
+            # Look for confidence line on next line
+            if i + 1 < len(content_lines):
+                next_line = content_lines[i + 1].strip()
+                confidence_match = re.match(
+                    r"Confidence:\s*(high|medium|low)\s*\|\s*Last reinforced:\s*(\d{4}-\d{2}-\d{2})",
+                    next_line,
+                    re.IGNORECASE
+                )
+                
+                if confidence_match:
+                    patterns.append({
+                        "content": pattern_content,
+                        "category": current_category,
+                        "confidence": confidence_match.group(1).lower(),
+                        "last_reinforced": confidence_match.group(2),
+                    })
+                    i += 2
+                    continue
+        
+        i += 1
+    
+    return patterns
+
+
+def format_memory_patterns(patterns: list[dict], max_patterns: int = 5) -> str:
+    """Format patterns for display in session context.
+    
+    Groups patterns by category and formats them for readable output.
+    
+    Args:
+        patterns: List of pattern dicts from load_memory_patterns
+        max_patterns: Maximum number of patterns to include
+        
+    Returns:
+        Formatted string for display, or empty string if no patterns
+    """
+    if not patterns:
+        return ""
+    
+    # Group by category
+    by_category: dict[str, list[dict]] = {}
+    for p in patterns:
+        cat = p["category"]
+        if cat not in by_category:
+            by_category[cat] = []
+        by_category[cat].append(p)
+    
+    # Category display names
+    category_names = {
+        "pattern": "Patterns",
+        "pitfall": "Pitfalls",
+        "preference": "Preferences",
+        "approach": "Approaches",
+    }
+    
+    # Format output, limiting total patterns
+    output_lines = ["**Learned Patterns from Memory:**"]
+    pattern_count = 0
+    
+    for cat_key in ["pitfall", "pattern", "approach", "preference"]:
+        if cat_key not in by_category:
+            continue
+        
+        cat_patterns = by_category[cat_key]
+        cat_name = category_names.get(cat_key, cat_key.title())
+        
+        for p in cat_patterns:
+            if pattern_count >= max_patterns:
+                break
+            
+            conf = p["confidence"]
+            conf_indicator = "!" if conf == "high" else "~" if conf == "medium" else "?"
+            output_lines.append(f"  {conf_indicator} [{cat_name}] {p['content']}")
+            pattern_count += 1
+        
+        if pattern_count >= max_patterns:
+            break
+    
+    if pattern_count == 0:
+        return ""
+    
+    return "\n".join(output_lines)
+
+
+def _detect_hierarchy_level(path: Path, working_dir: Path, user_dir: Path) -> str:
+    """Detect what level of hierarchy this path represents."""
+    if path == user_dir:
+        return "user"
+    
+    # Check for .git to identify repo root
+    if (path / ".git").exists():
+        return "repo"
+    
+    # Check for workspace (directory containing multiple repos)
+    try:
+        git_children = sum(1 for child in path.iterdir() 
+                          if child.is_dir() and (child / ".git").exists())
+        if git_children >= 2:
+            return "workspace"
+    except PermissionError:
+        pass
+    
+    # Default to component for anything else
+    return "component"
+
+
+def load_context_hierarchy(working_dir: Path, user_dir: Path | None = None) -> list[dict]:
+    """Load context from all hierarchy levels.
+    
+    Walks up from working_dir to user_dir, loading CONTEXT.md, MEMORY.md,
+    and HANDOFF.md (if < 48 hours old) from each .context/ directory.
+    
+    Args:
+        working_dir: Current working directory
+        user_dir: User's .claude directory (defaults to ~/.claude)
+        
+    Returns:
+        List of context dicts with keys: level, path, content, memory, handoff
+    """
+    if user_dir is None:
+        user_dir = Path.home() / ".claude"
+    
+    hierarchy = []
+    current = working_dir.resolve()
+    filesystem_root = Path(current.anchor)
+    
+    # Track visited to avoid duplicates
+    visited = set()
+    
+    # Walk up from working directory
+    while current != filesystem_root:
+        if current in visited:
+            current = current.parent
+            continue
+        visited.add(current)
+        
+        context_dir = current / ".context"
+        if context_dir.exists():
+            entry = {
+                "level": _detect_hierarchy_level(current, working_dir, user_dir),
+                "path": str(current),
+                "content": None,
+                "memory": None,
+                "handoff": None,
+            }
+            
+            # Load CONTEXT.md
+            context_file = context_dir / "CONTEXT.md"
+            if context_file.exists():
+                try:
+                    entry["content"] = context_file.read_text()
+                except Exception:
+                    pass
+            
+            # Load MEMORY.md
+            memory_file = context_dir / "MEMORY.md"
+            if memory_file.exists():
+                try:
+                    entry["memory"] = memory_file.read_text()
+                except Exception:
+                    pass
+            
+            # Load HANDOFF.md (only if < 48 hours old)
+            handoff_file = context_dir / "HANDOFF.md"
+            if handoff_file.exists():
+                try:
+                    mtime = handoff_file.stat().st_mtime
+                    age_hours = (time.time() - mtime) / 3600
+                    if age_hours <= HANDOFF_MAX_AGE_HOURS:
+                        entry["handoff"] = handoff_file.read_text()
+                except Exception:
+                    pass
+            
+            hierarchy.append(entry)
+        
+        current = current.parent
+    
+    # Add user-level context
+    if user_dir not in visited:
+        user_context_dir = user_dir / ".context"
+        if user_context_dir.exists() or user_dir.exists():
+            entry = {
+                "level": "user",
+                "path": str(user_dir),
+                "content": None,
+                "memory": None,
+                "handoff": None,
+            }
+            
+            # Try .context/CONTEXT.md first, then CONTEXT.md in user_dir
+            for context_path in [user_context_dir / "CONTEXT.md", user_dir / "CONTEXT.md"]:
+                if context_path.exists():
+                    try:
+                        entry["content"] = context_path.read_text()
+                        break
+                    except Exception:
+                        pass
+            
+            if entry["content"] or entry["memory"] or entry["handoff"]:
+                hierarchy.append(entry)
+            elif user_context_dir.exists():
+                hierarchy.append(entry)
+    
+    # Reverse so general comes first (user -> repo -> component)
+    hierarchy.reverse()
+    
+    return hierarchy
+
+
+def format_hierarchy_context(hierarchy: list[dict], max_chars: int = 3000) -> str:
+    """Format hierarchical context with scope tags.
+    
+    Args:
+        hierarchy: List of context dicts from load_context_hierarchy
+        max_chars: Maximum characters for output
+        
+    Returns:
+        Formatted string with scope-tagged context lines
+    """
+    lines = []
+    
+    for ctx in hierarchy:
+        level = ctx.get("level", "unknown")
+        path = ctx.get("path", "")
+        content = ctx.get("content", "")
+        
+        if not content:
+            continue
+        
+        # Build scope tag
+        if level == "user":
+            tag = "[user]"
+        elif level == "repo":
+            # Extract repo name from path
+            repo_name = Path(path).name
+            tag = f"[repo:{repo_name}]"
+        elif level == "workspace":
+            ws_name = Path(path).name
+            tag = f"[workspace:{ws_name}]"
+        elif level == "component":
+            comp_name = Path(path).name
+            tag = f"[component:{comp_name}]"
+        else:
+            tag = f"[{level}]"
+        
+        # Extract key lines from content (first meaningful lines)
+        content_lines = [line.strip() for line in content.split("\n") 
+                        if line.strip() and not line.startswith("#")]
+        
+        # Add up to 3 lines per scope
+        for line in content_lines[:3]:
+            # Truncate long lines
+            if len(line) > 100:
+                line = line[:97] + "..."
+            lines.append(f"{tag} {line}")
+    
+    result = "\n".join(lines)
+    
+    if len(result) > max_chars:
+        result = result[:max_chars - 3] + "..."
+    
+    return result
 
 
 def load_iterate_state() -> dict:
@@ -501,7 +819,7 @@ def main():
             result = cleanup_stale_outputs(max_age_hours=48, dry_run=False)
             if result["files_deleted"] > 0:
                 space_mb = result["space_reclaimed"] / (1024 * 1024)
-                cleanup_message = f"🧹 Cleaned {result['files_deleted']} stale output files ({space_mb:.1f} MB)"
+                cleanup_message = f"Cleaned {result['files_deleted']} stale output files ({space_mb:.1f} MB)"
         except Exception:
             pass  # Fail silently - cleanup shouldn't break session start
 
@@ -526,8 +844,15 @@ def main():
     # Build output message
     messages = []
 
-    # Add hierarchical context (only for main agent, not subagents)
+    # Add hierarchical context with scope tags (only for main agent)
     if not agent_id:
+        hierarchy = load_context_hierarchy(Path.cwd())
+        if hierarchy:
+            hierarchy_context = format_hierarchy_context(hierarchy)
+            if hierarchy_context:
+                messages.append(f"**Hierarchical Context:**\n{hierarchy_context}")
+        
+        # Also use the resolver-based context for additional detail
         context_summary = get_session_context(Path.cwd())
         if context_summary:
             messages.append(f"Project Context:\n{context_summary}")
@@ -539,13 +864,21 @@ def main():
             if handoff_context:
                 messages.append(handoff_context)
 
+    # Load learned patterns from MEMORY.md (only for main agent)
+    if not agent_id:
+        memory_patterns = load_memory_patterns(Path.cwd())
+        if memory_patterns:
+            formatted_patterns = format_memory_patterns(memory_patterns, max_patterns=5)
+            if formatted_patterns:
+                messages.append(formatted_patterns)
+
     # Add cleanup message if files were cleaned
     if cleanup_message:
         messages.append(cleanup_message)
 
     # Add inventory if available
     if inventory_output:
-        messages.append("📦 Capability Inventory:\n" + inventory_output[:1000])  # Limit size
+        messages.append("Capability Inventory:\n" + inventory_output[:1000])  # Limit size
 
     # Add memory suggestions (always show the message, which now includes auto-read snippets)
     messages.append(results.get("message", ""))

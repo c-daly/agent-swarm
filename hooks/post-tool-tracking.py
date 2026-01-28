@@ -39,6 +39,8 @@ STATE_FILE = None
 
 def load_json(path: Path) -> dict:
     """Load JSON file safely."""
+    if path is None:
+        return {}
     if path.exists():
         try:
             return json.loads(path.read_text())

@@ -383,3 +383,207 @@ Rules
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# ============================================================================
+# Tests for enhanced resolver functionality: workspace detection, scope
+# inference, and save_at_scope
+# ============================================================================
+
+
+class TestWorkspaceDetection:
+    """Test workspace-level detection (directory containing multiple .git children)."""
+
+    def test_detect_workspace_with_multiple_git_children(self, tmp_path):
+        """A directory with multiple .git subdirectories is a workspace."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        # Create two repos within workspace
+        repo1 = workspace / "repo1"
+        repo1.mkdir()
+        (repo1 / ".git").mkdir()
+
+        repo2 = workspace / "repo2"
+        repo2.mkdir()
+        (repo2 / ".git").mkdir()
+
+        level = detect_level(workspace, repo1 / "src", tmp_path / ".claude")
+        assert level == "workspace"
+
+    def test_detect_not_workspace_with_single_git(self, tmp_path):
+        """A directory with only one .git child is NOT a workspace."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        repo = workspace / "repo"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+
+        level = detect_level(workspace, repo / "src", tmp_path / ".claude")
+        # Should NOT be workspace since only one .git child
+        assert level != "workspace"
+
+    def test_workspace_detection_ignores_nested_git(self, tmp_path):
+        """Only direct children .git dirs count, not deeply nested ones."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        # Single repo with nested submodule
+        repo = workspace / "repo"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+
+        submodule = repo / "vendor" / "lib"
+        submodule.mkdir(parents=True)
+        (submodule / ".git").mkdir()
+
+        level = detect_level(workspace, repo / "src", tmp_path / ".claude")
+        # workspace itself only has one direct .git child (repo/.git)
+        assert level != "workspace"
+
+
+class TestScopeInference:
+    """Test infer_scope function for determining where context should be saved."""
+
+    def test_infer_user_scope_with_always(self, tmp_path):
+        """Content with 'always' indicates user-level preference."""
+        from context.resolver import infer_scope
+
+        content = "I always prefer tabs over spaces."
+        scope, path = infer_scope(content, tmp_path)
+
+        assert scope == "user"
+        assert path == Path.home() / ".claude"
+
+    def test_infer_user_scope_with_never(self, tmp_path):
+        """Content with 'never' indicates user-level preference."""
+        from context.resolver import infer_scope
+
+        content = "Never use semicolons in JavaScript."
+        scope, path = infer_scope(content, tmp_path)
+
+        assert scope == "user"
+        assert path == Path.home() / ".claude"
+
+    def test_infer_user_scope_with_i_prefer(self, tmp_path):
+        """Content with 'I prefer' indicates user-level preference."""
+        from context.resolver import infer_scope
+
+        content = "I prefer functional programming style."
+        scope, path = infer_scope(content, tmp_path)
+
+        assert scope == "user"
+        assert path == Path.home() / ".claude"
+
+    def test_infer_component_scope_with_file_paths(self, tmp_path):
+        """Content mentioning specific file paths is component-level."""
+        from context.resolver import infer_scope
+
+        # Create a file structure
+        component = tmp_path / "src" / "auth"
+        component.mkdir(parents=True)
+        (component / "login.py").touch()
+
+        content = "The login.py file handles authentication."
+        scope, path = infer_scope(content, component)
+
+        assert scope == "component"
+        assert path == component
+
+    def test_infer_repo_scope_default(self, tmp_path):
+        """Content without global indicators or paths defaults to repo."""
+        from context.resolver import infer_scope
+
+        repo = tmp_path / "myrepo"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+
+        content = "This project uses pytest for testing."
+        scope, path = infer_scope(content, repo)
+
+        assert scope == "repo"
+        assert path == repo
+
+    def test_infer_scope_finds_repo_root(self, tmp_path):
+        """When in a subdirectory, repo scope should find the repo root."""
+        from context.resolver import infer_scope
+
+        repo = tmp_path / "myrepo"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+
+        subdir = repo / "src" / "lib"
+        subdir.mkdir(parents=True)
+
+        content = "This module handles data processing."
+        scope, path = infer_scope(content, subdir)
+
+        assert scope == "repo"
+        assert path == repo
+
+
+class TestSaveAtScope:
+    """Test save_at_scope function for persisting context content."""
+
+    def test_save_creates_context_directory(self, tmp_path):
+        """save_at_scope creates .context directory if needed."""
+        from context.resolver import save_at_scope
+
+        content = "This project uses pytest for testing."
+        saved_path = save_at_scope(content, "MEMORY.md", tmp_path)
+
+        assert (tmp_path / ".context").exists()
+        assert (tmp_path / ".context").is_dir()
+
+    def test_save_appends_to_file(self, tmp_path):
+        """save_at_scope appends content to existing file."""
+        from context.resolver import save_at_scope
+
+        # Create existing memory file
+        context_dir = tmp_path / ".context"
+        context_dir.mkdir()
+        memory_file = context_dir / "MEMORY.md"
+        memory_file.write_text("# Existing memory\n\nFirst entry.\n")
+
+        content = "Second entry about testing."
+        saved_path = save_at_scope(content, "MEMORY.md", tmp_path)
+
+        result = saved_path.read_text()
+        assert "First entry" in result
+        assert "Second entry" in result
+
+    def test_save_returns_correct_path(self, tmp_path):
+        """save_at_scope returns the path where content was saved."""
+        from context.resolver import save_at_scope
+
+        content = "Test content."
+        saved_path = save_at_scope(content, "MEMORY.md", tmp_path)
+
+        assert saved_path == tmp_path / ".context" / "MEMORY.md"
+        assert saved_path.exists()
+
+    def test_save_at_user_scope(self, tmp_path, monkeypatch):
+        """Content with global indicators saves to user directory."""
+        from context.resolver import save_at_scope
+
+        # Mock home directory
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        content = "I always want verbose output."
+        saved_path = save_at_scope(content, "MEMORY.md", tmp_path / "some" / "project")
+
+        assert saved_path.parent.parent == fake_home / ".claude"
+
+    def test_save_handles_different_file_types(self, tmp_path):
+        """save_at_scope works with different file types."""
+        from context.resolver import save_at_scope
+
+        content = "Decision: Use PostgreSQL for persistence."
+        saved_path = save_at_scope(content, "DECISIONS.md", tmp_path)
+
+        assert saved_path.name == "DECISIONS.md"
+        assert saved_path.exists()
+        assert content in saved_path.read_text()
