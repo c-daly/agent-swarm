@@ -88,7 +88,7 @@ INTAKE is where orchestrator context gathering happens:
 
 **If you're in ORCHESTRATE and can't write good prompts:**
 ```bash
-python3 lib/iterate_workflow.py set-phase intake
+python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py set-phase intake
 ```
 
 Then complete intake properly before returning to orchestrate.
@@ -364,27 +364,27 @@ After `review` phase:
 
 ```bash
 # Start workflow
-python3 lib/iterate_workflow.py start "task description" [max_iterations]
+python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py start "task description" [max_iterations]
 
 # Check status
-python3 lib/iterate_workflow.py status
+python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py status
 
 # Get current phase
-python3 lib/iterate_workflow.py phase
+python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py phase
 
 # Advance to next phase
-python3 lib/iterate_workflow.py advance
+python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py advance
 
 # Record test results (after running pytest, lint, coverage)
-python3 lib/iterate_workflow.py test <tests> <lint> <coverage>
+python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py test <tests> <lint> <coverage>
 # Use 1=pass, 0=fail. Example: test 1 1 0 (tests pass, lint pass, coverage fail)
 
 # Record review status
-python3 lib/iterate_workflow.py review <clean>
+python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py review <clean>
 # Use 1=clean, 0=issues
 
 # Stop workflow
-python3 lib/iterate_workflow.py stop
+python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py stop
 ```
 
 ## Test Phase Verification
@@ -402,12 +402,12 @@ ruff check .
 pytest --cov=. --cov-report=term-missing
 
 # 4. Record results
-python3 lib/iterate_workflow.py test 1 1 1  # if all pass
-python3 lib/iterate_workflow.py test 1 0 1  # if lint failed
-python3 lib/iterate_workflow.py test 0 1 1  # if tests failed
+python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py test 1 1 1  # if all pass
+python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py test 1 0 1  # if lint failed
+python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py test 0 1 1  # if tests failed
 
 # 5. Advance phase (kick-back or proceed based on results)
-python3 lib/iterate_workflow.py advance
+python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py advance
 ```
 
 ## PR Completion Tracking
@@ -429,8 +429,8 @@ After each agent completes:
 1. Verify all PR tasks complete (see PR Completion Tracking)
 2. Push changes to trigger Greptile review (ONE push per PR)
 3. Check for review comments
-4. If issues found: `python3 lib/iterate_workflow.py review 0` then `advance`
-5. If clean: `python3 lib/iterate_workflow.py review 1` then `advance`
+4. If issues found: `python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py review 0` then `advance`
+5. If clean: `python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py review 1` then `advance`
 
 ## Orchestrator: Monitoring PRs
 
@@ -488,9 +488,9 @@ gh api repos/owner/repo/pulls/$PR_NUM/comments --jq '.[] | {path, line, body}'
 COMMENTS=$(gh api repos/owner/repo/pulls/$PR_NUM/comments | jq 'length')
 if [ "$COMMENTS" -gt 0 ]; then
     # Add to queue and spawn agents
-    python3 lib/iterate_workflow.py review 0
+    python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py review 0
 else
-    python3 lib/iterate_workflow.py review 1
+    python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py review 1
 fi
 ```
 
