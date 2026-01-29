@@ -1713,6 +1713,12 @@ class MCPRouter:
         """Retrieve stored content by ID. Returns error dict if not found."""
         if content_id in self._content_store:
             content = self._content_store.pop(content_id)  # Remove after retrieval (one-time use)
+            # Track content retrieval for callback rate analysis
+            if hasattr(self, '_duckdb_store') and self._duckdb_store:
+                try:
+                    self._duckdb_store.record_content_retrieval(content_id)
+                except Exception:
+                    pass  # Non-critical telemetry
             return {"content": content}
         return {"error": f"Content not found for ID: {content_id}"}
 
