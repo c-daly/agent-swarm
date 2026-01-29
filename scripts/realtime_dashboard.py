@@ -2623,9 +2623,19 @@ def serve_dashboard(port: int = 8765):
                             WHERE original_size IS NOT NULL
                         """).fetchone()
                         if summ_result and summ_result[0]:
+                            # Query actual full retrieval count from content_retrievals table
+                            full_req = 0
+                            try:
+                                full_req_result = store.conn.execute("""
+                                    SELECT COUNT(*) FROM content_retrievals WHERE was_retrieved = true
+                                """).fetchone()
+                                if full_req_result:
+                                    full_req = full_req_result[0] or 0
+                            except Exception:
+                                pass  # Table might not exist yet
                             summarization_stats = {
                                 "offered": summ_result[0] or 0,
-                                "full_requested": 0,  # Not tracked in current schema
+                                "full_requested": full_req,
                                 "tokens_saved": summ_result[1] or 0
                             }
                     except Exception:
@@ -2646,7 +2656,7 @@ def serve_dashboard(port: int = 8765):
                             if total_offered > 0:
                                 summarization_stats = {
                                     "offered": total_offered,
-                                    "full_requested": 0,  # v2 didn't track this
+                                    "full_requested": 0,  # v2 data lacks retrieval tracking
                                     "tokens_saved": total_tokens_saved
                                 }
                         except Exception:
