@@ -496,15 +496,18 @@ fi
 
 ## Git Workflow
 
-### Branch Creation
+### Branch Creation (Orchestrator Responsibility)
 
-The **first subagent** in a task group creates the feature branch:
+The **orchestrator** creates feature branches before spawning subagents. This happens during intake/setup, before entering orchestrate phase (where Bash is blocked):
 
-1. Check if feature branch exists: `git branch --list feature/<task-name>`
-2. If not, create and switch: `git checkout -b feature/<task-name>`
-3. Subsequent agents in the same group work on the existing branch
+1. Identify task groups and their branch names
+2. Create each branch: `git checkout -b feature/<task-name>`
+3. Return to the base branch (e.g., `main` or `master`)
+4. Include the branch name in every subagent prompt for that group
 
-**Orchestrator responsibility:** Include branch name in subagent prompts so agents know which branch to use.
+**Subagents MUST NOT create branches.** They verify they're on the correct branch and switch if needed, but never `checkout -b`.
+
+**Why orchestrator-owned:** Subagents may skip or hallucinate git operations. Branch creation is a critical operation that must be verified, so the orchestrator handles it directly during setup.
 
 ### PR Creation
 
