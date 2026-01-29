@@ -29,19 +29,14 @@ lib_dir = Path(__file__).parent
 if str(lib_dir) not in sys.path:
     sys.path.insert(0, str(lib_dir))
 
-# Import workflow server directly for state management (main agent)
-# Subagents use workflow_client which goes through router socket
-from workflow_server import WorkflowStateServer  # noqa: E402
+# Use workflow_client for state management - connects via socket to
+# the router's persistent WorkflowStateServer instance.
+# This ensures state persists across CLI invocations.
+import workflow_client  # noqa: E402
 
-# Singleton instance for direct state access
-_workflow_server: WorkflowStateServer | None = None
-
-def _get_server() -> WorkflowStateServer:
-    """Get or create the singleton WorkflowStateServer instance."""
-    global _workflow_server
-    if _workflow_server is None:
-        _workflow_server = WorkflowStateServer()
-    return _workflow_server
+def _get_server():
+    """Return workflow_client module (same API as WorkflowStateServer)."""
+    return workflow_client
 from workflow_base import (  # noqa: E402
     WorkflowPhase, WorkflowDefinition, WorkflowEngine,
     PhaseTransition, KickbackReason
