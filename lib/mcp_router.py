@@ -655,6 +655,8 @@ class MCPRouter:
 
         # Shadow cache for workflow state (survives backend respawns)
         self._workflow_state_cache: dict[str, dict] = {}
+        # Track Serena's active project to auto-activate when needed
+        self._serena_active_project: Optional[str] = None
         # Counter for generating unique content IDs
         self._content_id_counter = 0
         # Storage for content that can be retrieved by ID (for two-step content retrieval)
@@ -2009,6 +2011,28 @@ class MCPRouter:
 
     # === Routing ===
 
+    def _ensure_serena_project(self) -> None:
+        """Auto-activate Serena project based on workflow state.
+
+        Checks workflow state cache for project_root and activates
+        the correct Serena project if it differs from the current one.
+        """
+        target_root = None
+        for wf_state in self._workflow_state_cache.values():
+            if isinstance(wf_state, dict) and wf_state.get("project_root"):
+                target_root = wf_state["project_root"]
+                break
+
+        if not target_root or target_root == self._serena_active_project:
+            return
+
+        try:
+            _router_log("route", f"Auto-activating Serena project: {target_root}")
+            self.route("serena", "activate_project", {"project": target_root}, skip_summary=True)
+            self._serena_active_project = target_root
+        except Exception as e:
+            _router_log("route", f"Failed to auto-activate Serena project: {e}", "ERROR")
+
     def route(
         self, destination: str, tool_name: str, args: dict, skip_summary: bool = False
     ) -> RouterResponse:
@@ -2040,6 +2064,10 @@ class MCPRouter:
                 req_hook(destination, tool_name, args)
             except Exception:
                 pass  # Don't let hooks break routing
+
+        # Auto-activate Serena project if routing to serena
+        if destination == "serena" and tool_name != "activate_project":
+            self._ensure_serena_project()
 
         # Special handling for workflow: always proxy to authoritative primary
         # This ensures all workflow state goes through one workflow_server instance,
@@ -2561,7 +2589,7 @@ Summary:"""
 
         # Skip LLM for small responses (workflow state, simple results)
         if len(content) < 500:
-            return json.dumps({"preview": content[:200], "size": len(content)})
+            return json.dumps({"preview": content, "size": len(content)})
 
         # For bash with stderr, use fallback directly (LLM struggles with [stderr] marker)
         if tool_name == "bash" and "[stderr]" in content:

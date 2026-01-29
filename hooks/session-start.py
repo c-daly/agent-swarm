@@ -473,6 +473,13 @@ def reset_enforcement_counters(agent_id: str | None = None):
         # Restore flags preserved from compaction
         state.update(compaction_flags)
 
+        # Set project_root so router can auto-activate Serena for the correct project
+        if find_project_root is not None:
+            try:
+                state["project_root"] = str(find_project_root(Path.cwd()))
+            except Exception:
+                pass
+
         # If subagent, inherit phase from orchestrator and set per-agent state
         if agent_id:
             iterate_state = load_iterate_state()
