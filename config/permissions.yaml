@@ -2,37 +2,45 @@
 # Layers: global -> roles -> agents -> workflow/phase
 # More specific layers override less specific ones
 # Superblocked rules cannot be overridden
+#
+# All tools go through the router. Tool names here are router tool names
+# (without mcp__router__ prefix). Native Claude Code tools are blocked
+# by native-tool-blocking.py hook — they never reach the router.
 
 global:
-  # Default allowed tools for all callers
-  allowed: [serena__*, native__*, workflow__*, context7__*, playwright__*, router__*, Read, Glob, Grep, WebSearch, WebFetch, AskUserQuestion]
+  # Default allowed tools for all callers (router tool names)
+  allowed: [serena__*, native__read_file, native__glob, native__grep, native__bash, workflow__*, context7__*, router__*]
   # Default blocked tools (can be overridden by more specific layers)
-  blocked: [Bash, Edit, Write, NotebookEdit]
+  blocked: [native__write_file, native__edit_file, playwright__*]
   # Never overridable - always blocked
-  superblocked: [Bash(rm -rf*), Bash(sudo*), Bash(chmod 777*), Bash(curl*|*sh), Bash(wget*|*sh)]
+  superblocked: [native__bash(rm -rf*), native__bash(sudo*), native__bash(chmod 777*), native__bash(curl*|*sh), native__bash(wget*|*sh)]
 
 roles:
+  # All socket callers are subagents — block workflow state modification
+  subagent:
+    blocked: [workflow__workflow_start, workflow__workflow_stop, workflow__workflow_update, workflow__workflow_set_state, workflow__workflow_set_value]
+
   # Read-only access for research agents
   read_only:
-    allowed: [Read, Glob, Grep, WebSearch, WebFetch]
-    blocked: [Edit, Write, Task, Bash]
-  
+    allowed: [native__read_file, native__glob, native__grep, serena__read_file, serena__find_file, serena__search_for_pattern, serena__list_dir, serena__get_symbols_overview, serena__find_symbol]
+    blocked: [native__write_file, native__edit_file, native__bash]
+
   # Editor role for implementation
   editor:
-    allowed: [Edit, Write, NotebookEdit]
+    allowed: [native__write_file, native__edit_file, serena__replace_content, serena__replace_symbol_body, serena__create_text_file, serena__insert_after_symbol, serena__insert_before_symbol]
     blocked: []
-  
+
   # Shell access for testing
   shell_safe:
-    allowed: [Bash(pytest*), Bash(python -m pytest*), Bash(ruff*), Bash(black*), Bash(mypy*)]
+    allowed: [native__bash(pytest*), native__bash(python -m pytest*), native__bash(ruff*), native__bash(black*), native__bash(mypy*)]
     blocked: []
-  
+
   # Full shell access (dangerous)
   shell_full:
-    allowed: [Bash]
+    allowed: [native__bash]
     blocked: []
-  
-  # Workflow control
+
+  # Workflow control (orchestrator only)
   workflow_control:
     allowed: [workflow__*]
     blocked: []
@@ -40,90 +48,90 @@ roles:
 agents:
   # Explorer - research only
   explorer:
-    allowed: [Read, Glob, Grep, WebSearch, WebFetch, serena__*, mcp__plugin_serena_serena__*]
-    blocked: [Task, Edit, Write, Bash]
-  
-  # Implementer - can edit code
+    allowed: [native__read_file, native__glob, native__grep, serena__*, context7__*]
+    blocked: [native__write_file, native__edit_file, native__bash, workflow__workflow_start, workflow__workflow_stop, workflow__workflow_update, workflow__workflow_set_state, workflow__workflow_set_value]
+
+  # Implementer - can edit code, uses mcp-call via Bash
   implementer:
-    allowed: [Edit, Write, Read, Glob, Grep, Bash(pytest*), Bash(python*), Bash(ruff*)]
-    blocked: [Task, Bash(rm*), Bash(git push*)]
-  
-  # Orchestrator - delegates to subagents
+    allowed: [native__write_file, native__edit_file, native__read_file, native__glob, native__grep, native__bash(pytest*), native__bash(python*), native__bash(ruff*), native__bash(mcp-call*), serena__*]
+    blocked: [workflow__workflow_start, workflow__workflow_stop, workflow__workflow_update, workflow__workflow_set_state, workflow__workflow_set_value, native__bash(rm*), native__bash(git push*)]
+
+  # Orchestrator - delegates to subagents, no editing
   orchestrator:
-    allowed: [Task, Read, Glob, Grep, workflow__*]
-    blocked: [Edit, Write, Bash]
-  
+    allowed: [native__read_file, native__glob, native__grep, workflow__*]
+    blocked: [native__write_file, native__edit_file, native__bash]
+
   # Researcher - web and code research
   researcher:
-    allowed: [Read, Glob, Grep, WebSearch, WebFetch, serena__find_symbol, serena__search_for_pattern]
-    blocked: [Edit, Write, Task, Bash]
-  
+    allowed: [native__read_file, native__glob, native__grep, serena__find_symbol, serena__search_for_pattern, serena__read_file, serena__list_dir, context7__*]
+    blocked: [native__write_file, native__edit_file, native__bash]
+
   # Reviewer - read-only analysis
   reviewer:
-    allowed: [Read, Glob, Grep, serena__*]
-    blocked: [Edit, Write, Task, Bash]
-  
+    allowed: [native__read_file, native__glob, native__grep, serena__*]
+    blocked: [native__write_file, native__edit_file, native__bash]
+
   # Debugger - can read and run tests
   debugger:
-    allowed: [Read, Glob, Grep, Bash(pytest*), Bash(python*)]
-    blocked: [Edit, Write, Task]
-  
+    allowed: [native__read_file, native__glob, native__grep, native__bash(pytest*), native__bash(python*), serena__*]
+    blocked: [native__write_file, native__edit_file]
+
   # Architect - planning and design
   architect:
-    allowed: [Read, Glob, Grep, WebSearch, serena__*]
-    blocked: [Edit, Write, Bash]
+    allowed: [native__read_file, native__glob, native__grep, serena__*, context7__*]
+    blocked: [native__write_file, native__edit_file, native__bash]
 
 workflows:
   # Iterate workflow (TDD-style)
   iterate:
     orchestrate:
-      allowed: [Task, Read, Glob, Grep, workflow__*]
-      blocked: [Edit, Write, NotebookEdit, Bash]
-    
+      allowed: [native__read_file, native__glob, native__grep, workflow__*]
+      blocked: [native__write_file, native__edit_file, native__bash]
+
     test_writing:
-      allowed: [Edit, Write, Read, Glob, Grep, Bash(pytest*)]
+      allowed: [native__write_file, native__edit_file, native__read_file, native__glob, native__grep, native__bash(pytest*), serena__*]
       blocked: []
-    
+
     implement:
-      allowed: [Edit, Write, Read, Glob, Grep, Bash(pytest*), Bash(python*), Bash(ruff*)]
+      allowed: [native__write_file, native__edit_file, native__read_file, native__glob, native__grep, native__bash(pytest*), native__bash(python*), native__bash(ruff*), serena__*]
       blocked: []
-    
+
     test:
-      allowed: [Read, Bash(pytest*), Bash(python -m pytest*)]
-      blocked: [Edit, Write]
-    
+      allowed: [native__read_file, native__bash(pytest*), native__bash(python -m pytest*), native__bash(ruff*)]
+      blocked: [native__write_file, native__edit_file]
+
     coverage:
-      allowed: [Edit, Write, Read, Glob, Grep, Bash(pytest*), WebSearch]
+      allowed: [native__write_file, native__edit_file, native__read_file, native__glob, native__grep, native__bash(pytest*), serena__*]
       blocked: []
-    
+
     review:
-      allowed: [Read, Glob, Grep, WebSearch]
-      blocked: [Edit, Write, Bash]
-  
+      allowed: [native__read_file, native__glob, native__grep, native__bash(git*), native__bash(gh*), native__bash(mcp-call*)]
+      blocked: [native__write_file, native__edit_file]
+
   # Debug workflow
   debug:
     triage:
-      allowed: [Read, Glob, Grep, Bash(pytest*), serena__*]
-      blocked: [Edit, Write]
-    
+      allowed: [native__read_file, native__glob, native__grep, native__bash(pytest*), serena__*]
+      blocked: [native__write_file, native__edit_file]
+
     investigate:
-      allowed: [Read, Glob, Grep, Bash(pytest*), Bash(python*), serena__*]
-      blocked: [Edit, Write]
-    
+      allowed: [native__read_file, native__glob, native__grep, native__bash(pytest*), native__bash(python*), serena__*]
+      blocked: [native__write_file, native__edit_file]
+
     fix:
-      allowed: [Edit, Write, Read, Glob, Grep, Bash(pytest*)]
+      allowed: [native__write_file, native__edit_file, native__read_file, native__glob, native__grep, native__bash(pytest*), serena__*]
       blocked: []
-    
+
     verify:
-      allowed: [Read, Bash(pytest*)]
-      blocked: [Edit, Write]
-  
+      allowed: [native__read_file, native__bash(pytest*)]
+      blocked: [native__write_file, native__edit_file]
+
   # PR review workflow
   pr_review:
     analyze:
-      allowed: [Read, Glob, Grep, Bash(gh pr*), serena__*]
-      blocked: [Edit, Write, Bash]
-    
+      allowed: [native__read_file, native__glob, native__grep, native__bash(gh pr*), serena__*]
+      blocked: [native__write_file, native__edit_file, native__bash]
+
     comment:
-      allowed: [Read, Bash(gh pr comment*), Bash(gh pr review*)]
-      blocked: [Edit, Write]
+      allowed: [native__read_file, native__bash(gh pr comment*), native__bash(gh pr review*)]
+      blocked: [native__write_file, native__edit_file]

@@ -184,7 +184,7 @@ def build_test_writing_context(agent_id: str, task_desc: str, group: str, repo_p
 1. Read task requirements and existing code patterns
 2. Write test file(s) that will fail (red phase of TDD)
 3. Verify tests fail: `{cd_cmd}pytest <test_file> -x`
-4. When done, advance: `python3 lib/iterate_workflow.py advance`
+4. When done, advance: `python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py advance`
 
 **DO NOT skip to implementation. Tests MUST exist and FAIL before proceeding.**
 """
@@ -202,7 +202,7 @@ def build_implement_context(agent_id: str, task_desc: str, group: str, repo_path
 1. Check side-effects before changes with `mcp-call serena__find_referencing_symbols '{"name_path_pattern": "..."}'`
 2. Follow existing code patterns
 3. Run tests frequently: `{cd_cmd}pytest <test_file> -x`
-4. When tests pass, advance: `python3 lib/iterate_workflow.py advance`
+4. When tests pass, advance: `python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py advance`
 
 **Write only what's needed to make tests pass. No extra features.**
 """
@@ -220,8 +220,8 @@ def build_test_context(agent_id: str, task_desc: str, group: str, repo_path: str
 1. Run full test suite: `{cd_cmd}pytest`
 2. Run linter: `{cd_cmd}ruff check .`
 3. Check coverage: `{cd_cmd}pytest --cov`
-4. Record results: `python3 lib/iterate_workflow.py test 1 1 1` (args: tests lint coverage, 1=pass 0=fail)
-5. Advance: `python3 lib/iterate_workflow.py advance`
+4. Record results: `python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py test 1 1 1` (args: tests lint coverage, 1=pass 0=fail)
+5. Advance: `python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py advance`
 
 **Kickbacks:** Tests/lint fail → IMPLEMENT | Coverage low → TEST_WRITING
 """
@@ -245,7 +245,7 @@ def build_review_context(agent_id: str, task_desc: str, group: str, repo_path: s
 2. Create PR if first task: `{cd_cmd}gh pr create --title "{group}" --body "Implementation tasks" --draft`
 3. Commit: `{cd_cmd}git add -A && git commit -m "{task_desc}"`
 4. Gated push: `python3 scripts/iterate_state.py push --pr={group}{push_repo_arg}`
-5. Record and advance: `python3 lib/iterate_workflow.py review 1 && python3 lib/iterate_workflow.py advance`
+5. Record and advance: `python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py review 1 && python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py advance`
 """
 
 

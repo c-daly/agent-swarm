@@ -34,21 +34,6 @@
             "type": "command",
             "command": "cd /home/fearsidhe/.claude/plugins/agent-swarm && poetry run python3 hooks/telemetry-pretool.py",
             "timeout": 2
-          },
-          {
-            "type": "command",
-            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/base-enforcement.py",
-            "timeout": 3
-          },
-          {
-            "type": "command",
-            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/iterate-enforcement.py",
-            "timeout": 3
-          },
-          {
-            "type": "command",
-            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/workflow-state-enforcement.py",
-            "timeout": 3
           }
         ]
       },
@@ -69,16 +54,6 @@
             "type": "command",
             "command": "bash /home/fearsidhe/.claude/plugins/agent-swarm/hooks/inject-subagent-briefing.sh",
             "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/subagent-bash-lockdown.py",
-            "timeout": 3
           }
         ]
       }

@@ -1,25 +1,37 @@
 #!/usr/bin/env python3
-"""Block all native tools - route through MCP router instead.
+"""Block all tools except router-mediated access.
 
-All native tools are blocked. Use native__* versions through MCP router.
-Exception: Bash is allowed when command starts with 'mcp' (for mcp-call).
+Whitelist approach:
+1. mcp__router__* or mcp__plugin_* tools → allow (going through router)
+2. Bash with mcp-call/mcp prefix → allow (subagent access to router)
+3. Claude Code system/meta tools → allow (infrastructure, not file ops)
+4. Everything else → block
+
+Main agents use mcp__router__* directly.
+Subagents use Bash(mcp-call ...) which routes through the router.
+Both paths enforce permissions via the router's permissions.yaml.
 """
 import json
 import sys
 
-# Native tools that are blocked
-NATIVE_TOOLS = {
-    "Bash",
-    "Read",
-    "Write",
-    "Edit",
-    "Glob",
-    "Grep",
-    "NotebookEdit",
+
+MCP_CALL_PATH = "/home/fearsidhe/.claude/plugins/agent-swarm/bin/mcp-call"
+
+# Claude Code system/meta tools — infrastructure, not file/code operations.
+# These don't need router mediation because they don't touch files or run code.
+SYSTEM_TOOLS = {
+    "Task", "TaskOutput", "TaskStop",
+    "TaskCreate", "TaskGet", "TaskUpdate", "TaskList",
+    "TodoWrite",
+    "AskUserQuestion",
+    "Skill",
+    "KillShell",
+    "EnterPlanMode", "ExitPlanMode",
+    "ToolSearch",
 }
 
 
-def allow(reason: str = "") -> dict:
+def allow(reason: str = ""):
     result = {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
@@ -32,16 +44,9 @@ def allow(reason: str = "") -> dict:
 
 
 def block(reason: str):
-    """Block tool using JSON deny response."""
-    result = {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": reason
-        }
-    }
-    print(json.dumps(result))
-    sys.exit(0)
+    """Block tool via exit code 2 (reliable blocking)."""
+    print(reason, file=sys.stderr)
+    sys.exit(2)
 
 
 def main():
@@ -53,23 +58,51 @@ def main():
 
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input", {})
+    # Claude Code passes agentId for subagent tool calls
+    agent_id = input_data.get("agentId") or input_data.get("agent_id")
+    is_subagent = bool(agent_id)
 
-    # Not a native tool - allow
-    if tool_name not in NATIVE_TOOLS:
-        print(json.dumps(allow()))
+    # Subagents: ONLY Bash(mcp-call) allowed — no direct stdio router access
+    if is_subagent:
+        if tool_name == "Bash":
+            cmd = tool_input.get("command", "").strip()
+            if cmd.startswith("mcp") or cmd.startswith(MCP_CALL_PATH):
+                print(json.dumps(allow("Subagent mcp-call")))
+                return
+        # Allow system tools subagents need (TaskOutput for reporting, etc.)
+        if tool_name in SYSTEM_TOOLS:
+            print(json.dumps(allow("Subagent system tool")))
+            return
+        block(
+            f"[SUBAGENT BLOCKED] '{tool_name}' not allowed for subagents. "
+            f"Use mcp-call via Bash: mcp-call <tool> '<json_args>'"
+        )
         return
 
-    # Bash with mcp* prefix - allow (for mcp-call)
+    # Main agent rules below
+
+    # Rule 1: MCP router/plugin tools → allow (router enforces permissions)
+    if tool_name.startswith("mcp__router__") or tool_name.startswith("mcp__plugin_"):
+        print(json.dumps(allow("Router-mediated tool")))
+        return
+
+    # Rule 2: Bash with mcp prefix → allow (mcp-call access to router)
     if tool_name == "Bash":
         cmd = tool_input.get("command", "").strip()
-        mcp_call_path = "/home/fearsidhe/.claude/plugins/agent-swarm/bin/mcp-call"
-        if cmd.startswith("mcp") or cmd.startswith(mcp_call_path):
+        if cmd.startswith("mcp") or cmd.startswith(MCP_CALL_PATH):
             print(json.dumps(allow("mcp-call")))
             return
 
-    # Block all other native tools
-    msg = f"[BLOCKED] '{tool_name}' blocked. Use MCP router (mcp__router__native__*) or mcp-call via Bash."
-    block(msg)
+    # Rule 3: Claude Code system tools → allow (not file operations)
+    if tool_name in SYSTEM_TOOLS:
+        print(json.dumps(allow("System tool")))
+        return
+
+    # Rule 4: Everything else → block
+    block(
+        f"[BLOCKED] '{tool_name}' blocked. "
+        f"Use mcp__router__* tools (main agent) or mcp-call via Bash (subagent)."
+    )
 
 
 if __name__ == "__main__":

@@ -103,20 +103,15 @@ Subagents handle git operations in their REVIEW phase (after tests pass).
 
 ## Git Responsibilities
 
-### If First Task in Group
+### Branch Verification (NEVER Create Branches)
 
-The orchestrator's prompt will tell you if you're the first task. If so:
-
-1. Create feature branch: `mcp-call git checkout -b feature/<task-name>`
-2. Make your changes (tests, implementation)
-3. Stage files: `mcp-call git add <files>`
-
-### If Continuing Existing Branch
+The orchestrator has already created the feature branch for your task group. Your prompt includes the branch name.
 
 1. Verify you're on the correct branch: `mcp-call git branch --show-current`
-2. If not, switch: `mcp-call git checkout feature/<task-name>`
-3. Make your changes
-4. Stage files: `mcp-call git add <files>`
+2. If not on the right branch, switch: `mcp-call git checkout feature/<task-name>`
+3. **NEVER** run `git checkout -b` — branch creation is the orchestrator's job
+4. Make your changes (tests, implementation)
+5. Stage files: `mcp-call git add <files>`
 
 ### In REVIEW Phase (Subagent)
 

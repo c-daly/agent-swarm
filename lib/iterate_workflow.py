@@ -913,7 +913,7 @@ def _notify_workflow_end(reason: str, task: str = "") -> None:
 ║  Task: {task[:66]:<66} ║
 ║                                                                              ║
 ║  You are NO LONGER in /iterate mode. To continue:                            ║
-║    python3 lib/iterate_workflow.py start "<task>" [max_iterations]           ║
+║    python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py start "<task>" [max_iterations]           ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """
     print(banner, file=sys.stderr)

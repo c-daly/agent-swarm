@@ -766,20 +766,28 @@ class MCPRouter:
             return {"cleared": cleared, "all": True}
 
     def _check_permission(
-        self, tool_name: str, args: dict
+        self, tool_name: str, args: dict, source: str = ""
     ) -> tuple[bool, Optional[dict]]:
         """Check if a tool call is permitted.
         
-        Extracts agent context from args metadata fields:
+        Extracts agent context from args metadata fields, then infers
+        missing context from connection source and cached workflow state.
+        
+        Explicit metadata (from _* fields in args):
         - _agent_id: Agent identifier
         - _agent_type: Agent type (e.g., "implementer", "explorer")
         - _roles: List of roles assigned to the agent
         - _workflow: Current workflow (e.g., "iterate", "debug")
         - _phase: Current phase within workflow (e.g., "orchestrate", "implement")
         
+        Inferred context (when metadata not provided):
+        - source="socket" → adds "subagent" role (blocks workflow state tools)
+        - workflow/phase inferred from _workflow_state_cache
+        
         Args:
             tool_name: Full tool name being called
             args: Tool arguments (may contain _* metadata fields)
+            source: Connection source - "stdio" (main agent) or "socket" (subagent)
         
         Returns:
             (allowed: bool, blocked_response: dict or None)
@@ -790,9 +798,21 @@ class MCPRouter:
         # Extract and remove metadata from args (not tool input)
         agent_id = args.pop("_agent_id", "")
         agent_type = args.pop("_agent_type", "")
-        roles = args.pop("_roles", [])
+        roles = list(args.pop("_roles", []))
         workflow = args.pop("_workflow", "")
         phase = args.pop("_phase", "")
+        
+        # Infer workflow/phase from cached state when not explicitly provided
+        if not workflow or not phase:
+            for wf_id, wf_state in self._workflow_state_cache.items():
+                if isinstance(wf_state, dict) and wf_state.get("phase"):
+                    workflow = workflow or wf_id
+                    phase = phase or wf_state.get("phase", "")
+                    break
+        
+        # Infer roles from connection source
+        if source == "socket" and "subagent" not in roles:
+            roles.append("subagent")
         
         # Check permission
         allowed, response = self.permissions.check(
@@ -1398,7 +1418,7 @@ class MCPRouter:
 
                 # Check permissions before processing (skip for router built-in tools)
                 if not tool_name.startswith("router__"):
-                    allowed, blocked_response = self._check_permission(tool_name, args)
+                    allowed, blocked_response = self._check_permission(tool_name, args, source="socket")
                     if not allowed:
                         _router_log(
                             "socket",
@@ -2877,7 +2897,7 @@ def start_stdio_server(router: MCPRouter):
 
                 # Check permissions before processing (skip for router built-in tools)
                 if not tool_name.startswith("router__"):
-                    allowed, blocked_response = router._check_permission(tool_name, args)
+                    allowed, blocked_response = router._check_permission(tool_name, args, source="stdio")
                     if not allowed:
                         _router_log(
                             "stdio",
