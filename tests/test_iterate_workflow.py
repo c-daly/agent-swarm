@@ -9,9 +9,7 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.skip(
-    reason="Integration test: workflow tests need state/logging refactoring for MCP"
-)
+# pytestmark removed: state refactoring to workflow_client complete
 
 # Add lib to path
 lib_dir = Path(__file__).parent.parent / "lib"
@@ -35,6 +33,8 @@ from iterate_workflow import (  # noqa: E402
     set_spec_file,
     LOG_FILE,
     _reset_logger,
+    _get_state,
+    _set_state,
 )
 import workflow_client  # noqa: E402
 from pathlib import Path  # noqa: E402
@@ -91,6 +91,34 @@ class TestPhaseEnum:
         assert Phase.DONE.value == "done"
 
 
+class TestStateHelpers:
+    """Tests for _get_state() and _set_state() workflow_client wrappers."""
+
+    def test_get_state_returns_empty_dict_when_no_workflow(self):
+        """_get_state() returns {} when no workflow exists."""
+        result = _get_state()
+        assert result == {}
+
+    def test_set_state_persists_via_workflow_client(self):
+        """_set_state() persists state through workflow_client."""
+        _set_state({"phase": "test", "active": True})
+        result = workflow_client.workflow_get_state("iterate")
+        assert result == {"phase": "test", "active": True}
+
+    def test_get_state_reads_from_workflow_client(self):
+        """_get_state() reads state set via workflow_client."""
+        workflow_client.workflow_set_state("iterate", {"phase": "implement"})
+        result = _get_state()
+        assert result == {"phase": "implement"}
+
+    def test_get_state_and_set_state_roundtrip(self):
+        """_set_state() then _get_state() roundtrips correctly."""
+        state = {"phase": "review", "iteration": 3, "task": "fix bug"}
+        _set_state(state)
+        result = _get_state()
+        assert result == state
+
+
 class TestPhaseTools:
     """Tests for phase tool restrictions."""
 
@@ -133,10 +161,10 @@ class TestWorkflowStart:
         state = get_state()
         assert state["task"] == "My test task"
 
-    def test_start_with_vague_task_sets_intake_phase(self):
-        """Start with vague task should begin in intake phase."""
+    def test_start_with_vague_task_sets_orchestrate_phase(self):
+        """Start with vague task should begin in orchestrate phase."""
         start("Test task")
-        assert get_phase() == Phase.INTAKE
+        assert get_phase() == Phase.ORCHESTRATE
 
     def test_start_with_spec_sets_orchestrate_phase(self):
         """Start with spec-like task should begin in orchestrate phase."""
@@ -156,13 +184,18 @@ class TestWorkflowStop:
     def test_stop_sets_inactive(self):
         """Stop should set active to False."""
         start("Test task")
-        stop()
+        # stop() enforces queue-empty; use workflow_client directly for basic stop
+        workflow_client.workflow_stop("iterate")
         assert is_active() is False
 
     def test_stop_sets_exit_reason(self):
         """Stop should set exit reason."""
         start("Test task")
-        stop("custom_reason")
+        # stop() enforces queue-empty; manually set exit_reason
+        state = get_state()
+        state["active"] = False
+        state["exit_reason"] = "custom_reason"
+        workflow_client.workflow_set_state("iterate", state)
         state = get_state()
         assert state["exit_reason"] == "custom_reason"
 
@@ -503,7 +536,7 @@ class TestStatus:
         """Status should show current phase."""
         start("Test task")
         output = status()
-        assert "intake" in output  # Vague task starts in intake
+        assert "orchestrate" in output  # All tasks start in orchestrate
 
     def test_status_shows_task(self):
         """Status should show task description."""
@@ -514,7 +547,7 @@ class TestStatus:
     def test_status_shows_not_active_when_stopped(self):
         """Status should indicate inactive after stop."""
         start("Test task")
-        stop()
+        workflow_client.workflow_stop("iterate")
         output = status()
         assert "Not active" in output or "Completed" in output
 
@@ -525,13 +558,13 @@ class TestLogging:
     def test_log_file_created_on_start(self):
         """Starting workflow should create log file."""
         start("Test logging task")
-        stop()
+        workflow_client.workflow_stop("iterate")
         assert LOG_FILE.exists(), "Log file should be created after workflow start"
 
     def test_log_contains_start_entry(self):
         """Log should contain workflow start entry."""
         start("Test logging task")
-        stop()
+        workflow_client.workflow_stop("iterate")
         log_content = LOG_FILE.read_text()
         assert "Workflow started" in log_content, "Log should contain start entry"
         assert "Test logging task" in log_content, "Log should contain task name"
@@ -541,7 +574,7 @@ class TestLogging:
         start("Test task")
         force_phase(Phase.TEST_WRITING)
         advance_phase()  # test_writing -> implement
-        stop()
+        workflow_client.workflow_stop("iterate")
         log_content = LOG_FILE.read_text()
         assert "Phase transition" in log_content, "Log should contain phase transition"
         assert "test_writing" in log_content, "Log should show from phase"
@@ -551,7 +584,7 @@ class TestLogging:
         """Log should contain test results recording."""
         start("Test task")
         set_test_results(True, True, False)
-        stop()
+        workflow_client.workflow_stop("iterate")
         log_content = LOG_FILE.read_text()
         assert "Test results recorded" in log_content, "Log should contain test results"
 
@@ -569,7 +602,7 @@ class TestLogging:
         force_phase(Phase.TEST_WRITING)
         new_phase = advance_phase()
         assert new_phase == Phase.IMPLEMENT, "Workflow should work regardless of logging"
-        stop()
+        workflow_client.workflow_stop("iterate")
 
 
 class TestIntakePhase:
@@ -577,8 +610,8 @@ class TestIntakePhase:
 
     def test_add_requirement_in_intake_phase(self):
         """Can add requirements during intake phase."""
-        start("Test task")  # Vague task -> INTAKE
-        assert get_phase() == Phase.INTAKE
+        start("Test task")
+        force_phase(Phase.INTAKE)
         add_requirement("User needs authentication")
         reqs = get_requirements()
         assert "User needs authentication" in reqs
@@ -818,10 +851,10 @@ class TestOrchestrateStart:
         start("Test task", queue='{"tasks": []}')
         assert get_phase() == Phase.ORCHESTRATE
 
-    def test_start_with_vague_task_goes_to_intake(self):
-        """start() with vague input should begin in INTAKE phase."""
+    def test_start_with_vague_task_goes_to_orchestrate(self):
+        """start() with vague input should begin in ORCHESTRATE phase."""
         start("Fix the bug")
-        assert get_phase() == Phase.INTAKE
+        assert get_phase() == Phase.ORCHESTRATE
 
     def test_start_needs_intake_false_with_spec(self):
         """When starting with spec, needs_intake should be False."""

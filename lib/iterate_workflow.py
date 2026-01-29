@@ -29,14 +29,19 @@ lib_dir = Path(__file__).parent
 if str(lib_dir) not in sys.path:
     sys.path.insert(0, str(lib_dir))
 
-# Use workflow_client for state management - connects via socket to
-# the router's persistent WorkflowStateServer instance.
-# This ensures state persists across CLI invocations.
+# CLI script: uses workflow_client (socket-based) for persistent state
+# via the MCP router, same as subagents and hooks
 import workflow_client  # noqa: E402
 
-def _get_server():
-    """Return workflow_client module (same API as WorkflowStateServer)."""
-    return workflow_client
+
+def _get_state() -> dict:
+    """Get current iterate workflow state from router."""
+    return workflow_client.workflow_get_state("iterate") or {}
+
+
+def _set_state(state: dict) -> None:
+    """Persist iterate workflow state to router."""
+    workflow_client.workflow_set_state("iterate", state)
 from workflow_base import (  # noqa: E402
     WorkflowPhase, WorkflowDefinition, WorkflowEngine,
     PhaseTransition, KickbackReason
@@ -523,6 +528,7 @@ def start(
     state = {
         "active": True,
         "task": task,
+        "project_root": os.getcwd(),
         "phase": starting_phase,
         "needs_intake": needs_intake,
         "iteration": 0,
@@ -540,7 +546,7 @@ def start(
         "review_status": None,
         "pr_number": None,
     }
-    _get_server().workflow_set_state("iterate", state)
+    _set_state(state)
     _log("info", "Workflow started", task=task[:50], phase=Phase.ORCHESTRATE.value,
          agent_id=effective_agent_id)
     print_status_banner()
@@ -567,7 +573,7 @@ def _decompose_spec_content(content: str) -> None:
 
 def get_phase() -> Optional[Phase]:
     """Get current phase, or None if not active."""
-    state = _get_server().workflow_get_state("iterate") or {}
+    state = _get_state()
     if not state.get("active"):
         return None
     phase_str = state.get("phase")
@@ -581,7 +587,7 @@ def get_phase() -> Optional[Phase]:
 
 def is_active() -> bool:
     """Check if iterate workflow is active."""
-    state = _get_server().workflow_get_state("iterate") or {}
+    state = _get_state()
     return state.get("active", False)
 
 
@@ -596,7 +602,7 @@ def verify_active(expected_phase: Optional[Phase] = None) -> None:
     Raises:
         RuntimeError: If workflow is not active or not in expected phase.
     """
-    state = _get_server().workflow_get_state("iterate") or {}
+    state = _get_state()
     if not state:
         raise RuntimeError(
             "[WORKFLOW TERMINATED] No state found. "
@@ -631,7 +637,7 @@ def set_phase(phase: Phase) -> None:
     - From REVIEW: DONE or IMPLEMENT allowed
     - From INTAKE/DESIGN: flexible (discovery phases)
     """
-    state = _get_server().workflow_get_state("iterate") or {}
+    state = _get_state()
     current_phase = state.get("phase")
 
     # Define valid transitions for TDD loop phases
@@ -639,6 +645,7 @@ def set_phase(phase: Phase) -> None:
     # Discovery phases (INTAKE, DESIGN) are flexible
     valid_transitions = {
         # TDD loop has strict transitions
+        Phase.ORCHESTRATE.value: {Phase.INTAKE, Phase.DONE},
         Phase.IMPLEMENT.value: {Phase.TEST},
         Phase.TEST.value: {Phase.REVIEW, Phase.IMPLEMENT, Phase.TEST_WRITING},
         Phase.TEST_WRITING.value: {Phase.IMPLEMENT},
@@ -658,7 +665,7 @@ def set_phase(phase: Phase) -> None:
             )
 
     state["phase"] = phase.value
-    _get_server().workflow_set_state("iterate", state)
+    _set_state(state)
     _print_phase_transition(current_phase or "none", phase.value)
 
 
@@ -678,7 +685,7 @@ def advance_phase() -> Optional[Phase]:
 
     Returns new phase or None if workflow ended.
     """
-    state = _get_server().workflow_get_state("iterate") or {}
+    state = _get_state()
     if not state.get("active"):
         exit_reason = state.get("exit_reason", "unknown")
         raise RuntimeError(
@@ -743,7 +750,7 @@ def advance_phase() -> Optional[Phase]:
             # Everything passes, move to review
             state["phase"] = Phase.REVIEW.value
             # Save state first, then auto-fetch PR comments
-            _get_server().workflow_set_state("iterate", state)
+            _set_state(state)
             pr = state.get("pr_number")
             if pr:
                 _log("info", "Auto-fetching PR review comments", pr=pr)
@@ -791,7 +798,7 @@ def advance_phase() -> Optional[Phase]:
         # Reset review status for next round
         state["review_status"] = None
 
-    _get_server().workflow_set_state("iterate", state)
+    _set_state(state)
     
     # Determine kickback reason for OUTPUT.5
     new_phase = state["phase"]
@@ -840,11 +847,11 @@ def set_test_results(tests_passed: bool, lint_passed: bool, coverage_ok: bool) -
         _log("warning", "LINT FAILED: Agents must run and pass lint (ruff check .) before reporting success",
              tests=tests_passed, lint=lint_passed, coverage=coverage_ok)
 
-    state = _get_server().workflow_get_state("iterate") or {}
+    state = _get_state()
     state["tests_passed"] = tests_passed
     state["lint_passed"] = lint_passed
     state["coverage_ok"] = coverage_ok
-    _get_server().workflow_set_state("iterate", state)
+    _set_state(state)
     _log("info", "Test results recorded", tests=tests_passed, lint=lint_passed, coverage=coverage_ok)
 
 
@@ -856,9 +863,9 @@ def set_review_status(clean: bool) -> None:
     """
     if not is_active():
         raise RuntimeError("No active workflow - cannot record review status")
-    state = _get_server().workflow_get_state("iterate") or {}
+    state = _get_state()
     state["review_status"] = "clean" if clean else "issues"
-    _get_server().workflow_set_state("iterate", state)
+    _set_state(state)
     _log("info", "Review status recorded", clean=clean)
 
 
@@ -897,7 +904,6 @@ def _cleanup_stale_outputs() -> None:
 
 def _notify_workflow_end(reason: str, task: str = "") -> None:
     """Output loud notification when workflow ends - impossible to miss."""
-    import sys
 
     # Clean up stale agent outputs
     _cleanup_stale_outputs()
@@ -908,10 +914,10 @@ def _notify_workflow_end(reason: str, task: str = "") -> None:
 ║  Task: {task[:66]:<66} ║
 ║                                                                              ║
 ║  You are NO LONGER in /iterate mode. To continue:                            ║
-║    python3 lib/iterate_workflow.py start "<task>" [max_iterations]           ║
+║    python3 ~/.claude/plugins/agent-swarm/lib/iterate_workflow.py start "<task>" [max_iterations]           ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """
-    print(banner, file=sys.stderr)
+    print(banner)
 
 
 def _print_phase_transition(from_phase: str, to_phase: str, reason: str = "") -> None:
@@ -922,7 +928,6 @@ def _print_phase_transition(from_phase: str, to_phase: str, reason: str = "") ->
     - Kickback reason when phase reverts
     - Queue status for context
     """
-    import sys
     
     # Determine if this is a kickback (revert to earlier phase)
     phase_order = ["intake", "design", "orchestrate", "test_writing", "implement", "test", "review", "done"]
@@ -951,7 +956,7 @@ def _print_phase_transition(from_phase: str, to_phase: str, reason: str = "") ->
     
     lines.append("└" + "─" * 70 + "┘")
     
-    print("\n".join(lines), file=sys.stderr)
+    print("\n".join(lines))
 
 
 def _print_phase_summary(phase: str, state: dict) -> None:
@@ -959,7 +964,6 @@ def _print_phase_summary(phase: str, state: dict) -> None:
     
     Called before transitioning to show phase completion status.
     """
-    import sys
     
     summaries = {
         "test_writing": "Tests written and ready for implementation",
@@ -974,7 +978,7 @@ def _print_phase_summary(phase: str, state: dict) -> None:
     if callable(summary):
         summary = summary()
     
-    print(f"[{phase.upper()}] ✓ {summary}", file=sys.stderr)
+    print(f"[{phase.upper()}] ✓ {summary}")
 
 
 def _get_test_phase_summary(state: dict) -> str:
@@ -1007,7 +1011,7 @@ def stop(reason: str = "user_stopped") -> None:
     Raises:
         RuntimeError: If exit conditions not met.
     """
-    state = _get_server().workflow_get_state("iterate") or {}
+    state = _get_state()
     task = state.get("task", "unknown")
 
     # Check exit conditions
@@ -1042,7 +1046,7 @@ def stop(reason: str = "user_stopped") -> None:
 
     state["active"] = False
     state["exit_reason"] = reason
-    _get_server().workflow_set_state("iterate", state)
+    _set_state(state)
     _log("info", "Workflow stopped", reason=reason)
     _notify_workflow_end(reason, task)
 
@@ -1121,7 +1125,7 @@ def print_status_banner(force: bool = True) -> None:
 
     Shows current phase, iteration progress, task, and queue status.
     """
-    state = _get_server().workflow_get_state("iterate") or {}
+    state = _get_state()
 
     if not state.get("active") and not force:
         return
@@ -1159,7 +1163,7 @@ def print_status_banner(force: bool = True) -> None:
 
 def status() -> str:
     """Get human-readable status."""
-    state = _get_server().workflow_get_state("iterate") or {}
+    state = _get_state()
     if not state.get("active"):
         if state.get("exit_reason"):
             return f"[ITERATE] Completed: {state['exit_reason']}"
@@ -1210,11 +1214,11 @@ def add_requirement(requirement: str) -> None:
     if phase != Phase.INTAKE:
         raise ValueError("add_requirement only allowed in intake phase")
 
-    state = _get_server().workflow_get_state("iterate") or {}
+    state = _get_state()
     if "requirements" not in state:
         state["requirements"] = []
     state["requirements"].append(requirement)
-    _get_server().workflow_set_state("iterate", state)
+    _set_state(state)
     _log("info", "Requirement added", requirement=requirement[:50])
 
 
@@ -1224,7 +1228,7 @@ def get_requirements() -> list[str]:
     Returns:
         List of requirement strings.
     """
-    state = _get_server().workflow_get_state("iterate") or {}
+    state = _get_state()
     return state.get("requirements", [])
 
 
@@ -1239,9 +1243,9 @@ def set_spec_file(path: str) -> None:
     Args:
         path: Absolute or relative path to the spec markdown file.
     """
-    state = _get_server().workflow_get_state("iterate") or {}
+    state = _get_state()
     state["spec_file"] = path
-    _get_server().workflow_set_state("iterate", state)
+    _set_state(state)
     _log("info", "Spec file set", path=path)
 
 
@@ -1260,7 +1264,7 @@ def decompose_spec_to_queue() -> list[dict]:
     if phase != Phase.DESIGN:
         raise ValueError("decompose_spec_to_queue only allowed in design phase")
 
-    state = _get_server().workflow_get_state("iterate") or {}
+    state = _get_state()
     spec_file = state.get("spec_file")
     if not spec_file:
         raise ValueError("No spec file set. Call set_spec_file() first.")
@@ -1278,7 +1282,7 @@ def decompose_spec_to_queue() -> list[dict]:
 
     # Store task count in state
     state["decomposed_task_count"] = len(tasks)
-    _get_server().workflow_set_state("iterate", state)
+    _set_state(state)
 
     _log("info", "Spec decomposed", task_count=len(tasks), spec_file=spec_file)
     return tasks
@@ -1292,7 +1296,7 @@ def decompose_spec_to_queue() -> list[dict]:
 def _get_workflow_queue():
     """Get or create WorkflowQueue instance."""
     from workflow_queue import WorkflowQueue
-    state = _get_server().workflow_get_state("iterate") or {}
+    state = _get_state()
     pr_id = state.get("pr_id", "current")
     return WorkflowQueue(pr_id=pr_id)
 
@@ -1369,9 +1373,9 @@ def set_pr_number(pr_number: int) -> None:
     if not is_active():
         raise RuntimeError("Cannot set PR number: no active workflow")
 
-    state = _get_server().workflow_get_state("iterate") or {}
+    state = _get_state()
     state["pr_number"] = pr_number
-    _get_server().workflow_set_state("iterate", state)
+    _set_state(state)
     _log("info", "PR number set", pr_number=pr_number)
 
 
@@ -1381,7 +1385,7 @@ def get_pr_number() -> Optional[int]:
     Returns:
         The PR number if set, None otherwise.
     """
-    state = _get_server().workflow_get_state("iterate") or {}
+    state = _get_state()
     return state.get("pr_number")
 
 
@@ -1604,7 +1608,7 @@ if __name__ == "__main__":
         if new_phase:
             print(f"Advanced to: {new_phase.value}")
         else:
-            state = _get_server().workflow_get_state("iterate") or {}
+            state = _get_state()
             print(f"Workflow ended: {state.get('exit_reason', 'done')}")
     elif cmd == "test":
         if len(sys.argv) < 5:

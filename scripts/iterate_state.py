@@ -440,13 +440,8 @@ def load_queue() -> "TaskQueue":
 
     queue = TaskQueue()
 
-    # Try workflow_client first (primary source)
+    # Load from workflow_client (single source of truth)
     queue_data = workflow_client.workflow_get_state("queue")
-    
-    # Fall back to session.json for backwards compatibility
-    if not queue_data:
-        state = load_state()
-        queue_data = state.get("queue")
     
     if not queue_data:
         return queue
