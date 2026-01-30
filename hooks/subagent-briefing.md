@@ -1,4 +1,4 @@
-# Subagent Protocol
+# SUBAGENT OPERATING PROTOCOL
 
 ## Tools
 | Op | Tool |
