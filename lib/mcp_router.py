@@ -1544,6 +1544,18 @@ class MCPRouter:
                             "content": [{"type": "text", "text": "Permissions not enabled"}],
                             "isError": True,
                         }
+                elif tool_name == "router__get_full":
+                    content_id = args.get("correlation_id", "")
+                    if not content_id:
+                        result = {
+                            "content": [{"type": "text", "text": "Error: correlation_id required"}],
+                            "isError": True,
+                        }
+                    else:
+                        full = self.get_full_content(content_id)
+                        result = {
+                            "content": [{"type": "text", "text": json.dumps(full, indent=2, default=str)}]
+                        }
                 elif "__" in tool_name:
                     prefix, actual_tool = tool_name.split("__", 1)
                     # Find backend by prefix
@@ -1991,6 +2003,20 @@ class MCPRouter:
                 "name": "router__reload_permissions",
                 "description": "Reload permissions config from disk.",
                 "inputSchema": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "router__get_full",
+                "description": "Retrieve full content by correlation_id (two-step content retrieval).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "correlation_id": {
+                            "type": "string",
+                            "description": "The correlation_id from a summarized response envelope",
+                        },
+                    },
+                    "required": ["correlation_id"],
+                },
             },
         ]
 
@@ -2867,6 +2893,20 @@ def start_stdio_server(router: MCPRouter):
                     },
                 },
             },
+            {
+                "name": "router__get_full",
+                "description": "Retrieve full content by correlation_id (two-step content retrieval).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "correlation_id": {
+                            "type": "string",
+                            "description": "The correlation_id from a summarized response envelope",
+                        },
+                    },
+                    "required": ["correlation_id"],
+                },
+            },
         ]
         for server in router.list_servers():
             name = server["name"]
@@ -3053,6 +3093,19 @@ def start_stdio_server(router: MCPRouter):
                         result = {
                             "content": [{"type": "text", "text": "Permissions not enabled"}],
                             "isError": True,
+                        }
+
+                elif tool_name == "router__get_full":
+                    content_id = args.get("correlation_id", "")
+                    if not content_id:
+                        result = {
+                            "content": [{"type": "text", "text": "Error: correlation_id required"}],
+                            "isError": True,
+                        }
+                    else:
+                        full = router.get_full_content(content_id)
+                        result = {
+                            "content": [{"type": "text", "text": json.dumps(full, indent=2, default=str)}]
                         }
 
                 # Parse prefix__toolname for backend routing
