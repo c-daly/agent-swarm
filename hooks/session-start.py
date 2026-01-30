@@ -818,6 +818,23 @@ def main():
     # Reset enforcement counters - pass agent_id to inherit phase if subagent
     reset_enforcement_counters(agent_id)
 
+    # Auto-start implementer workflow for main agent if no workflow active
+    # Retry once after a short delay — the router socket may not be ready yet
+    if not agent_id:
+        for attempt in range(2):
+            try:
+                from permission_query import get_active_workflow_id
+                active_wf = get_active_workflow_id()
+                if active_wf is None:
+                    from implementer_workflow import ImplementerWorkflow
+                    wf = ImplementerWorkflow()
+                    wf.start("Default session workflow")
+                break  # Success (either started or already active)
+            except Exception:
+                if attempt == 0:
+                    time.sleep(0.5)
+                # Second attempt failed — don't block session start
+
     # Clean up stale output files (only for main agent, not subagents)
     cleanup_message = None
     if not agent_id:
