@@ -110,18 +110,27 @@ IMPLEMENTER_PROMPTS = {
 **Context from Exploration:**
 {explorer_output}
 
+**Files you may modify:** {file_list}
+Do NOT modify files outside this list.
+
 **Requirements:**
 {requirements}
 
-**Files to Modify:**
-{suggested_files}
+**Acceptance Criteria:**
+{acceptance_criteria}
 
-Follow the patterns shown above. Verify side effects before changes.""",
+Follow patterns from exploration. Verify side effects before changes.""",
 
     "without_exploration": """Implement: {task_description}
 
+**Files you may modify:** {file_list}
+Do NOT modify files outside this list.
+
 **Requirements:**
 {requirements}
+
+**Acceptance Criteria:**
+{acceptance_criteria}
 
 Explore the codebase first to understand existing patterns. Verify side effects before changes."""
 }

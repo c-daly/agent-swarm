@@ -265,6 +265,12 @@ Push happens when:
 
 **Do NOT push after each task.** Wait for the batch.
 
+### File Exclusivity
+
+When decomposing into parallel tasks, verify no two tasks modify the same file.
+If overlap detected: use `depends_on` to serialize, or merge into one task.
+Each file is owned by AT MOST one concurrent agent.
+
 ### Dynamic Queue Updates
 
 The queue can grow during execution:
@@ -309,6 +315,14 @@ When spawning implementer agents, your prompt must include:
 2. **Constraints** - What NOT to do and why (prevent logical-but-wrong fixes)
 3. **Design intent** - The "why" behind existing code/restrictions
 4. **TDD instruction** - Agents must write tests FIRST, then implement
+5. **File scope** - Explicit list of files this agent may modify (exclusive ownership)
+6. **Acceptance criteria** - Machine-checkable conditions (grep markers, size ranges, test exit codes)
+
+<constraint>
+NEVER embed literal file content in prompts. Give intent + acceptance criteria.
+The agent reads current state, understands the pattern, and writes.
+NEVER assign the same file to multiple concurrent agents.
+</constraint>
 
 **IMPORTANT:** Every implementer prompt MUST include:
 ```
