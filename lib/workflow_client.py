@@ -104,13 +104,15 @@ def _call_tool(tool_name: str, arguments: dict) -> Any:
             _log(tool_name, "Connected successfully")
 
             # Send JSON-RPC request
+            # Pass _caller so the router knows this is a main-agent script,
+            # not a subagent (subagents use mcp-call binary, not this client).
             request = {
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "tools/call",
                 "params": {
                     "name": f"workflow__{tool_name}",
-                    "arguments": arguments
+                    "arguments": {**arguments, "_caller": "main_agent"}
                 }
             }
 

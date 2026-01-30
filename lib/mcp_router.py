@@ -813,7 +813,10 @@ class MCPRouter:
                     break
         
         # Infer roles from connection source
-        if source == "socket" and "subagent" not in roles:
+        # _caller="main_agent" opts out: workflow_client.py (used only by main-agent
+        # scripts/hooks) passes this to avoid being misclassified as a subagent.
+        caller = args.pop("_caller", "")
+        if source == "socket" and "subagent" not in roles and caller != "main_agent":
             roles.append("subagent")
         
         # Check permission
