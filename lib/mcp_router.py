@@ -1268,14 +1268,19 @@ class MCPRouter:
 
             # Route locally
             response = self.route(destination, actual_tool, args)
+            content_id = self.store_content(response.full)
+            envelope = format_response_envelope(response.summary, content_id)
+            if content_id and hasattr(self, '_duckdb_store') and self._duckdb_store:
+                try:
+                    self._duckdb_store.record_content_creation(content_id)
+                except Exception:
+                    pass  # Non-critical telemetry
             return {
                 "result": {
                     "content": [
                         {
                             "type": "text",
-                            "text": json.dumps(
-                                {"summary": response.summary, "full": response.full}
-                            ),
+                            "text": json.dumps(envelope),
                         }
                     ]
                 }
@@ -1588,19 +1593,15 @@ class MCPRouter:
                                 full_content = backend_result["result"]
                             else:
                                 full_content = backend_result
-                            # Return envelope with summary, full content, and guidance
-                            envelope = {
-                                "summary": route_response.summary,
-                                "full": full_content,
-                                "content_id": route_response.correlation_id,
-                                "guidance": "Use this summary to proceed. If you need specific details, make a targeted follow-up query rather than requesting full content. Full retrieval via router__poll(correlation_id) should be a last resort.",
-                            }
+                            # Store full content for two-step retrieval
+                            content_id = self.store_content(full_content)
+                            envelope = format_response_envelope(route_response.summary, content_id)
                             result = envelope
 
                             # Track content creation for callback rate analysis
-                            if route_response.correlation_id and hasattr(self, '_duckdb_store') and self._duckdb_store:
+                            if content_id and hasattr(self, '_duckdb_store') and self._duckdb_store:
                                 try:
-                                    self._duckdb_store.record_content_creation(route_response.correlation_id)
+                                    self._duckdb_store.record_content_creation(content_id)
                                 except Exception:
                                     pass  # Non-critical telemetry
                             result_size = len(json.dumps(result)) if result else 0
@@ -3102,9 +3103,17 @@ def start_stdio_server(router: MCPRouter):
                             else:
                                 full_content = backend_result
 
-                            # Return structured envelope with summary and full
-                            envelope = {"summary": response.summary, "full": full_content}
+                            # Store full content for two-step retrieval
+                            content_id = router.store_content(full_content)
+                            envelope = format_response_envelope(response.summary, content_id)
                             result = {"content": [{"type": "text", "text": json.dumps(envelope)}]}
+
+                            # Track content creation for callback rate analysis
+                            if content_id and hasattr(router, '_duckdb_store') and router._duckdb_store:
+                                try:
+                                    router._duckdb_store.record_content_creation(content_id)
+                                except Exception:
+                                    pass  # Non-critical telemetry
                 else:
                     result = {
                         "content": [
