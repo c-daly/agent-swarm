@@ -1,6 +1,6 @@
-# Agent Core Protocol
+# Agent Core Protocol — Reference
 
-Universal rules for all agent-swarm agents. Read this first.
+Supplementary reference for agent-swarm agents. Primary rules are in `hooks/subagent-briefing.md` and each agent's `.md` file.
 
 ## Tool Selection (Priority Order)
 
