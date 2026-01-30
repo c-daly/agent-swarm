@@ -59,17 +59,7 @@
           },
           {
             "type": "command",
-            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/post-tool-tracking.py",
-            "timeout": 3
-          }
-        ]
-      },
-      {
-        "matcher": "Task",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/post-task-tracking.py",
+            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/post-tool-hook.py",
             "timeout": 3
           }
         ]
