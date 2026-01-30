@@ -28,6 +28,38 @@
 
 ---
 
+## 0. Design Tradeoffs and Trust Model
+
+### Dominant Tradeoff: Simplicity Over Performance
+
+When simplicity and performance conflict, simplicity wins. This daemon is a local orchestrator for a single developer's machine, not a high-throughput server. Specific implications:
+
+- **Thread-per-connection over thread pool.** Simpler, sufficient for expected load (<64 concurrent connections).
+- **Serialized backend access over concurrent.** MCP backends (Serena, etc.) are single-threaded servers on stdio. Concurrent calls to the same backend would corrupt the stdio stream. One lock per backend is not a limitation — it's a correctness requirement.
+- **In-memory state over distributed state.** One process, one dict, one lock. No distributed consensus, no eventual consistency, no replication.
+- **TTL-based cache eviction over LRU.** Simpler, good enough for ephemeral content.
+
+### Trust Model
+
+This daemon operates in a **fully trusted local environment**. All clients (Claude Code, hooks, background agents) run on the same machine under the same user. Specific assumptions:
+
+- **All clients are local and trusted.** The daemon listens on `127.0.0.1` only. No network exposure, no TLS, no authentication.
+- **Agent identity (`_caller`) is self-reported and not authenticated.** Any client can claim any identity. This is acceptable because all clients are local processes under the same user. The permission system is a guardrail for AI agent behavior, not a security boundary against adversarial clients.
+- **Request sizes are assumed reasonable.** No DDoS protection. Malformed or oversized input is handled gracefully (rejected, not buffered indefinitely) but not treated as an attack vector.
+- **`native__bash` and filesystem access are inherently powerful.** The daemon exposes arbitrary shell execution and unrestricted filesystem access. These are gated by permissions, which are guardrails for AI agent coordination, not sandboxes. Any permissions bypass is a bug that degrades agent coordination, not a security breach — the human user already has full access to everything the daemon can do.
+- **Failures are assumed rare and recoverable.** Crash → restart → workflows can be restarted. No HA, no replication, no failover (by design — this replaces a system that had fragile failover).
+
+### What This Daemon Is NOT
+
+- Not a production server exposed to the network
+- Not a hardened security boundary
+- Not a high-availability system
+- Not designed for multi-user or multi-machine deployment
+
+It is a **powerful, trusted local orchestrator** for a single developer's AI agent workflow.
+
+---
+
 ## 1. Overview
 
 ### System Boundaries
@@ -103,8 +135,13 @@ def main(port: int = DEFAULT_PORT) -> None:
     """
     Entry point. Called by bin/start-claude or directly.
     
-    1. Write PID_FILE with os.getpid()
-    2. Write PORT_FILE with port number
+    1. Acquire exclusive flock on LOCK_FILE (STATE_DIR / "daemon.lock"):
+       fd = open(LOCK_FILE, "w")
+       fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+       If OSError (EAGAIN) → another daemon is running → abort
+       Keep fd open for lifetime of process (released on exit)
+    2. Write PID_FILE with os.getpid()
+    3. Write PORT_FILE with port number
     3. Configure logging to LOG_FILE
     4. Create Router(port=port)
     5. Register signal handlers (SIGTERM, SIGINT) → graceful shutdown
@@ -203,6 +240,13 @@ class Router:
             self._port: int
             self._running: bool = False
             self._tools_cache: list[dict] | None = None  # Cached tools/list response
+            self._active_connections: int = 0
+            self._connections_lock: threading.Lock
+        
+        Constants:
+            MAX_CONNECTIONS = 64       # Maximum concurrent connections
+            MAX_MESSAGE_SIZE = 10_MB   # 10 * 1024 * 1024 bytes
+            CONNECTION_TIMEOUT = 60.0  # Per-connection read timeout (seconds)
         """
     
     def serve_forever(self) -> None:
@@ -215,7 +259,12 @@ class Router:
         4. self._running = True
         5. While self._running:
            a. client, addr = self._server.accept()
-           b. threading.Thread(
+           b. With self._connections_lock:
+              if self._active_connections >= MAX_CONNECTIONS:
+                  Send JSON-RPC error (-32603, "Too many connections") + close
+                  continue
+              self._active_connections += 1
+           c. threading.Thread(
                 target=self._handle_connection,
                 args=(client,),
                 daemon=True
@@ -236,16 +285,29 @@ class Router:
         Handle a single client connection. Each connection may send
         multiple requests (keep-alive) or a single request.
         
-        1. client.settimeout(60.0)
+        1. client.settimeout(CONNECTION_TIMEOUT)
         2. Try:
-           a. Read newline-delimited JSON messages in a loop
-           b. For each message:
-              - Parse JSON
+           a. Read newline-delimited JSON messages in a loop:
+              - Accumulate bytes into buffer
+              - If buffer exceeds MAX_MESSAGE_SIZE before newline:
+                Send JSON-RPC error (-32600, "Message too large")
+                Close connection, exit loop
+              - On newline: extract complete message
+           b. For each complete message:
+              - Try json.loads(). On ValueError:
+                Send JSON-RPC error (-32700, "Parse error")
+                Continue reading (do not close — client may retry)
+              - Validate "jsonrpc" == "2.0" and "method" exists.
+                On missing: Send JSON-RPC error (-32600, "Invalid request")
               - response = self._dispatch(message)
-              - Send JSON response + "\n"
-           c. If client closes connection, exit loop
+              - If response is not None:
+                Send json.dumps(response) + "\n"
+           c. If client closes connection (recv returns b""), exit loop
+           d. On socket.timeout: exit loop (idle connection cleanup)
         3. Finally:
            client.close()
+           With self._connections_lock:
+               self._active_connections -= 1
         """
     
     def _dispatch(self, message: dict) -> dict:
@@ -503,6 +565,14 @@ class Controller:
             
             self._agent_state: dict[str, dict] = {}
                 In-memory agent state. Keyed by agent_id.
+            
+            self._state_lock: threading.RLock
+                Protects all reads and writes to _workflow_state
+                and _agent_state. Must be acquired before any
+                mutation or read of these dicts.
+            
+            self._summarization_threshold: int = 2000
+                Characters. Responses larger than this are summarized.
         """
     
     def handle_call(self, tool: str, args: dict) -> Any:
@@ -530,7 +600,16 @@ class Controller:
             RequestTimeoutError: Backend didn't respond in time
             RouterError: Any other error
         
+        Invariant: The full, unsummarized result is ALWAYS cached.
+            Summarization only affects the return value. The caller can
+            always retrieve the full content via content_id. The DataStore
+            always records the original size, never the summary size as
+            "original_size".
+        
         Flow:
+            0. Start timing:
+               start_time = time.monotonic()
+            
             1. Parse prefix and tool_name:
                prefix, _, tool_name = tool.partition("__")
                If no "__" → prefix = tool, tool_name = ""
@@ -544,30 +623,46 @@ class Controller:
                If not allowed → raise PermissionDeniedError(blocked)
             
             3. Route by prefix:
-               "native"   → result = self._handle_native(tool_name, args)
-               "router"   → result = self._handle_router(tool_name, args)
-               "workflow"  → result = self._handle_workflow(tool_name, args)
-               else       → result = self._handle_backend(prefix, tool_name, args)
+               "native"   → raw_result = self._handle_native(tool_name, args)
+               "router"   → raw_result = self._handle_router(tool_name, args)
+               "workflow"  → raw_result = self._handle_workflow(tool_name, args)
+               else       → raw_result = self._handle_backend(prefix, tool_name, args)
             
-            4. Cache full response:
+            4. Cache full response (ALWAYS — before summarization):
                content_id = f"c{uuid.uuid4().hex[:12]}"
-               self.cache.store(content_id, result)
+               original_size = len(str(raw_result))
+               self.cache.store(content_id, raw_result)
             
-            5. Summarize if needed:
-               result = self._maybe_summarize(result, content_id)
+            5. Summarize if needed (affects return value only):
+               if original_size > self._summarization_threshold:
+                   summary = self.llm.summarize(str(raw_result))
+                   was_summarized = True
+                   result = {
+                       "summary": summary,
+                       "content_id": content_id,
+                       "full_available": True,
+                   }
+               else:
+                   was_summarized = False
+                   result = raw_result
             
             6. Record telemetry event:
+               duration_ms = int((time.monotonic() - start_time) * 1000)
                self.data.record_event({
                    "tool": tool,
                    "backend": prefix,
                    "status": "success",
-                   "original_size": len(str(result_before_summary)),
+                   "duration_ms": duration_ms,
+                   "original_size": original_size,
                    "summary_size": len(str(result)) if was_summarized else None,
                    "was_summarized": was_summarized,
                    "session_id": agent_info.session_id if agent_info else "",
                    "agent_id": agent_info.agent_id if agent_info else "",
                    "agent_type": agent_info.agent_type if agent_info else "",
                })
+               
+               Duration includes: permission check + dispatch + cache + summarization.
+               It does NOT include Router-level protocol parsing or response formatting.
             
             7. Return result
         """
@@ -978,23 +1073,49 @@ class PermissionChecker:
             (True, None) if allowed
             (False, BlockedResponse) if blocked
         
-        Evaluation order (most specific wins):
-            1. Check superblocked (global) — if match → BLOCK, no override
-            2. Collect rules by specificity:
-               a. Global allowed/blocked
-               b. Role-based allowed/blocked (for each role in agent.roles)
-               c. Agent-type allowed/blocked
-               d. Workflow/phase allowed/blocked
-            3. Walk from most specific to least specific:
-               If tool matches blocked → BLOCK
-               If tool matches allowed → ALLOW
-            4. Default: BLOCK (deny by default)
+        Evaluation order (formal precedence, highest to lowest):
+        
+            Level 0: SUPERBLOCK (global only)
+                Check tool against global.superblocked patterns.
+                If match → BLOCK immediately. No override possible.
+            
+            Level 1: Workflow/Phase rules
+                If agent has workflow + phase set:
+                    Check workflows.<workflow>.<phase>.blocked → if match → BLOCK
+                    Check workflows.<workflow>.<phase>.allowed → if match → ALLOW
+            
+            Level 2: Agent-type rules
+                If agent has agent_type set:
+                    Check agents.<agent_type>.blocked → if match → BLOCK
+                    Check agents.<agent_type>.allowed → if match → ALLOW
+            
+            Level 3: Role-based rules
+                For each role in agent.roles (checked in order):
+                    Check roles.<role>.blocked → if match → BLOCK
+                    Check roles.<role>.allowed → if match → ALLOW
+            
+            Level 4: Global rules
+                Check global.blocked → if match → BLOCK
+                Check global.allowed → if match → ALLOW
+            
+            Level 5: Default
+                BLOCK (deny by default)
+        
+            At each level, blocked is checked before allowed.
+            First match at the highest applicable level wins.
+            Lower levels are not consulted once a match is found.
         
         Pattern matching:
             "native__read_file"         — exact match
             "serena__*"                 — fnmatch glob on tool name
             "native__bash(pytest*)"     — tool match + fnmatch on args["command"]
             "native__bash(rm -rf*)"     — tool match + fnmatch on args["command"]
+        
+        Caveat: Argument pattern matching is inherently imperfect. Patterns
+        like "native__bash(rm -rf*)" can be bypassed via quoting, shell
+        expansion, alternate spellings, or indirect invocation. The permission
+        system is a guardrail for AI agent coordination, not a security
+        sandbox. See §0 Trust Model.
         """
     
     def register_agent(
@@ -1071,6 +1192,18 @@ class BackendManager:
     """
     Manages external MCP server subprocesses.
     Thread-safe: per-backend RLock for connection management.
+    
+    Design note: Access to each backend is serialized (one request at a time
+    per backend). This is intentional — MCP backends are single-threaded
+    stdio servers. Concurrent writes to the same stdin would corrupt the
+    stream. Two requests to different backends CAN execute concurrently.
+    
+    stderr handling: Backend stderr is piped (subprocess.PIPE) but NOT read
+    during normal operation. stderr is only read on connection failure for
+    diagnostic logging. This avoids deadlock from stderr buffer filling up —
+    if a backend writes excessive stderr, the OS pipe buffer (typically 64KB)
+    will eventually block the backend's write. Backends should not write
+    large volumes to stderr during normal operation.
     """
     
     def __init__(self, config_path: Path) -> None:
@@ -1321,6 +1454,13 @@ class DataStore:
     """
     Event persistence and reporting backed by DuckDB.
     Thread-safe for concurrent writes and reads.
+    
+    Token metrics note: The schema includes token fields (input_tokens,
+    output_tokens, cache_read_tokens, cache_creation_tokens) for when
+    this data is available. Native tools and most backends do not report
+    token usage — these fields will be 0. LLMService summarization calls
+    may report token counts if the API returns them. Dashboards should
+    treat token fields as "best available data" not "precise measurement."
     """
     
     def __init__(self, db_path: Path) -> None:
@@ -1455,15 +1595,19 @@ class Cache:
     Thread-safe.
     """
     
-    def __init__(self, default_ttl: int = 300) -> None:
+    def __init__(self, default_ttl: int = 300, max_entries: int = 1000) -> None:
         """
         Args:
             default_ttl: Default time-to-live in seconds (default 5 minutes)
+            max_entries: Maximum number of cached entries (default 1000).
+                         When exceeded, oldest entries (by insertion time)
+                         are evicted regardless of TTL.
         
         Creates:
             self._store: dict[str, tuple[Any, float]]  # key → (value, expires_at)
             self._lock: threading.RLock
             self._default_ttl: int
+            self._max_entries: int
         """
     
     def store(self, key: str, value: Any, ttl: int | None = None) -> None:
@@ -1477,6 +1621,8 @@ class Cache:
         
         Thread-safe: Acquires self._lock.
         Also triggers self._evict_expired() to clean up.
+        If store exceeds max_entries after insertion, evicts oldest
+        entries (by insertion time) until within limit.
         """
     
     def get(self, key: str, remove: bool = True) -> Any | None:
@@ -1593,6 +1739,12 @@ Controller → BackendManager → subprocess stdin:
 subprocess stdout → BackendManager → Controller:
   {"jsonrpc":"2.0","id":"<uuid>","result":{"content":[{"type":"text","text":"..."}]}}
 ```
+
+### Protocol Versioning
+
+The MCP protocol version is hardcoded to `2024-11-05`. The Router does not perform version negotiation — it accepts any `protocolVersion` in the initialize request and always responds with `2024-11-05`. If a future MCP version introduces breaking changes, the Router will need to be updated. This is an accepted limitation: version negotiation adds complexity for a scenario that hasn't occurred yet. When it does, the Router is the only component that needs to change.
+
+Internal tool schemas (workflow__, router__) are unversioned. Changes to their signatures are breaking changes that require coordinated updates to the daemon and all clients (shim, hooks, etc.).
 
 Note: Tool names sent to backends do NOT include the prefix. `serena__find_symbol` → sends `find_symbol` to the serena backend. The prefix is stripped by the Controller before dispatch and added back by the Router for tool discovery.
 
@@ -1868,7 +2020,8 @@ Single process, multiple threads.
 ### Thread Allocation
 - **Main thread**: Runs `Router.serve_forever()` accept loop
 - **Per-connection thread**: One daemon thread per TCP connection (spawned on accept)
-- **No thread pool**: Threads are created and destroyed per connection. Acceptable because connections are short-lived (single request-response for hooks) or medium-lived (Claude session).
+- **Maximum 64 concurrent connections** (enforced by Router). New connections beyond this limit receive a JSON-RPC error and are closed immediately.
+- **No thread pool**: Threads are created and destroyed per connection. Acceptable because connections are short-lived (single request-response for hooks) or medium-lived (Claude session). The 64-connection cap prevents thread explosion.
 
 ### Lock Strategy
 - **Per-backend RLock** (in BackendManager): Prevents concurrent access to same backend subprocess stdin/stdout
@@ -1921,7 +2074,11 @@ Single process, multiple threads.
 2. Signal handler calls Router.shutdown():
    a. self._running = False
    b. self._server.close() — unblocks accept()
-   c. Controller.shutdown():
+   c. Drain in-flight requests:
+      Wait up to 5 seconds for self._active_connections to reach 0.
+      Check every 100ms. If still >0 after 5s, proceed anyway
+      (daemon threads will be killed on process exit).
+   d. Controller.shutdown():
       i.  BackendManager.shutdown_all() — terminate all subprocesses
       ii. DataStore.close() — close DuckDB
 3. daemon.main() resumes after serve_forever():
