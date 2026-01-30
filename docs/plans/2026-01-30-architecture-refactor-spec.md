@@ -1951,35 +1951,92 @@ Workflow state (in-memory) and Cache are lost on daemon crash. This is acceptabl
 
 ## 16. Migration Compatibility
 
-### What Changes for Claude Code
+### Stdio Shim (Required)
 
-**Before:** Claude Code configuration spawns `bin/mcp-router` as stdio subprocess.
-**After:** Claude Code configuration connects to `127.0.0.1:7523` as remote MCP server.
+Claude Code only supports stdio for MCP server communication. It spawns MCP servers as subprocesses and talks to them over stdin/stdout. There is no native support for TCP, SSE, or HTTP connections to remote MCP servers.
 
-Claude Code settings change:
+Therefore, a **stdio-to-TCP bridge shim** is required. Claude Code spawns the shim as a subprocess (same as today), and the shim bridges stdio to the daemon's TCP port.
+
+#### Shim Implementation
+
+```python
+#!/usr/bin/env python3
+"""
+bin/mcp-router — stdio-to-TCP bridge shim.
+
+Claude Code spawns this as a subprocess. It bridges MCP JSON-RPC
+over stdio to the daemon's TCP port. No logic, no state, pure pipe.
+
+Replaces the old 3,159-line mcp_router.py with ~30 lines.
+"""
+import json
+import socket
+import sys
+import os
+
+DAEMON_PORT = 7523
+
+def main():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.connect(("127.0.0.1", DAEMON_PORT))
+    except ConnectionRefusedError:
+        # Daemon not running — print error and exit
+        error = {
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {"code": -32603, "message": "Daemon not running. Run start-claude to start it."}
+        }
+        sys.stdout.write(json.dumps(error) + "\n")
+        sys.stdout.flush()
+        sys.exit(1)
+
+    # Bridge: stdin → TCP, TCP → stdout
+    import threading
+
+    def stdin_to_tcp():
+        """Read from stdin (Claude Code), forward to daemon TCP."""
+        for line in sys.stdin:
+            sock.sendall(line.encode())
+
+    def tcp_to_stdout():
+        """Read from daemon TCP, forward to stdout (Claude Code)."""
+        buf = b""
+        while True:
+            chunk = sock.recv(8192)
+            if not chunk:
+                break
+            buf += chunk
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                sys.stdout.write(line.decode() + "\n")
+                sys.stdout.flush()
+
+    reader = threading.Thread(target=tcp_to_stdout, daemon=True)
+    reader.start()
+    stdin_to_tcp()
+    sock.close()
+
+if __name__ == "__main__":
+    main()
+```
+
+#### Claude Code Configuration
+
+**No change to Claude Code settings.** `bin/mcp-router` remains the entry point — it's just a 30-line shim now instead of a 3,159-line server.
+
 ```json
-// Before
 {
     "mcpServers": {
         "router": {
             "command": "python3",
-            "args": ["/path/to/bin/mcp-router"]
-        }
-    }
-}
-
-// After
-{
-    "mcpServers": {
-        "router": {
-            "type": "sse",
-            "url": "http://127.0.0.1:7523"
+            "args": ["/path/to/agent-swarm/bin/mcp-router"]
         }
     }
 }
 ```
 
-Note: The exact Claude Code configuration format for remote MCP servers should be verified against current Claude Code documentation. If SSE is not supported, an alternative is a thin stdio shim that bridges to the TCP daemon (see design doc).
+Claude Code spawns the shim, which connects to the daemon. From Claude Code's perspective, nothing changed — it's still talking to an MCP server over stdio.
 
 ### What Changes for Hooks
 
@@ -1992,7 +2049,7 @@ Nothing. `bin/mcp-call` imports `workflow_client`, which follows the shim automa
 ### What Gets Deleted
 
 After migration is stable:
-- `lib/mcp_router.py` (3,159 lines)
+- `lib/mcp_router.py` (3,159 lines — replaced by daemon + shim)
 - `lib/mcp_controller.py` (old, unused)
 - `lib/routing_service.py` (absorbed into BackendManager)
 - `lib/summarization_service.py` (absorbed into LLMService)
@@ -2002,11 +2059,12 @@ After migration is stable:
 - `lib/telemetry_schema_v2.py` (DuckDB is the schema)
 - `lib/native_tools.py` (native ops are in Controller)
 - `lib/mcp_native.py` (native ops are in Controller)
-- `bin/mcp-router` (replaced by daemon.py)
 - `bin/mcp-native` (native ops are in Controller)
 - All federation code (primary/secondary/election/failover)
 - `.state/router.port` (replaced by `.state/daemon.port`)
 - `.state/telemetry/` directory (DuckDB replaces JSON files)
+
+`bin/mcp-router` stays — but as a 30-line shim instead of a server entry point.
 
 ### Backward Compatibility Period
 
