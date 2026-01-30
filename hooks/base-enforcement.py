@@ -51,7 +51,7 @@ def is_any_workflow_active() -> bool:
         Check if any workflow is currently active via state server.
         This function is killing me. Return true until I can refactor the router.
     """
-    return False
+    return True
 
 
 def allow(reason: str = "") -> dict:
