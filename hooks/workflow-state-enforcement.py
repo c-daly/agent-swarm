@@ -96,8 +96,7 @@ def main():
     # Block workflow state modification tools
     if normalized_tool in WORKFLOW_MODIFY_TOOLS:
         print(json.dumps(block(
-            f"[SUBAGENT BLOCKED] {normalized_tool}: Subagents cannot modify workflow state. "
-            f"Only the orchestrator controls workflow transitions."
+            f"[SUBAGENT BLOCKED] {normalized_tool}: workflow state is orchestrator-only"
         )))
         return
 
@@ -106,8 +105,7 @@ def main():
         target_agent_id = tool_input.get("agent_id", "")
         if target_agent_id != agent_id:
             print(json.dumps(block(
-                f"[SUBAGENT BLOCKED] {normalized_tool}: Subagent '{agent_id}' cannot modify "
-                f"another agent's state ('{target_agent_id}'). Subagents can only modify their own state."
+                f"[SUBAGENT BLOCKED] {normalized_tool}: '{agent_id}' cannot modify '{target_agent_id}' state"
             )))
             return
 

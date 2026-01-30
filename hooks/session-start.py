@@ -847,71 +847,10 @@ def main():
         except Exception:
             pass  # Fail silently - cleanup shouldn't break session start
 
-    # Run inventory to discover capabilities
-    inventory_output = run_inventory()
-
-    # Get any initial context from the session
-    initial_messages = input_data.get("messages", [])
-
-    # Extract potential search terms from first user message
-    query_terms = "agent-swarm workflow automation"
-    if initial_messages:
-        first_msg = initial_messages[0].get("content", "")
-        # Simple heuristic: use first few words
-        words = first_msg.split()[:5]
-        if words:
-            query_terms = " ".join(words)
-
-    # Suggest memory options
-    results = suggest_memory_options(query_terms)
-
-    # Build output message
-    messages = []
-
-    # Add hierarchical context with scope tags (only for main agent)
-    if not agent_id:
-        hierarchy = load_context_hierarchy(Path.cwd())
-        if hierarchy:
-            hierarchy_context = format_hierarchy_context(hierarchy)
-            if hierarchy_context:
-                messages.append(f"**Hierarchical Context:**\n{hierarchy_context}")
-        
-        # Also use the resolver-based context for additional detail
-        context_summary = get_session_context(Path.cwd())
-        if context_summary:
-            messages.append(f"Project Context:\n{context_summary}")
-        
-        # Auto-discover project handoffs (only for main agent)
-        handoffs = discover_project_handoffs(Path.cwd())
-        if handoffs:
-            handoff_context = format_handoff_context(handoffs)
-            if handoff_context:
-                messages.append(handoff_context)
-
-    # Load learned patterns from MEMORY.md (only for main agent)
-    if not agent_id:
-        memory_patterns = load_memory_patterns(Path.cwd())
-        if memory_patterns:
-            formatted_patterns = format_memory_patterns(memory_patterns, max_patterns=5)
-            if formatted_patterns:
-                messages.append(formatted_patterns)
-
-    # Add cleanup message if files were cleaned
-    if cleanup_message:
-        messages.append(cleanup_message)
-
-    # Add inventory if available
-    if inventory_output:
-        messages.append("Capability Inventory:\n" + inventory_output[:1000])  # Limit size
-
-    # Add memory suggestions (always show the message, which now includes auto-read snippets)
-    messages.append(results.get("message", ""))
-
-    # Return result with suggestion
-    output = {
-        "systemMessage": "\n\n".join(messages) if messages else ""
-    }
-
+    # Context injection disabled for token optimization.
+    # Hierarchy, inventory, episodic memory, and patterns are no longer
+    # injected at session start. Use /ctx or /recall if needed.
+    output = {"systemMessage": ""}
     print(json.dumps(output))
 
 if __name__ == "__main__":

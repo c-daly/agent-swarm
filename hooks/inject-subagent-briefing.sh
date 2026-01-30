@@ -28,5 +28,5 @@ fi
 # NOTE: "block" is IGNORED for Task tool, must use "deny"
 # NOTE: Must use "permissionDecisionReason" not "message"
 cat << 'EOF'
-{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "[BRIEFING_REQUIRED] Task prompt must include subagent briefing.\n\nAssemble the prompt:\n1. Read: cat ~/.claude/plugins/agent-swarm/hooks/subagent-briefing.md\n2. Prepend to your task with header: # SUBAGENT OPERATING PROTOCOL\n3. Add phase restrictions if in iterate workflow\n4. Re-call Task with assembled prompt\n\nSubagent Tools (allowed_tools to include):\n- Shell: mcp-call pytest, mcp-call ruff, mcp-call git, etc.\n- Files: mcp-call native__read_file, mcp-call native__write_file\n- Search: mcp-call native__glob, mcp-call native__grep\n- Serena: mcp-call serena__find_symbol, etc.\n\nSee 'Subagent Prompt Assembly' in iterate skill for details."}}
+{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "[BRIEFING_REQUIRED] Prepend hooks/subagent-briefing.md to Task prompt as '# SUBAGENT OPERATING PROTOCOL'. Re-call with run_in_background=true."}}
 EOF
