@@ -282,6 +282,45 @@ Edit(file_path="file3.py", ...)  # Step 3: This is NOT trivial!
 
 ---
 
+### 8. **Content Embedding in Subagent Prompts**
+
+**Pattern:** Orchestrator embeds literal file content, code blocks, or expected output in subagent prompts instead of giving intent + acceptance criteria.
+
+**Why it's wrong:**
+- Multiple agents get overlapping content, causing file stomping
+- Agent has no room for judgment (becomes a copy-paste machine)
+- Prompt bloat wastes context window
+- No verification criteria — orchestrator can't check if agent did it right
+
+**Detection Points:**
+
+| Location | Detection Method | Signal |
+|----------|-----------------|--------|
+| Prompt analysis | Length + code block check | Prompt > 2000 chars with code blocks > 10 lines |
+| Telemetry | File conflict detection | Two agents modifying same file simultaneously |
+
+**Example (WRONG):**
+```python
+# ❌ Embedding file content in prompt
+Task(prompt="Write this to briefing.md:\n# Subagent Operating Protocol\n[800 chars of content...]")
+```
+
+**Correct:**
+```python
+# ✅ Intent + acceptance criteria
+Task(prompt="""Rewrite briefing.md following constraints-first template.
+
+Acceptance criteria:
+- Contains marker 'SUBAGENT OPERATING PROTOCOL'
+- Size between 400-900 chars
+- Constraints section appears before tool reference
+- See agent_context.md for project patterns""")
+```
+
+**Related rule:** Each file may be modified by AT MOST one concurrent task. When decomposing into parallel tasks, assign non-overlapping file sets.
+
+---
+
 ## Detection Logic Integration Points
 
 ### Current Enforcement Hooks

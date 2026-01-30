@@ -74,9 +74,30 @@ Implementer says: "Trivial task, using haiku" and spawns sub-agent with haiku.
 Every subagent prompt MUST include:
 
 1. **Task**: What exactly to do (one clear objective)
-2. **Scope**: What files/areas to touch
+2. **Scope**: What files/areas to touch (exclusive file list — no other agent touches these)
 3. **Output**: What to return (be specific about format)
 4. **Constraints**: What NOT to do
+5. **Acceptance Criteria**: Machine-checkable conditions for completion (grep markers, size ranges, test exit codes)
+
+<constraint>
+**Intent, Not Content**: NEVER embed file content, code blocks, or literal output in subagent prompts.
+Prompts specify WHAT to achieve and HOW to verify — not the bytes to write.
+
+WRONG: "Write this content to file.md: [800 chars of content]"
+RIGHT: "Rewrite file.md to follow constraints-first template. Must contain
+        marker 'PROTOCOL'. Target: 400-900 chars. See agent_context.md
+        for project patterns."
+</constraint>
+
+<constraint>
+**Exclusive File Ownership**: Each file may be modified by AT MOST one concurrent task.
+When decomposing into parallel tasks, assign non-overlapping file sets.
+
+If two tasks need the same file:
+  1. Make them sequential (depends_on)
+  2. Split into separate concerns
+  3. Merge into one task
+</constraint>
 
 ### Example Prompts
 
@@ -86,17 +107,19 @@ Find all authentication-related code.
 
 Scope: src/ directory
 Output: List of file:line references with one-line descriptions
-Constraints: Don't read file contents, just locate. Use Serena tools.
+Constraints: Don't read file contents, just locate.
+Acceptance: Output contains at least one file:line reference per auth module.
 ```
 
 **Implementer (writing code):**
 ```
 Add input validation to the login form.
 
-Scope: src/components/LoginForm.tsx only
+Scope: src/components/LoginForm.tsx only (exclusive — no other agent touches this file)
 Output: Summary of changes made
 Constraints: Don't modify other files. Don't add new dependencies.
-Follow existing patterns in the codebase.
+Acceptance: `grep -c 'validate' src/components/LoginForm.tsx` returns 1+.
+            `pytest tests/test_login.py` exits 0.
 ```
 
 **Reviewer (checking code):**
@@ -106,6 +129,7 @@ Review changes to authentication flow.
 Scope: Files modified in current branch vs main
 Output: PASS or NEEDS_CHANGES with specific issues
 Constraints: Focus on bugs and security. Skip style issues.
+Acceptance: Output contains explicit PASS or NEEDS_CHANGES verdict.
 ```
 
 ## Parallel Spawning
