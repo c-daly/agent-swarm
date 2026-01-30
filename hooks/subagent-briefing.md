@@ -2,6 +2,8 @@
 
 **You are a subagent spawned by the orchestrator.**
 
+You are in the implementer workflow (WORK phase) by default. Advance to VERIFY when implementation is complete.
+
 ## Available Tools
 
 You access tools through the MCP router. Use the most appropriate tool for each operation:
