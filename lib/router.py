@@ -400,8 +400,6 @@ class Router:
             {"name": "workflow__workflow_stop", "description": "Stop a running workflow.", "inputSchema": {"type": "object", "properties": {"workflow_id": {"type": "string"}}, "required": ["workflow_id"]}},
             {"name": "workflow__workflow_is_active", "description": "Check if a workflow is active.", "inputSchema": {"type": "object", "properties": {"workflow_id": {"type": "string"}}, "required": ["workflow_id"]}},
             {"name": "workflow__workflow_get_state", "description": "Get workflow state.", "inputSchema": {"type": "object", "properties": {"workflow_id": {"type": "string"}}, "required": ["workflow_id"]}},
-
-
             {"name": "workflow__workflow_get_value", "description": "Get a single value from workflow state.", "inputSchema": {"type": "object", "properties": {"workflow_id": {"type": "string"}, "key": {"type": "string"}}, "required": ["workflow_id", "key"]}},
             {"name": "workflow__workflow_set_value", "description": "Set a single value in workflow state.", "inputSchema": {"type": "object", "properties": {"workflow_id": {"type": "string"}, "key": {"type": "string"}, "value": {}}, "required": ["workflow_id", "key", "value"]}},
             {"name": "workflow__workflow_advance_phase", "description": "Advance workflow to a new phase.", "inputSchema": {"type": "object", "properties": {"workflow_id": {"type": "string"}, "target_phase": {"type": "string"}}, "required": ["workflow_id", "target_phase"]}},

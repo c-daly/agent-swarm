@@ -44,7 +44,10 @@ PROTECTED_KEYS = frozenset({
 
 def _is_protected_key(key: str) -> bool:
     """Check whether a workflow state key is daemon-managed."""
-    return key in PROTECTED_KEYS or key.endswith("_checkpoint_passed")
+    return (
+        key in PROTECTED_KEYS
+        or (len(key) > len("_checkpoint_passed") and key.endswith("_checkpoint_passed"))
+    )
 
 
 class Controller:
@@ -548,14 +551,14 @@ class Controller:
         wf_id = args.get("workflow_id", "")
         key = args.get("key", "")
         value = args.get("value")
-        if _is_protected_key(key):
-            raise WorkflowError(
-                f"Protected key '{key}' cannot be set directly. "
-                "Use workflow_advance_phase or workflow_pass_checkpoint."
-            )
         with self._state_lock:
             if wf_id not in self._workflow_state:
                 raise WorkflowError(f"Workflow not found: {wf_id}")
+            if _is_protected_key(key):
+                raise WorkflowError(
+                    f"Protected key '{key}' cannot be set directly. "
+                    "Use workflow_advance_phase or workflow_pass_checkpoint."
+                )
             self._workflow_state[wf_id][key] = value
             return True
 
