@@ -153,7 +153,13 @@ class BackendManager:
         conn.stdin.write(line)
         conn.stdin.flush()
 
-        ready, _, _ = select.select([conn.stdout], [], [], _DEFAULT_TIMEOUT)
+        # Prefer fileno() for reliable select() — select on TextIOWrapper can
+        # be unreliable on some platforms due to internal buffering.
+        try:
+            select_target = conn.stdout.fileno()
+        except Exception:
+            select_target = conn.stdout
+        ready, _, _ = select.select([select_target], [], [], _DEFAULT_TIMEOUT)
         if not ready:
             self._kill_connection(backend)
             raise RequestTimeoutError(

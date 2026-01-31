@@ -65,11 +65,16 @@ class Router:
                     continue
                 self._active_connections += 1
 
-            threading.Thread(
-                target=self._handle_connection,
-                args=(client,),
-                daemon=True,
-            ).start()
+            try:
+                threading.Thread(
+                    target=self._handle_connection,
+                    args=(client,),
+                    daemon=True,
+                ).start()
+            except Exception:
+                with self._connections_lock:
+                    self._active_connections -= 1
+                client.close()
 
     def shutdown(self) -> None:
         """Graceful shutdown."""
@@ -236,11 +241,16 @@ class Router:
                 },
             }
 
+        try:
+            result_text = json.dumps(result, default=str)
+        except (TypeError, ValueError):
+            result_text = str(result)
+
         return {
             "jsonrpc": "2.0",
             "id": msg_id,
             "result": {
-                "content": [{"type": "text", "text": json.dumps(result)}],
+                "content": [{"type": "text", "text": result_text}],
             },
         }
 

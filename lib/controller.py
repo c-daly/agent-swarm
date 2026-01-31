@@ -66,22 +66,38 @@ class Controller:
         else:
             prefix, tool_name = tool, ""
 
-        # Check permissions
-        caller_info = args.pop("_caller", None)
+        # Extract caller info without mutating original args dict
+        caller_info = args.get("_caller")
+        clean_args = {k: v for k, v in args.items() if k != "_caller"}
         agent_info = self._resolve_agent(caller_info)
-        allowed, blocked = self.permissions.check(tool, args, agent_info)
+
+        # Check permissions
+        allowed, blocked = self.permissions.check(tool, clean_args, agent_info)
         if not allowed:
+            self._record_error_event(
+                tool, prefix, agent_info, start_time,
+                "PermissionDeniedError", blocked.reason if blocked else "blocked",
+            )
             raise PermissionDeniedError(blocked)
 
         # Route by prefix
-        if prefix == "native":
-            raw_result = self._handle_native(tool_name, args)
-        elif prefix == "router":
-            raw_result = self._handle_router(tool_name, args)
-        elif prefix == "workflow":
-            raw_result = self._handle_workflow(tool_name, args)
-        else:
-            raw_result = self._handle_backend(prefix, tool_name, args)
+        try:
+            if prefix == "native":
+                raw_result = self._handle_native(tool_name, clean_args)
+            elif prefix == "router":
+                raw_result = self._handle_router(tool_name, clean_args)
+            elif prefix == "workflow":
+                raw_result = self._handle_workflow(tool_name, clean_args)
+            else:
+                raw_result = self._handle_backend(prefix, tool_name, clean_args)
+        except PermissionDeniedError:
+            raise  # Already recorded above
+        except Exception as e:
+            self._record_error_event(
+                tool, prefix, agent_info, start_time,
+                type(e).__name__, str(e),
+            )
+            raise
 
         # Cache full response
         content_id = f"c{uuid.uuid4().hex[:12]}"
@@ -93,7 +109,7 @@ class Controller:
             raw_result, content_id, original_size
         )
 
-        # Record telemetry
+        # Record success telemetry
         duration_ms = int((time.monotonic() - start_time) * 1000)
         self.data.record_event({
             "tool": tool,
@@ -109,6 +125,31 @@ class Controller:
         })
 
         return result
+
+    def _record_error_event(
+        self,
+        tool: str,
+        prefix: str,
+        agent_info: AgentInfo | None,
+        start_time: float,
+        error_type: str,
+        error_msg: str,
+    ) -> None:
+        """Record a failed tool call in the event store."""
+        duration_ms = int((time.monotonic() - start_time) * 1000)
+        try:
+            self.data.record_event({
+                "tool": tool,
+                "backend": prefix,
+                "status": "error",
+                "duration_ms": duration_ms,
+                "error_type": error_type,
+                "session_id": agent_info.session_id if agent_info else "",
+                "agent_id": agent_info.agent_id if agent_info else "",
+                "agent_type": agent_info.agent_type if agent_info else "",
+            })
+        except Exception:
+            log.warning("Failed to record error event for %s", tool)
 
     def get_full_content(self, content_id: str) -> Any:
         """Retrieve cached full content by content_id."""
@@ -306,7 +347,13 @@ class Controller:
         return {"matches": matches}
 
     def _native_bash(self, args: dict) -> dict:
-        """Execute a shell command."""
+        """Execute a shell command.
+
+        Security: shell=True is intentional — this is a local-only daemon
+        (127.0.0.1) and access is gated by PermissionChecker. The permissions
+        config superblocks dangerous patterns (rm -rf, sudo, curl|sh, etc.)
+        and restricts bash access per agent type and workflow phase.
+        """
         command = args.get("command", "")
         timeout = min(args.get("timeout", 120), 600)
         cwd = args.get("cwd")

@@ -39,7 +39,7 @@ def main(port: int = DEFAULT_PORT) -> None:
 
     lock_fd = _acquire_lock()
     if lock_fd is None:
-        print(f"Daemon already running on port {port}", file=sys.stderr)
+        print("Another daemon instance is already running", file=sys.stderr)
         sys.exit(1)
 
     logging.basicConfig(
