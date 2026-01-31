@@ -126,55 +126,53 @@ import sys
 from pathlib import Path
 
 DEFAULT_PORT = 7523
-STATE_DIR = Path(__file__).parent.parent / ".state"
-PID_FILE = STATE_DIR / "daemon.pid"
-PORT_FILE = STATE_DIR / "daemon.port"
-LOG_FILE = STATE_DIR / "daemon.log"
+LOG_DIR = Path(__file__).parent.parent / "logs"
+LOG_FILE = LOG_DIR / "daemon.log"
+LOCK_FILE = Path(__file__).parent.parent / ".daemon.lock"  # flock singleton
 
 def main(port: int = DEFAULT_PORT) -> None:
     """
     Entry point. Called by bin/start-claude or directly.
     
-    1. Acquire exclusive flock on LOCK_FILE (STATE_DIR / "daemon.lock"):
+    1. Ensure LOG_DIR exists (mkdir -p equivalent)
+    2. Acquire exclusive flock on LOCK_FILE:
        fd = open(LOCK_FILE, "w")
        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
        If OSError (EAGAIN) → another daemon is running → abort
        Keep fd open for lifetime of process (released on exit)
-    2. Write PID_FILE with os.getpid()
-    3. Write PORT_FILE with port number
     3. Configure logging to LOG_FILE
-    4. Create Router(port=port)
-    5. Register signal handlers (SIGTERM, SIGINT) → graceful shutdown
-    6. Call router.serve_forever()  # blocks
-    7. On shutdown: clean up PID_FILE, PORT_FILE
+    4. Create Controller(config_dir, data_dir)
+    5. Create Router(port=port, controller=controller)
+    6. Register signal handlers (SIGTERM, SIGINT) → graceful shutdown
+    7. Call router.serve_forever()  # blocks
+    8. On shutdown: flock released automatically on process exit
     """
 
 def is_running() -> bool:
     """
     Check if daemon is already running.
     
-    1. Read PID_FILE
-    2. If file doesn't exist → return False
-    3. Read PID from file
-    4. os.kill(pid, 0) — if no exception → return True
-    5. If OSError (process dead) → delete stale PID_FILE → return False
-    """
-
-def get_port() -> int | None:
-    """
-    Get running daemon's port.
+    1. Try to connect a TCP socket to (127.0.0.1, DEFAULT_PORT)
+       with a 1-second timeout
+    2. If connection succeeds → close socket → return True
+    3. If ConnectionRefusedError → return False
+    4. If timeout → return False
     
-    1. Read PORT_FILE
-    2. If file doesn't exist → return None
-    3. Return int(contents)
+    No PID file, no port file. The fixed port IS the liveness check.
     """
 
 def shutdown() -> None:
     """
     Request graceful shutdown.
     
-    1. Read PID_FILE
-    2. os.kill(pid, signal.SIGTERM)
+    1. Connect to (127.0.0.1, DEFAULT_PORT)
+    2. Send JSON-RPC request: {"jsonrpc": "2.0", "id": 1,
+       "method": "daemon/shutdown", "params": {}}
+    3. Close socket
+    
+    The daemon handles SIGTERM internally via signal handlers,
+    but the preferred shutdown path is this RPC call, which
+    triggers the same graceful shutdown sequence.
     """
 ```
 
@@ -194,9 +192,13 @@ sys.exit(0 if is_running() else 1)
     # Start daemon in background
     python3 "$PLUGIN_DIR/lib/daemon.py" &
     disown
-    # Wait for port file to appear (max 5 seconds)
+    # Wait for daemon to accept connections (max 5 seconds)
     for i in $(seq 1 50); do
-        [ -f "$PLUGIN_DIR/.state/daemon.port" ] && break
+        python3 -c "
+import sys; sys.path.insert(0, '$PLUGIN_DIR/lib')
+from daemon import is_running
+sys.exit(0 if is_running() else 1)
+" 2>/dev/null && break
         sleep 0.1
     done
 fi
@@ -542,18 +544,18 @@ class Controller:
     def __init__(
         self,
         config_dir: Path,
-        state_dir: Path,
+        data_dir: Path,
     ) -> None:
         """
         Args:
             config_dir: Path to config/ directory
-            state_dir: Path to .state/ directory
+            data_dir: Path to data directory (for datastore.db)
         
         Creates:
             self.permissions = PermissionChecker(config_dir / "permissions.yaml")
             self.backends = BackendManager(config_dir / "backends.json")
             self.llm = LLMService()
-            self.data = DataStore(state_dir / "datastore.db")
+            self.data = DataStore(data_dir / "datastore.db")
             self.cache = Cache()
             
             self._tool_to_backend: dict[str, str] = {}
@@ -1753,7 +1755,7 @@ Note: Tool names sent to backends do NOT include the prefix. `serena__find_symbo
 ## 11. Client Shim
 
 ### Purpose
-Backward-compatible `workflow_client.py` that points at the daemon's known port instead of discovering via `.state/router.port`. Existing callers (~25 files) need zero code changes.
+Backward-compatible `workflow_client.py` that connects to the daemon's known port (7523). Existing callers (~25 files) need zero code changes.
 
 ### Interface
 
@@ -1767,7 +1769,6 @@ from pathlib import Path
 from typing import Any, Optional
 
 DAEMON_PORT = 7523
-STATE_DIR = Path(__file__).parent.parent / ".state"
 
 class WorkflowClientError(Exception):
     """Raised when communication with daemon fails."""
@@ -1938,15 +1939,17 @@ workflows:
             blocked: list[str]
 ```
 
-### .state/ Directory
+### Runtime Directories
 
 ```
-.state/
-├── daemon.pid       # PID of daemon process
-├── daemon.port      # TCP port of daemon
+logs/
 ├── daemon.log       # Daemon log output
 └── datastore.db     # DuckDB database
 ```
+
+No PID file, no port file. The daemon uses a fixed known port (7523)
+and an flock on `.daemon.lock` for singleton enforcement. Liveness is
+checked by attempting a TCP connection to the known port.
 
 ---
 
@@ -2052,25 +2055,26 @@ Single process, multiple threads.
 ```
 1. bin/start-claude (or manual: python3 lib/daemon.py)
 2. daemon.main():
-   a. Check is_running() → abort if already running
-   b. Write PID_FILE
+   a. Ensure LOG_DIR exists (mkdir -p equivalent)
+   b. Acquire exclusive flock on LOCK_FILE
+      If EAGAIN → another daemon is running → abort
    c. Configure logging to LOG_FILE
-   d. Create Controller(config_dir, state_dir):
+   d. Create Controller(config_dir, data_dir):
       i.   PermissionChecker(permissions.yaml) — load rules
       ii.  BackendManager(backends.json) — load configs (no spawn)
       iii. LLMService() — detect provider
       iv.  DataStore(datastore.db) — open/create DB, create tables
       v.   Cache() — empty store
    e. Create Router(port, controller)
-   f. Write PORT_FILE
-   g. Register SIGTERM/SIGINT handlers → Router.shutdown()
-   h. Router.serve_forever() — blocks
+   f. Register SIGTERM/SIGINT handlers → Router.shutdown()
+   g. Router.serve_forever() — blocks
+   h. On exit: flock released automatically on process exit
 ```
 
 ### Shutdown Sequence
 
 ```
-1. SIGTERM received (or SIGINT)
+1. SIGTERM received (or SIGINT, or daemon/shutdown RPC)
 2. Signal handler calls Router.shutdown():
    a. self._running = False
    b. self._server.close() — unblocks accept()
@@ -2082,21 +2086,18 @@ Single process, multiple threads.
       i.  BackendManager.shutdown_all() — terminate all subprocesses
       ii. DataStore.close() — close DuckDB
 3. daemon.main() resumes after serve_forever():
-   a. Delete PID_FILE
-   b. Delete PORT_FILE
-   c. Exit process
+   a. flock released automatically on process exit
+   b. Exit process
 ```
 
 ### Crash Recovery
 
 If daemon crashes without cleanup:
-1. PID_FILE contains stale PID
-2. PORT_FILE contains stale port
+1. flock on LOCK_FILE is released automatically by the OS
+2. TCP port becomes available (OS reclaims it)
 3. Next `is_running()` call:
-   - Reads PID_FILE
-   - os.kill(pid, 0) → OSError (process dead)
-   - Deletes stale PID_FILE
-   - Returns False
+   - Attempts TCP connection to DEFAULT_PORT
+   - Connection refused → returns False
 4. Startup script restarts daemon normally
 
 Backend subprocesses (Serena, etc.) are children of the daemon. When daemon dies, they receive SIGHUP. If they don't handle it, they die too. On daemon restart, BackendManager spawns fresh instances on first use.
@@ -2197,7 +2198,7 @@ Claude Code spawns the shim, which connects to the daemon. From Claude Code's pe
 
 ### What Changes for Hooks
 
-Nothing. Hooks import `workflow_client`, which now points at the daemon's known port (7523) instead of discovering via `.state/router.port`. All function signatures are identical.
+Nothing. Hooks import `workflow_client`, which now points at the daemon's known port (7523). All function signatures are identical.
 
 ### What Changes for mcp-call
 
@@ -2218,7 +2219,7 @@ After migration is stable:
 - `lib/mcp_native.py` (native ops are in Controller)
 - `bin/mcp-native` (native ops are in Controller)
 - All federation code (primary/secondary/election/failover)
-- `.state/router.port` (replaced by `.state/daemon.port`)
+- `.state/` directory (state in daemon memory + DuckDB, logs in `logs/`)
 - `.state/telemetry/` directory (DuckDB replaces JSON files)
 
 `bin/mcp-router` stays — but as a 30-line shim instead of a server entry point.
@@ -2227,8 +2228,8 @@ After migration is stable:
 
 During migration, both the old `bin/mcp-router` and new daemon can coexist:
 - Old router reads `.state/router.port`
-- New daemon writes `.state/daemon.port`
-- `workflow_client.py` shim reads `.state/daemon.port`
+- New daemon listens on fixed port 7523 (no port file)
+- `workflow_client.py` shim connects to known port 7523
 - Old clients reading `.state/router.port` continue to work if old router is still running
 
 Once all clients are verified working through the daemon, delete the old code.

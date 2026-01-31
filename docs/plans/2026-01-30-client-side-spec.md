@@ -1359,7 +1359,7 @@ This hook is **best-effort**, not airtight:
 |---|---|---|
 | `hooks/` | Delete all except `native-tool-redirect.py` (if needed) | Daemon handles interception, enforcement, telemetry |
 | `.state/` | Delete directory | State in daemon's state machine + DuckDB. Logs move to daemon log file. |
-| `lib/stores/` | Delete directory | DuckDB store moves into daemon |
+| `lib/stores/` | Retained for daemon | DuckDB store used by daemon's DataStore (see companion spec §1 File Layout) |
 
 ### Files Deleted from `hooks/`
 
@@ -1406,8 +1406,8 @@ This hook is **best-effort**, not airtight:
 | `agent_protocol.py` | ~115 | Agent protocol definitions | agents/*.md frontmatter |
 | `connection_pool.py` | ~100 | Connection pooling | Single daemon connection |
 | `config.py` (current) | ~80 | Backend config loading | Rewritten (see §4) |
-| `stores/duckdb_store.py` | ~400 | DuckDB telemetry store | Daemon: lib/datastore.py |
-| `stores/interfaces.py` | ~50 | Store interfaces | Daemon: lib/datastore.py |
+| `stores/duckdb_store.py` | ~400 | DuckDB telemetry store | Retained: used by daemon's DataStore |
+| `stores/interfaces.py` | ~50 | Store interfaces | Retained: used by daemon's DataStore |
 | `stores/validation.py` | ~50 | Store validation | Daemon: lib/datastore.py |
 | `stores/compression.py` | ~50 | Store compression | Daemon: lib/datastore.py |
 
@@ -1443,8 +1443,9 @@ This hook is **best-effort**, not airtight:
 
 | Metric | Before | After | Delta |
 |---|---|---|---|
-| Files in `lib/` | ~30 | 2 | -28 |
-| Lines in `lib/` | ~9,681 | ~200 | -9,481 |
+| Files in `lib/` (client-side) | ~22 | 2 | -20 |
+| Files in `lib/` (total with daemon) | ~30 | ~12 | -18 |
+| Lines in `lib/` (deleted client code) | ~9,681 | ~200 | -9,481 |
 | Files in `hooks/` | ~16 | 0-1 | -15 to -16 |
 | Lines in `hooks/` | ~1,460 | 0-35 | -1,425 to -1,460 |
 | Config files | 3 | 5 (+2 workflow YAMLs) | +2 |
@@ -1703,7 +1704,12 @@ Then: No matches in any remaining file
 ```
 Given: Refactor complete
 When: ls lib/
-Then: Only daemon_client.py and config.py (plus __init__.py if needed)
+Then: Daemon modules (daemon.py, router.py, controller.py, permissions.py,
+      backends.py, llm.py, datastore.py, cache.py, errors.py — per companion spec)
+      plus client modules (daemon_client.py, config.py)
+      plus stores/ and __init__.py if needed.
+      No deleted modules (iterate_workflow.py, mcp_router.py, mcp_permissions.py,
+      workflow_client.py, orchestrate.py, worker_pool.py, etc.)
 When: ls hooks/
 Then: Empty or contains only native-tool-redirect.py
 ```
