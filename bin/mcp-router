@@ -1,132 +1,120 @@
 #!/usr/bin/env python3
-"""MCP Router entry point.
+"""bin/mcp-router — stdio-to-TCP bridge shim.
 
-Starts the router as an MCP server on stdio.
-Reads backends from config/backends.json.
+Claude Code spawns this as a subprocess. It bridges MCP JSON-RPC
+over stdio to the daemon's TCP port. No logic, no state, pure pipe.
 
-Socket listener is SHARED across sessions:
-- First session starts the socket listener
-- Subsequent sessions reuse the existing socket
-- Each session has its own MCP stdio connection
+Replaces the old mcp_router.py-based entry point.
 """
 
 import json
-import os
-import signal
 import socket
+import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
-ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(ROOT / "lib"))
-
-from mcp_router import MCPRouter, start_stdio_server
-
-CONFIG_FILE = ROOT / "config" / "backends.json"
-STATE_DIR = ROOT / ".state"
-PID_FILE = STATE_DIR / "router.pid"
-PORT_FILE = STATE_DIR / "router.port"
+DAEMON_PORT = 7523
+ROOT = Path(__file__).resolve().parent.parent
 
 
-def check_existing_socket() -> int | None:
-    """Check if a healthy socket listener already exists.
-
-    Returns port number if healthy, None otherwise.
-    """
-    if not PID_FILE.exists() or not PORT_FILE.exists():
-        return None
-
+def _try_start_daemon() -> bool:
+    """Attempt to start the daemon if not running. Returns True if started."""
+    start_script = ROOT / "bin" / "start-daemon"
+    if not start_script.exists():
+        return False
     try:
-        # Try new format (port:pid in single file) first
-        if PORT_FILE.exists():
-            port_content = PORT_FILE.read_text().strip()
-            if ":" in port_content:
-                port_str, pid_str = port_content.split(":", 1)
-                port, pid = int(port_str), int(pid_str)
-            else:
-                # Legacy: separate files
-                port = int(port_content)
-                pid = int(PID_FILE.read_text().strip()) if PID_FILE.exists() else None
-        else:
-            return None
-    except (ValueError, OSError):
-        return None
-    
-    if pid is None:
-        return None
-
-    # Check if process is running
-    try:
-        os.kill(pid, 0)  # Signal 0 = check existence
-    except OSError:
-        # Process dead, clean up stale files
-        _cleanup_stale_files()
-        return None
-
-    # Health check - try to connect
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(1.0)
-            s.connect(("127.0.0.1", port))
-            # Send a ping
-            s.sendall(b'{"jsonrpc":"2.0","method":"ping","id":0}\n')
-            response = s.recv(1024)
-            if b"pong" in response or b"result" in response:
-                return port
-    except (socket.error, socket.timeout):
+        subprocess.Popen(
+            [sys.executable, str(start_script)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        # Give the daemon a moment to bind
+        for _ in range(10):
+            time.sleep(0.3)
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(1.0)
+                s.connect(("127.0.0.1", DAEMON_PORT))
+                s.close()
+                return True
+            except (ConnectionRefusedError, socket.timeout):
+                continue
+    except Exception:
         pass
+    return False
 
-    # Socket not responding, kill stale process
+
+def main():
+    # Connect to daemon
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        os.kill(pid, signal.SIGTERM)
-    except OSError:
-        pass
-    _cleanup_stale_files()
-    return None
-
-
-def _cleanup_stale_files():
-    """Remove stale pid/port files."""
-    for f in [PID_FILE, PORT_FILE]:
+        sock.connect(("127.0.0.1", DAEMON_PORT))
+    except ConnectionRefusedError:
+        # Try auto-starting the daemon
+        if not _try_start_daemon():
+            error = {
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": {
+                    "code": -32603,
+                    "message": "Daemon not running. Run start-claude to start it.",
+                },
+            }
+            sys.stdout.write(json.dumps(error) + "\n")
+            sys.stdout.flush()
+            sys.exit(1)
+        # Retry connection after auto-start
         try:
-            f.unlink()
-        except OSError:
+            sock.connect(("127.0.0.1", DAEMON_PORT))
+        except ConnectionRefusedError:
+            error = {
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": {
+                    "code": -32603,
+                    "message": "Daemon failed to start.",
+                },
+            }
+            sys.stdout.write(json.dumps(error) + "\n")
+            sys.stdout.flush()
+            sys.exit(1)
+
+    def stdin_to_tcp():
+        """Read from stdin (Claude Code), forward to daemon TCP."""
+        try:
+            for line in sys.stdin:
+                sock.sendall(line.encode())
+        except (BrokenPipeError, OSError):
+            pass
+        finally:
+            try:
+                sock.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+
+    def tcp_to_stdout():
+        """Read from daemon TCP, forward to stdout (Claude Code)."""
+        buf = b""
+        try:
+            while True:
+                chunk = sock.recv(8192)
+                if not chunk:
+                    break
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    sys.stdout.write(line.decode() + "\n")
+                    sys.stdout.flush()
+        except (BrokenPipeError, OSError):
             pass
 
-
-def write_socket_info(port: int):
-    """Write current process info for socket sharing."""
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    # New format: port:pid in single file (PID_FILE kept for backwards compat)
-    PORT_FILE.write_text(f"{port}:{os.getpid()}")
-    PID_FILE.write_text(str(os.getpid()))  # Legacy compatibility
+    reader = threading.Thread(target=tcp_to_stdout, daemon=True)
+    reader.start()
+    stdin_to_tcp()
+    sock.close()
 
 
 if __name__ == "__main__":
-    router = MCPRouter()
-
-    # Load and register backends
-    if CONFIG_FILE.exists():
-        backends = json.loads(CONFIG_FILE.read_text())
-        for name, config in backends.items():
-            router.register_server(
-                name=name,
-                command=config["command"],
-                tool_prefix=config.get("tool_prefix", ""),
-            )
-
-    # Check for existing shared socket
-    existing_port = check_existing_socket()
-
-    if existing_port:
-        # Reuse existing socket listener
-        sys.stderr.write(f"Reusing existing router socket on port {existing_port}\n")
-        port = existing_port
-    else:
-        # Start new socket listener (we're the first/master)
-        port = router.start_socket_listener()
-        write_socket_info(port)
-        sys.stderr.write(f"Started router socket listener on port {port}\n")
-
-    # Always start MCP stdio server (per-session)
-    start_stdio_server(router)
+    main()

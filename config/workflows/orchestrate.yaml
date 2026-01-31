@@ -1,0 +1,52 @@
+name: orchestrate
+description: "Task coordination and agent spawning"
+initial_phase: plan
+terminal_phase: done
+max_agents: 1
+
+phases:
+  - name: plan
+    allowed_tool_categories:
+      - FILE_READ
+      - FILE_SEARCH
+      - CODE_QUERY
+      - WEB_RESEARCH
+      - USER_INTERACTION
+    blocked_tools:
+      - native__bash
+      - native__write_file
+    eligible_agents:
+      - architect
+    checkpoint: false
+
+  - name: execute
+    allowed_tool_categories:
+      - FILE_READ
+      - FILE_SEARCH
+      - CODE_QUERY
+      - SUBAGENT
+      - USER_INTERACTION
+    blocked_tools:
+      - native__bash
+      - native__write_file
+    eligible_agents: []
+    checkpoint: false
+
+  - name: finalize
+    allowed_tool_categories:
+      - FILE_READ
+      - SHELL_SAFE
+      - USER_INTERACTION
+    blocked_tools: []
+    eligible_agents: []
+    checkpoint: false
+
+transitions:
+  plan:
+    - execute
+  execute:
+    - plan
+    - finalize
+  finalize:
+    - execute
+    - done

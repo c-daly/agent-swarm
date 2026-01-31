@@ -1,0 +1,63 @@
+name: implement
+description: "General implementation workflow with verification"
+initial_phase: plan
+terminal_phase: done
+max_agents: 2
+
+phases:
+  - name: plan
+    allowed_tool_categories:
+      - FILE_READ
+      - FILE_SEARCH
+      - CODE_QUERY
+      - WEB_RESEARCH
+      - USER_INTERACTION
+    blocked_tools:
+      - native__write_file
+      - serena__create_text_file
+      - serena__replace_content
+      - serena__replace_symbol_body
+    eligible_agents:
+      - implementer
+      - architect
+    checkpoint: false
+
+  - name: work
+    allowed_tool_categories:
+      - FILE_READ
+      - FILE_WRITE
+      - CODE_QUERY
+      - CODE_EDIT
+      - FILE_SEARCH
+      - SHELL_SAFE
+      - WEB_RESEARCH
+      - MEMORY
+    blocked_tools: []
+    eligible_agents:
+      - implementer
+    checkpoint: false
+
+  - name: verify
+    allowed_tool_categories:
+      - FILE_READ
+      - CODE_QUERY
+      - SHELL_SAFE
+    blocked_tools:
+      - native__write_file
+      - serena__create_text_file
+      - serena__replace_content
+      - serena__replace_symbol_body
+    eligible_agents:
+      - implementer
+      - reviewer
+    checkpoint: true
+
+transitions:
+  plan:
+    - work
+  work:
+    - verify
+    - plan
+  verify:
+    - work
+    - done

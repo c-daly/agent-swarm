@@ -3,6 +3,8 @@ name: explorer
 tools: Bash(mcp*)
 description: Fast codebase exploration - finding files, understanding patterns, mapping dependencies
 model: haiku
+max_output_chars: 2000
+can_write_files: false
 ---
 
 <constraints>
