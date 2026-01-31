@@ -149,9 +149,12 @@ class Router:
         """Route a parsed JSON-RPC message."""
         method = message["method"]
 
+        # JSON-RPC notifications have no id — must not send a response
+        is_notification = "id" not in message
+
         if method == "initialize":
             return self._handle_initialize(message)
-        if method == "notifications/initialized":
+        if method == "notifications/initialized" or is_notification:
             return None  # No response for notifications
         if method == "tools/list":
             return self._handle_tools_list(message)

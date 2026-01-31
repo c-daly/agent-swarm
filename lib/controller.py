@@ -610,7 +610,7 @@ class Controller:
                     raise WorkflowError(
                         f"Phase '{current}' does not have a checkpoint"
                     )
-            state[f"{current}_checkpoint_passed"] = True
+            state[f"{current}_checkpoint_passed"] = datetime.now(timezone.utc).isoformat()
             return {"status": "checkpoint_passed", "phase": current}
 
     def _agent_get_state(self, args: dict) -> dict | None:

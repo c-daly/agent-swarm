@@ -433,7 +433,7 @@ class TestProtectedKeys:
         with pytest.raises(WorkflowError, match="Protected key"):
             ctrl.handle_call(
                 "workflow__workflow_set_value",
-                {"workflow_id": "wf1", "key": "test_checkpoint_passed", "value": True},
+                {"workflow_id": "wf1", "key": "test_checkpoint_passed", "value": "2025-01-01T00:00:00+00:00"},
             )
 
     def test_start_strips_all_protected_keys(self, ctrl):
@@ -446,7 +446,7 @@ class TestProtectedKeys:
                     "started_at": "fake",
                     "active_agents": {"bad": True},
                     "agent_id": "evil",
-                    "test_checkpoint_passed": True,
+                    "test_checkpoint_passed": state["test_checkpoint_passed"],  # ISO timestamp
                     "legit_key": "kept",
                 },
             },
@@ -616,7 +616,7 @@ class TestPassCheckpoint:
         state = ctrl.handle_call(
             "workflow__workflow_get_state", {"workflow_id": "wf1"}
         )
-        assert state["test_checkpoint_passed"] is True
+        assert isinstance(state["test_checkpoint_passed"], str)  # ISO timestamp
 
     def test_pass_checkpoint_with_config(self, ctrl_with_config):
         ctrl_with_config.handle_call(
