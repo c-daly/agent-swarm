@@ -372,19 +372,19 @@ class TestWorkflowState:
             )
 
     def test_internal_set_state_still_works(self, ctrl):
-        """_wf_set_state is still callable internally (daemon use)."""
+        """__wf_set_state is still callable internally (daemon use)."""
         ctrl.handle_call(
             "workflow__workflow_start", {"workflow_id": "wf1"}
         )
-        result = ctrl._wf_set_state({"workflow_id": "wf1", "state": {"x": 1}})
+        result = ctrl._Controller__wf_set_state({"workflow_id": "wf1", "state": {"x": 1}})
         assert result == {"x": 1}
 
     def test_internal_update_still_works(self, ctrl):
-        """_wf_update is still callable internally (daemon use)."""
+        """__wf_update is still callable internally (daemon use)."""
         ctrl.handle_call(
             "workflow__workflow_start", {"workflow_id": "wf1"}
         )
-        result = ctrl._wf_update({"workflow_id": "wf1", "updates": {"extra": 99}})
+        result = ctrl._Controller__wf_update({"workflow_id": "wf1", "updates": {"extra": 99}})
         assert result["extra"] == 99
 
 
@@ -446,7 +446,7 @@ class TestProtectedKeys:
                     "started_at": "fake",
                     "active_agents": {"bad": True},
                     "agent_id": "evil",
-                    "test_checkpoint_passed": state["test_checkpoint_passed"],  # ISO timestamp
+                    "test_checkpoint_passed": "2025-01-01T00:00:00+00:00",
                     "legit_key": "kept",
                 },
             },
@@ -471,7 +471,7 @@ class TestAdvancePhase:
             "workflow__workflow_start", {"workflow_id": "wf1"}
         )
         # Directly set phase internally for testing
-        ctrl._wf_set_state({"workflow_id": "wf1", "state": {"phase": "a"}})
+        ctrl._Controller__wf_set_state({"workflow_id": "wf1", "state": {"phase": "a"}})
         result = ctrl.handle_call(
             "workflow__workflow_advance_phase",
             {"workflow_id": "wf1", "target_phase": "b"},
@@ -607,7 +607,7 @@ class TestPassCheckpoint:
         ctrl.handle_call(
             "workflow__workflow_start", {"workflow_id": "wf1"}
         )
-        ctrl._wf_set_state({"workflow_id": "wf1", "state": {"phase": "test"}})
+        ctrl._Controller__wf_set_state({"workflow_id": "wf1", "state": {"phase": "test"}})
         result = ctrl.handle_call(
             "workflow__workflow_pass_checkpoint",
             {"workflow_id": "wf1"},
