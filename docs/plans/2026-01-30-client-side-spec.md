@@ -12,7 +12,7 @@ questions.
 
 ## Table of Contents
 
-0. [Context and Scope](#0-context-and-scope)
+0. [Context, Scope, and Trust Model](#0-context-scope-and-trust-model)
 1. [DaemonClient](#1-daemonclient)
 2. [Workflow Config Schema](#2-workflow-config-schema)
 3. [Agent Definitions](#3-agent-definitions)
@@ -24,7 +24,27 @@ questions.
 
 ---
 
-## 0. Context and Scope
+## 0. Context, Scope, and Trust Model
+
+### Trust Model
+
+This client operates in a **fully trusted local environment**, identical to the
+daemon's trust model (see companion spec §0). Key implications for the client side:
+
+- **DaemonClient is a local-only shim, not a general-purpose API client.** It connects
+  to `127.0.0.1` only. No TLS, no authentication, no token exchange.
+- **Agent identity is self-reported and unauthenticated.** Any client can claim any
+  agent_id and agent_type via `register()`. The daemon records this for coordination
+  and telemetry, not for security. All clients run under the same OS user.
+- **Agent state isolation is cooperative, not enforced.** A client registered as
+  agent "A" can read/write state for agent "B" via `agent_get_state("B")`. This is
+  acceptable because all clients are local and trusted. The agent state API is a
+  shared coordination store, not a sandboxed per-agent vault.
+- **No input hardening at the client.** The client does not sanitize arguments before
+  sending to the daemon. The daemon handles malformed input (see companion spec §3
+  framing rules).
+- **Permission enforcement is entirely daemon-side.** The client sends requests; the
+  daemon decides what's allowed. The client never checks permissions locally.
 
 ### What This Spec Covers
 
@@ -93,6 +113,7 @@ DAEMON_HOST = "127.0.0.1"
 DAEMON_PORT = 7523
 RECV_BUFFER = 8192
 DEFAULT_TIMEOUT = 30.0
+MAX_RESPONSE_SIZE = 10 * 1024 * 1024  # 10 MB — matches daemon MAX_MESSAGE_SIZE
 
 
 class DaemonError(Exception):
@@ -136,6 +157,7 @@ class DaemonClient:
             self._timeout: float
             self._sock: socket.socket | None = None
             self._request_id: int = 0
+            self._registered: bool = False  # Set True after register()
             self._buf: bytes = b""  # Read buffer for partial responses
         """
 
@@ -147,6 +169,7 @@ class DaemonClient:
         3. Connect to (self._host, self._port)
         4. Reset self._buf to b""
         5. Reset self._request_id to 0
+        6. Reset self._registered to False
 
         Raises:
             ConnectionRefusedError: Daemon is not running
@@ -169,6 +192,10 @@ class DaemonClient:
         MUST be called exactly once after connect(), before any other method.
         The daemon associates all subsequent requests on this connection with
         the registered agent context.
+
+        Client-side guard:
+        1. If self._registered is True → raise RuntimeError("Already registered")
+        2. On success → set self._registered = True
 
         Args:
             agent_id: Unique identifier for this agent instance
@@ -338,6 +365,13 @@ class DaemonClient:
         Returns:
             True if workflow exists and is active, False otherwise.
             Never raises — returns False on any error.
+
+            **Intentional design:** This method masks connection failures and
+            daemon errors by returning False. This is deliberate — callers use
+            this for lightweight "is anything running?" checks where False is
+            the safe default. If you need to distinguish "workflow not active"
+            from "daemon unreachable", use workflow_get_state() instead, which
+            raises DaemonError on failure.
         """
         try:
             result = self._call("workflow/is_active", {
@@ -419,18 +453,27 @@ class DaemonClient:
         """Send JSON-RPC request, block for response, return result.
 
         1. If self._sock is None → raise ConnectionError("Not connected")
-        2. Increment self._request_id
-        3. Build request:
+        2. If method != "agent/register" and not self._registered:
+           → raise RuntimeError("Must call register() before other methods")
+        3. Increment self._request_id
+        4. Build request:
            {"jsonrpc": "2.0", "id": self._request_id, "method": method, "params": params}
-        4. Serialize to JSON, encode UTF-8, append newline
-        5. self._sock.sendall(payload)
-        6. Read response via _read_response()
-        7. Parse JSON
-        8. If "error" in response → raise DaemonError(code, message, data)
-        9. Return response["result"]
+        5. Serialize to JSON, encode UTF-8, append newline
+        6. self._sock.sendall(payload)
+        7. Read response via _read_response()
+        8. Decode UTF-8. On UnicodeDecodeError → raise ConnectionError(
+           "Invalid UTF-8 from daemon — possible protocol desynchronization")
+        9. Parse JSON. On JSONDecodeError → raise ConnectionError(
+           "Invalid JSON from daemon — possible protocol desynchronization")
+        10. Validate response["id"] == self._request_id. On mismatch →
+            raise ConnectionError(
+            f"Response ID mismatch: expected {self._request_id}, got {response['id']}")
+        11. If "error" in response → raise DaemonError(code, message, data)
+        12. Return response["result"]
 
         Raises:
-            ConnectionError: Not connected or connection lost
+            RuntimeError: Not registered (for non-register methods)
+            ConnectionError: Not connected, connection lost, or protocol error
             DaemonError: Daemon returned an error response
             socket.timeout: No response within timeout
         """
@@ -439,15 +482,23 @@ class DaemonClient:
         """Read exactly one newline-delimited response from the socket.
 
         1. While b"\\n" not in self._buf:
-           a. chunk = self._sock.recv(RECV_BUFFER)
-           b. If not chunk → raise ConnectionError("Daemon closed connection")
-           c. self._buf += chunk
+           a. If len(self._buf) > MAX_RESPONSE_SIZE:
+              → raise ConnectionError(
+                f"Response exceeds {MAX_RESPONSE_SIZE} bytes — "
+                "possible protocol desynchronization")
+           b. chunk = self._sock.recv(RECV_BUFFER)
+           c. If not chunk → raise ConnectionError("Daemon closed connection")
+           d. self._buf += chunk
         2. Split on first b"\\n": line, self._buf = self._buf.split(b"\\n", 1)
-        3. Return line
+        3. Return line (as raw bytes — caller handles decoding)
 
         The buffer (self._buf) persists across calls to handle cases where
         a recv() returns data spanning multiple responses. Each call
         consumes exactly one line and preserves the remainder.
+
+        The MAX_RESPONSE_SIZE cap prevents unbounded memory growth if the
+        daemon misbehaves or the connection desynchronizes (e.g., binary
+        garbage without newlines).
         """
 
     def __enter__(self) -> "DaemonClient":
@@ -465,18 +516,26 @@ class DaemonClient:
 The daemon returns standard JSON-RPC error codes plus custom codes.
 The client surfaces these via DaemonError.
 
-| Code | Meaning | When |
-|---|---|---|
-| -32700 | Parse error | Malformed JSON in request |
-| -32600 | Invalid request | Missing required JSON-RPC fields |
-| -32601 | Method not found | Unknown method |
-| -32602 | Invalid params | Missing or wrong-typed parameters |
-| -32603 | Internal error | Unexpected daemon failure |
-| -32001 | Permission denied | Agent not allowed to call this tool in current phase |
-| -32002 | Tool not found | Tool name doesn't match any backend |
-| -32003 | Backend error | Backend MCP server returned an error |
-| -32004 | Workflow error | Invalid workflow operation (bad transition, not active, etc.) |
-| -32005 | Registration required | Called a method before agent/register |
+| Code | Meaning | When | Retryable? |
+|---|---|---|---|
+| -32700 | Parse error | Malformed JSON in request | No — client bug |
+| -32600 | Invalid request | Missing required JSON-RPC fields | No — client bug |
+| -32601 | Method not found | Unknown method | No — client bug |
+| -32602 | Invalid params | Missing or wrong-typed parameters | No — client bug |
+| -32603 | Internal error | Unexpected daemon failure | Maybe — transient daemon issue |
+| -32001 | Permission denied | Agent not allowed to call this tool in current phase | No — change phase first |
+| -32002 | Tool not found | Tool name doesn't match any backend | No — client bug |
+| -32003 | Backend error | Backend MCP server returned an error | Maybe — backend may recover |
+| -32004 | Workflow error | Invalid workflow operation (bad transition, not active, etc.) | No — logic error |
+| -32005 | Registration required | Called a method before agent/register | No — client bug |
+
+**Retryable errors** (-32603, -32003) may succeed on retry if the underlying
+issue is transient (e.g., backend temporarily unavailable). All other errors
+indicate logic errors or invalid state that won't resolve by retrying.
+
+**`data` field:** The `data` field on DaemonError is optional and its shape
+varies by error code. Treat it as opaque diagnostic information for logging.
+Do not parse or branch on it.
 
 ### Thread Safety
 
@@ -571,6 +630,14 @@ terminal_phase: string
 # When a transition targets this phase, the daemon marks the
 # workflow as complete (workflow/is_active returns false).
 # Regex: ^[a-z][a-z0-9_]{0,63}$
+#
+# Implications of reaching terminal_phase:
+# - workflow/is_active returns false
+# - workflow/get_state still returns the final state (state persists)
+# - workflow/advance_phase is rejected (no transitions from terminal)
+# - No tool restrictions apply (no phase = no enforcement)
+# - The workflow can be explicitly stopped via workflow/stop to clear state
+# - A new instance can be started via workflow/start
 
 max_agents: integer
 # Maximum concurrent agents allowed in this workflow.
@@ -591,6 +658,11 @@ phases:
     #   CODE_QUERY     — Semantic code queries (serena__find_symbol, serena__get_symbols_overview)
     #   CODE_EDIT      — Edit code (serena__replace_content, serena__replace_symbol_body)
     #   SHELL_SAFE     — Shell execution (native__bash)
+    #                   CAVEAT: The name "SAFE" is relative. This category allows
+    #                   arbitrary shell commands. It is "safe" only in the sense
+    #                   that the daemon logs and permission-gates it, not that the
+    #                   commands themselves are sandboxed. Workflow authors should
+    #                   understand that enabling SHELL_SAFE grants full shell access.
     #   WEB_RESEARCH   — Web access (context7__*, playwright__*)
     #   MEMORY         — Memory tools (memory__*)
     #   SUBAGENT       — Subagent spawning
@@ -621,6 +693,18 @@ phases:
     # - The client (agent) is responsible for setting this key via
     #   workflow/set_value when the checkpoint condition is met
     #   (e.g., tests pass, review approved).
+    #
+    # Convention enforcement: The daemon constructs the key name
+    # programmatically as f"{current_phase}_checkpoint_passed". This is
+    # a fixed convention, not a configurable pattern. Agents MUST use
+    # this exact key. Example:
+    #   Phase "test" → key "test_checkpoint_passed"
+    #   Phase "review" → key "review_checkpoint_passed"
+    #
+    # The daemon validates the key name at transition time. Typos in
+    # client code (e.g., "tests_checkpoint_passed" instead of
+    # "test_checkpoint_passed") will simply fail the checkpoint check,
+    # surfacing as a -32004 error.
 
 transitions:
   phase_name: list[string]
@@ -862,6 +946,28 @@ Everything below the frontmatter separator is treated as raw markdown
 and passed to Claude as-is.
 ```
 
+### Informational vs Enforced Fields
+
+**Explicitly informational fields:** `model`, `max_output_chars`, `can_write_files`.
+
+These fields are metadata for documentation, telemetry, and prompt guidance.
+The daemon records them but does **not** enforce them. Enforcement of tool
+access and file write permissions is entirely via workflow phase config
+(§2 `allowed_tool_categories`, `blocked_tools`). Model selection is Claude
+Code's responsibility, not the daemon's.
+
+**Why not enforce them?** Because the same agent type may legitimately need
+different capabilities in different workflows or phases. An implementer in
+`implement` phase can write files; the same implementer type in a hypothetical
+`audit` phase might not. Phase-level enforcement is more flexible and avoids
+duplication between agent definitions and workflow configs.
+
+**Prompt content is opaque to the system.** The daemon does not parse, validate,
+or inspect the markdown body of agent definitions. It is passed verbatim to
+Claude. All behavioral correctness of the agent depends on the quality of its
+prompt — this is inherent to prompt-driven systems and not something the daemon
+can enforce.
+
 ### Validation Rules
 
 The daemon validates agent definitions on startup.
@@ -1071,16 +1177,30 @@ def load_all() -> tuple[dict[str, WorkflowConfig],
     backends = load_backends()
     permissions = load_permissions()
 
-    # Cross-validation: warn if workflow references unknown agents
+    # Cross-validation
     known_agents = set(agents.keys())
+    known_backends = set(backends.keys())
+
     for wf in workflows.values():
         for phase in wf.phases.values():
+            # Warn on unknown agents
             for agent_name in phase.eligible_agents:
                 if agent_name not in known_agents:
                     import logging
                     logging.warning(
                         f"Workflow '{wf.name}' phase '{phase.name}' "
                         f"references unknown agent '{agent_name}'"
+                    )
+
+            # Warn on blocked_tools that don't match any backend's prefix
+            for tool_name in phase.blocked_tools:
+                prefix = tool_name.split("__")[0] if "__" in tool_name else None
+                if prefix and prefix not in known_backends:
+                    import logging
+                    logging.warning(
+                        f"Workflow '{wf.name}' phase '{phase.name}' "
+                        f"blocks tool '{tool_name}' but no backend "
+                        f"with prefix '{prefix}' is configured"
                     )
 
     return workflows, agents, backends, permissions
@@ -1093,7 +1213,11 @@ class ConfigError(Exception):
 
 ### Frontmatter Parsing
 
-The YAML frontmatter parser is deliberately simple:
+The YAML frontmatter parser is deliberately simple and **strict**:
+files that lack valid frontmatter cause a hard startup failure. This is
+intentional — a missing or malformed frontmatter block means the daemon
+has no protocol metadata for that agent type, which would cause confusing
+runtime errors. Fail fast on startup instead.
 
 ```python
 def _parse_frontmatter(content: str) -> tuple[dict, str]:
@@ -1206,6 +1330,24 @@ if __name__ == "__main__":
 **This is the only hook.** No other hooks exist. No telemetry hooks, no
 enforcement hooks, no session hooks, no subagent hooks. The daemon handles
 all of those concerns by virtue of being in the request path.
+
+### Accepted Limitations
+
+This hook is **best-effort**, not airtight:
+
+- **Depends on Claude Code honoring PreToolUse hooks.** If Claude Code changes
+  its hook execution model, this hook may stop working. This is an accepted
+  coupling to Claude Code's extension API.
+- **Depends on stable tool naming.** If Claude Code renames its native tools
+  (e.g., "Read" becomes "FileRead"), the NATIVE_TO_DAEMON mapping must be updated.
+  This is a maintenance burden, not a design flaw.
+- **Blocking is advisory to the agent.** The hook blocks the tool call and
+  returns guidance, but cannot force the agent to use the daemon equivalent.
+  The agent's prompt must reinforce that native tools are unavailable. Repeated
+  blocked calls without progress indicate a prompt issue, not a hook issue.
+- **Config-based blocking (best case) eliminates all of these.** If Claude Code
+  supports `disabledTools` or equivalent, this hook is deleted entirely and
+  none of these limitations apply.
 
 ---
 
@@ -1419,6 +1561,22 @@ Phase 7 (Verify)
 - Telemetry is recorded by daemon
 - Permissions are enforced by daemon
 
+### Rollback Strategy
+
+Every migration phase is committed to git before proceeding to the next.
+If a phase fails:
+
+1. `git log` to find the last known-good commit
+2. `git revert` the failing phase's commits
+3. The old system (workflow_client + hooks + per-session routers) continues
+   to function because it is not modified until Phase 6
+
+**Phase 6 (Delete) is the one-way door.** Before executing Phase 6:
+- Phase 5 must be verified working for at least one full workflow cycle
+- A git tag `pre-client-deletion` is created as a restore point
+- If issues surface after deletion, `git revert` to the tag restores
+  all deleted code
+
 ### Phase 6: Delete Old Code
 
 **Prereq:** Phase 5 verified working
@@ -1549,3 +1707,26 @@ Then: Only daemon_client.py and config.py (plus __init__.py if needed)
 When: ls hooks/
 Then: Empty or contains only native-tool-redirect.py
 ```
+
+### Debugging Strategy
+
+The thin client design means nearly all logic lives in the daemon. This is
+a strength (one place to look), but it means client-side bugs often manifest
+as daemon-side symptoms. Guidelines for debugging:
+
+- **DaemonError with unexpected code:** Check daemon logs first. The daemon
+  logs every request, permission decision, and backend dispatch. The client
+  error is a consequence, not a cause.
+- **ConnectionError:** Check if daemon is running (`is_running()`). Check if
+  another process grabbed the port. Check daemon logs for crash/restart.
+- **RuntimeError ("Not registered" / "Already registered"):** Client lifecycle
+  bug. The consumer is calling methods in the wrong order.
+- **Silent failures (workflow_is_active returns False unexpectedly):** Use
+  `workflow_get_state()` instead to get an explicit error.
+- **Permission denied on a tool that should be allowed:** Check the workflow
+  config YAML (is the agent in `eligible_agents`? is the tool's category in
+  `allowed_tool_categories`? is the tool in `blocked_tools`?). Then check
+  `config/permissions.yaml` for global overrides.
+- **Daemon logs are the single source of truth.** When in doubt, read the
+  daemon log. Every tool call, every permission decision, every error is
+  recorded there with timestamps and agent context.
