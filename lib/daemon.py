@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""Daemon entry point and lifecycle management.
+
+Single long-lived process. Owns the Router, which owns the Controller,
+which owns all services. Started once, stays alive across sessions.
+"""
+
+from __future__ import annotations
+
+import fcntl
+import json
+import logging
+import signal
+import socket
+import sys
+from pathlib import Path
+
+DEFAULT_PORT = 7523
+_BASE_DIR = Path(__file__).parent.parent
+LOG_DIR = _BASE_DIR / "logs"
+LOG_FILE = LOG_DIR / "daemon.log"
+LOCK_FILE = _BASE_DIR / ".daemon.lock"
+CONFIG_DIR = _BASE_DIR / "config"
+DATA_DIR = _BASE_DIR / "data"
+
+
+def main(port: int = DEFAULT_PORT) -> None:
+    """Entry point. Called by bin/start-claude or directly.
+
+    1. Ensure directories exist
+    2. Acquire exclusive flock (singleton)
+    3. Configure logging
+    4. Create Controller and Router
+    5. Register signal handlers
+    6. Serve forever (blocks)
+    """
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    lock_fd = _acquire_lock()
+    if lock_fd is None:
+        print("Another daemon instance is already running", file=sys.stderr)
+        sys.exit(1)
+
+    logging.basicConfig(
+        filename=str(LOG_FILE),
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    log = logging.getLogger("daemon")
+    log.info("Starting daemon on port %d", port)
+
+    from lib.controller import Controller
+    from lib.router import Router
+
+    controller = Controller(config_dir=CONFIG_DIR, data_dir=DATA_DIR)
+    router = Router(port=port, controller=controller)
+
+    def handle_signal(signum: int, frame: object) -> None:
+        log.info("Received signal %d, shutting down", signum)
+        router.shutdown()
+
+    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGINT, handle_signal)
+
+    try:
+        router.serve_forever()
+    except Exception as e:
+        log.error("Fatal error: %s", e)
+    finally:
+        log.info("Daemon stopped")
+        try:
+            lock_fd.close()
+            LOCK_FILE.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def is_running(port: int = DEFAULT_PORT) -> bool:
+    """Check if daemon is already running via TCP connection check."""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1.0)
+        sock.connect(("127.0.0.1", port))
+        sock.close()
+        return True
+    except (ConnectionRefusedError, OSError):
+        return False
+
+
+def shutdown(port: int = DEFAULT_PORT) -> bool:
+    """Request graceful shutdown via JSON-RPC."""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(5.0)
+        sock.connect(("127.0.0.1", port))
+
+        request = json.dumps({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "daemon/shutdown",
+            "params": {},
+        }) + "\n"
+        sock.sendall(request.encode("utf-8"))
+
+        # Wait for response
+        data = b""
+        try:
+            while True:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+                if b"\n" in data:
+                    break
+        except socket.timeout:
+            pass
+
+        sock.close()
+        return True
+    except (ConnectionRefusedError, OSError):
+        return False
+
+
+def _acquire_lock() -> object | None:
+    """Acquire exclusive flock. Returns file object or None if locked."""
+    try:
+        fd = open(LOCK_FILE, "w")
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return fd
+    except OSError:
+        return None
+
+
+if __name__ == "__main__":
+    port = DEFAULT_PORT
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "--shutdown":
+            if shutdown():
+                print("Shutdown request sent")
+            else:
+                print("Daemon not running", file=sys.stderr)
+                sys.exit(1)
+            sys.exit(0)
+        elif sys.argv[1] == "--status":
+            if is_running():
+                print("Daemon is running")
+            else:
+                print("Daemon is not running")
+            sys.exit(0)
+        else:
+            try:
+                port = int(sys.argv[1])
+            except ValueError:
+                print(
+                    f"Usage: {sys.argv[0]} [port|--shutdown|--status]",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+    main(port)

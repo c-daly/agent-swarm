@@ -42,6 +42,14 @@ except ImportError:
         pass
 
 try:
+    from permission_query import get_permissions, get_active_workflow_id
+except ImportError:
+    def get_active_workflow_id():
+        return None
+    def get_permissions(workflow_id=None):
+        return None
+
+try:
     from workflow_client import workflow_get_state, workflow_set_state, agent_set_state
 except ImportError:
     # Fallback if workflow_client not available
@@ -803,6 +811,91 @@ def format_handoff_context(handoffs: list[Path], max_chars: int = 1500) -> str:
         return ""
 
 
+def format_permissions_for_prompt(perms) -> str:
+    """Format PermissionStore as human-readable prompt context.
+
+    Absorbed from session-init.py.
+
+    Args:
+        perms: PermissionStore instance or None
+
+    Returns:
+        Formatted string for injection into prompt context
+    """
+    if not perms:
+        return "No active workflow - standard permissions apply."
+
+    lines = [
+        f"Active workflow: {perms.workflow_type} ({perms.workflow_id})",
+        f"Current phase: {perms.phase}",
+    ]
+
+    if perms.phase_permissions:
+        pp = perms.phase_permissions
+
+        if pp.blocked_tools:
+            tools = list(pp.blocked_tools)[:10]
+            if len(pp.blocked_tools) > 10:
+                tools.append(f"...and {len(pp.blocked_tools) - 10} more")
+            lines.append(f"Blocked tools: {', '.join(tools)}")
+
+        if pp.blocked_commands:
+            cmds = list(pp.blocked_commands)[:5]
+            if len(pp.blocked_commands) > 5:
+                cmds.append(f"...and {len(pp.blocked_commands) - 5} more")
+            lines.append(f"Blocked commands: {', '.join(cmds)}")
+
+        if pp.allowed_categories:
+            lines.append(f"Allowed categories: {', '.join(pp.allowed_categories)}")
+
+        if pp.required_tools:
+            lines.append(f"Required tools: {', '.join(pp.required_tools)}")
+
+    if perms.is_subagent:
+        lines.append("Running as subagent - restricted permissions apply")
+
+    return "\n".join(lines)
+
+
+
+# Processing limit per session start (balance speed vs progress)
+TELEMETRY_MAX_FILES_PER_SESSION = 25
+
+
+def process_telemetry_jsonl() -> str | None:
+    """Process a batch of historical JSONL files for telemetry.
+
+    Absorbed from telemetry-sessionstart.py.
+
+    Returns:
+        Progress message string, or None if nothing to report
+    """
+    try:
+        from jsonl_extractor import process_batch, load_progress, find_jsonl_files, is_file_processed
+
+        progress = load_progress()
+        all_files = find_jsonl_files()
+        unprocessed = [f for f in all_files if not is_file_processed(f, progress)]
+
+        if not unprocessed:
+            return None
+
+        stats = process_batch(max_files=TELEMETRY_MAX_FILES_PER_SESSION, verbose=False)
+
+        if stats["remaining"] > 0:
+            pct = ((stats["total_files"] - stats["remaining"]) / stats["total_files"]) * 100
+            return f"JSONL processing: {pct:.0f}% complete ({stats['remaining']} files remaining)"
+
+        return None
+
+    except ImportError:
+        return None
+    except Exception as e:
+        log_debug(f"Telemetry JSONL processing failed: {e}")
+        return None
+
+
+
 def main():
     """Session start hook entry point."""
 
@@ -846,6 +939,21 @@ def main():
                 cleanup_message = f"Cleaned {result['files_deleted']} stale output files ({space_mb:.1f} MB)"
         except Exception:
             pass  # Fail silently - cleanup shouldn't break session start
+
+    # Inject workflow permission context (absorbed from session-init.py)
+    permission_context = None
+    if not agent_id:
+        try:
+            active_wf_id = get_active_workflow_id()
+            perms = get_permissions(active_wf_id) if active_wf_id else None
+            permission_context = format_permissions_for_prompt(perms)
+        except Exception as e:
+            log_debug(f"Permission query failed: {e}")
+
+    # Process telemetry JSONL batch (absorbed from telemetry-sessionstart.py)
+    telemetry_message = None
+    if not agent_id:
+        telemetry_message = process_telemetry_jsonl()
 
     # Run inventory to discover capabilities
     inventory_output = run_inventory()
@@ -903,6 +1011,14 @@ def main():
     # Add inventory if available
     if inventory_output:
         messages.append("Capability Inventory:\n" + inventory_output[:1000])  # Limit size
+
+    # Add workflow permission context
+    if permission_context:
+        messages.append(f"Workflow Permissions:\n{permission_context}")
+
+    # Add telemetry progress if applicable
+    if telemetry_message:
+        messages.append(telemetry_message)
 
     # Add memory suggestions (always show the message, which now includes auto-read snippets)
     messages.append(results.get("message", ""))
