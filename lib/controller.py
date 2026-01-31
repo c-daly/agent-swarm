@@ -515,7 +515,7 @@ class Controller:
             state = self._workflow_state.get(wf_id)
             return copy.deepcopy(state) if state is not None else None
 
-    def _wf_set_state(self, args: dict) -> dict:
+    def __wf_set_state(self, args: dict) -> dict:
         """Internal only -- not exposed via client dispatch."""
         wf_id = args.get("workflow_id", "")
         state = args.get("state", {})
@@ -525,7 +525,7 @@ class Controller:
             self._workflow_state[wf_id] = dict(state)
             return copy.deepcopy(self._workflow_state[wf_id])
 
-    def _wf_update(self, args: dict) -> dict:
+    def __wf_update(self, args: dict) -> dict:
         """Internal only -- not exposed via client dispatch."""
         wf_id = args.get("workflow_id", "")
         updates = args.get("updates", {})
