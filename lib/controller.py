@@ -1,0 +1,573 @@
+#!/usr/bin/env python3
+"""Core orchestrator for the daemon.
+
+All tool calls flow through Controller.handle_call(). Owns all services
+as properties: PermissionChecker, BackendManager, LLMService, DataStore, Cache.
+"""
+
+from __future__ import annotations
+
+import copy
+import glob as glob_module
+import logging
+import os
+import re
+import subprocess
+import threading
+import time
+import uuid
+from pathlib import Path
+from typing import Any
+
+from lib.backends import BackendManager
+from lib.cache import Cache
+from lib.datastore import DataStore
+from lib.errors import (
+    BackendNotFoundError,
+    PermissionDeniedError,
+    RouterError,
+    WorkflowError,
+)
+from lib.llm import LLMService
+from lib.permissions import AgentInfo, PermissionChecker
+
+log = logging.getLogger(__name__)
+
+
+class Controller:
+    """Orchestrates all request handling. Owns all services as properties."""
+
+    def __init__(
+        self,
+        config_dir: Path,
+        data_dir: Path,
+    ) -> None:
+        self.permissions = PermissionChecker(config_dir / "permissions.yaml")
+        self.backends = BackendManager(config_dir / "backends.json")
+        self.llm = LLMService()
+        self.data = DataStore(data_dir / "datastore.db")
+        self.cache = Cache()
+
+        self._tool_to_backend: dict[str, str] = {}
+        self._workflow_state: dict[str, dict] = {}
+        self._agent_state: dict[str, dict] = {}
+        self._state_lock = threading.RLock()
+        self._summarization_threshold = 2000
+
+    # --- Main entry point ---
+
+    def handle_call(self, tool: str, args: dict) -> Any:
+        """Main entry point. All tool calls go through here."""
+        start_time = time.monotonic()
+
+        # Parse prefix and tool_name
+        if "__" in tool:
+            prefix, _, tool_name = tool.partition("__")
+        else:
+            prefix, tool_name = tool, ""
+
+        # Extract caller info without mutating original args dict
+        caller_info = args.get("_caller")
+        clean_args = {k: v for k, v in args.items() if k != "_caller"}
+        agent_info = self._resolve_agent(caller_info)
+
+        # Check permissions
+        allowed, blocked = self.permissions.check(tool, clean_args, agent_info)
+        if not allowed:
+            self._record_error_event(
+                tool, prefix, agent_info, start_time,
+                "PermissionDeniedError", blocked.reason if blocked else "blocked",
+            )
+            raise PermissionDeniedError(blocked)
+
+        # Route by prefix
+        try:
+            if prefix == "native":
+                raw_result = self._handle_native(tool_name, clean_args)
+            elif prefix == "router":
+                raw_result = self._handle_router(tool_name, clean_args)
+            elif prefix == "workflow":
+                raw_result = self._handle_workflow(tool_name, clean_args)
+            else:
+                raw_result = self._handle_backend(prefix, tool_name, clean_args)
+        except PermissionDeniedError:
+            raise  # Already recorded above
+        except Exception as e:
+            self._record_error_event(
+                tool, prefix, agent_info, start_time,
+                type(e).__name__, str(e),
+            )
+            raise
+
+        # Cache full response
+        content_id = f"c{uuid.uuid4().hex[:12]}"
+        original_size = len(str(raw_result))
+        self.cache.store(content_id, raw_result)
+
+        # Summarize if needed
+        result, was_summarized = self._maybe_summarize(
+            raw_result, content_id, original_size
+        )
+
+        # Record success telemetry
+        duration_ms = int((time.monotonic() - start_time) * 1000)
+        self.data.record_event({
+            "tool": tool,
+            "backend": prefix,
+            "status": "success",
+            "duration_ms": duration_ms,
+            "original_size": original_size,
+            "summary_size": len(str(result)) if was_summarized else None,
+            "was_summarized": was_summarized,
+            "session_id": agent_info.session_id if agent_info else "",
+            "agent_id": agent_info.agent_id if agent_info else "",
+            "agent_type": agent_info.agent_type if agent_info else "",
+        })
+
+        return result
+
+    def _record_error_event(
+        self,
+        tool: str,
+        prefix: str,
+        agent_info: AgentInfo | None,
+        start_time: float,
+        error_type: str,
+        error_msg: str,
+    ) -> None:
+        """Record a failed tool call in the event store."""
+        duration_ms = int((time.monotonic() - start_time) * 1000)
+        try:
+            self.data.record_event({
+                "tool": tool,
+                "backend": prefix,
+                "status": "error",
+                "duration_ms": duration_ms,
+                "error_type": error_type,
+                "session_id": agent_info.session_id if agent_info else "",
+                "agent_id": agent_info.agent_id if agent_info else "",
+                "agent_type": agent_info.agent_type if agent_info else "",
+            })
+        except Exception:
+            log.warning("Failed to record error event for %s", tool)
+
+    def get_full_content(self, content_id: str) -> Any:
+        """Retrieve cached full content by content_id."""
+        content = self.cache.get(content_id)
+        if content is None:
+            return {"error": "Content not found or expired", "isError": True}
+
+        self.data.record_event({
+            "tool": "router__get_full",
+            "backend": "router",
+            "status": "success",
+        })
+        return content
+
+    def list_backend_tools(self) -> list[dict]:
+        """Query all backends for their tool lists, prefixed by backend name."""
+        all_tools: list[dict] = []
+        for backend_name in self.backends.list():
+            try:
+                tools = self.backends.list_tools(backend_name)
+                for tool in tools:
+                    prefixed_name = f"{backend_name}__{tool['name']}"
+                    tool_copy = dict(tool)
+                    tool_copy["name"] = prefixed_name
+                    self._tool_to_backend[prefixed_name] = backend_name
+                    all_tools.append(tool_copy)
+            except Exception as e:
+                log.warning("Failed to list tools for %s: %s", backend_name, e)
+        return all_tools
+
+    def shutdown(self) -> None:
+        """Graceful shutdown."""
+        self.backends.shutdown_all()
+        self.data.close()
+
+    # --- Native operations ---
+
+    def _handle_native(self, tool_name: str, args: dict) -> Any:
+        dispatch = {
+            "read_file": self._native_read_file,
+            "write_file": self._native_write_file,
+            "edit_file": self._native_edit_file,
+            "glob": self._native_glob,
+            "grep": self._native_grep,
+            "bash": self._native_bash,
+        }
+        handler = dispatch.get(tool_name)
+        if handler is None:
+            raise RouterError(f"Unknown native tool: {tool_name}")
+        return handler(args)
+
+    def _native_read_file(self, args: dict) -> dict:
+        """Read a file from disk."""
+        file_path = args.get("file_path", "")
+        offset = args.get("offset", 0)
+        limit = args.get("limit")
+
+        try:
+            p = Path(file_path)
+            if not p.exists():
+                return {"error": f"File not found: {file_path}", "isError": True}
+            if p.is_dir():
+                return {"error": f"Is a directory: {file_path}", "isError": True}
+
+            lines = p.read_text(encoding="utf-8", errors="replace").splitlines(True)
+            total = len(lines)
+
+            if limit is not None:
+                selected = lines[offset : offset + limit]
+                truncated = (offset + limit) < total
+            else:
+                selected = lines[offset:]
+                truncated = offset > 0
+
+            # cat -n format
+            numbered = []
+            for i, line in enumerate(selected, start=offset + 1):
+                numbered.append(f"  {i}\t{line.rstrip()}")
+            content = "\n".join(numbered)
+
+            return {
+                "content": content,
+                "line_count": len(selected),
+                "char_count": sum(len(l) for l in selected),
+                "truncated": truncated,
+            }
+        except PermissionError:
+            return {"error": f"Permission denied: {file_path}", "isError": True}
+
+    def _native_write_file(self, args: dict) -> dict:
+        """Write content to a file."""
+        file_path = args.get("file_path", "")
+        content = args.get("content", "")
+        p = Path(file_path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+        return {"result": f"File written: {file_path}"}
+
+    def _native_edit_file(self, args: dict) -> dict:
+        """Find and replace text in a file."""
+        file_path = args.get("file_path", "")
+        old_string = args.get("old_string", "")
+        new_string = args.get("new_string", "")
+        replace_all = args.get("replace_all", False)
+
+        p = Path(file_path)
+        if not p.exists():
+            return {"error": f"File not found: {file_path}", "isError": True}
+
+        text = p.read_text(encoding="utf-8")
+        count = text.count(old_string)
+
+        if count == 0:
+            return {"error": "String not found in file", "isError": True}
+        if count > 1 and not replace_all:
+            return {
+                "error": "Multiple matches found. Use replace_all=True or provide more context.",
+                "isError": True,
+            }
+
+        if replace_all:
+            new_text = text.replace(old_string, new_string)
+        else:
+            new_text = text.replace(old_string, new_string, 1)
+
+        p.write_text(new_text, encoding="utf-8")
+        replacements = count if replace_all else 1
+        return {"result": f"Edited: {file_path}", "replacements": replacements}
+
+    def _native_glob(self, args: dict) -> dict:
+        """Find files matching a glob pattern."""
+        pattern = args.get("pattern", "")
+        path = args.get("path", ".")
+
+        base = Path(path)
+        matches = sorted(
+            base.glob(pattern),
+            key=lambda p: p.stat().st_mtime if p.exists() else 0,
+            reverse=True,
+        )
+        return {"files": [str(m) for m in matches if m.is_file()]}
+
+    def _native_grep(self, args: dict) -> dict:
+        """Search file contents with regex."""
+        pattern = args.get("pattern", "")
+        path = args.get("path", ".")
+        output_mode = args.get("output_mode", "files")
+        case_insensitive = args.get("case_insensitive", False)
+        file_glob = args.get("file_glob")
+
+        # Try ripgrep first, fall back to grep
+        cmd = ["rg"]
+        if case_insensitive:
+            cmd.append("-i")
+        if output_mode == "files":
+            cmd.append("-l")
+        else:
+            cmd.extend(["-n", "--no-heading"])
+        if file_glob:
+            cmd.extend(["--glob", file_glob])
+        cmd.extend([pattern, path])
+
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=30
+            )
+        except FileNotFoundError:
+            # rg not available, try grep
+            cmd = ["grep", "-r"]
+            if case_insensitive:
+                cmd.append("-i")
+            if output_mode == "files":
+                cmd.append("-l")
+            else:
+                cmd.append("-n")
+            cmd.extend([pattern, path])
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=30
+            )
+
+        lines = result.stdout.strip().splitlines() if result.stdout else []
+
+        if output_mode == "files":
+            return {"files": lines}
+
+        matches = []
+        for line in lines:
+            parts = line.split(":", 2)
+            if len(parts) >= 3:
+                matches.append({
+                    "file": parts[0],
+                    "line": int(parts[1]) if parts[1].isdigit() else 0,
+                    "text": parts[2],
+                })
+        return {"matches": matches}
+
+    def _native_bash(self, args: dict) -> dict:
+        """Execute a shell command.
+
+        Security: shell=True is intentional — this is a local-only daemon
+        (127.0.0.1) and access is gated by PermissionChecker. The permissions
+        config superblocks dangerous patterns (rm -rf, sudo, curl|sh, etc.)
+        and restricts bash access per agent type and workflow phase.
+        """
+        command = args.get("command", "")
+        timeout = min(args.get("timeout", 120), 600)
+        cwd = args.get("cwd")
+
+        timed_out = False
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=cwd,
+            )
+            return {
+                "exit_code": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "timed_out": False,
+            }
+        except subprocess.TimeoutExpired:
+            return {
+                "exit_code": -1,
+                "stdout": "",
+                "stderr": f"Command timed out after {timeout}s",
+                "timed_out": True,
+            }
+
+    # --- Router operations ---
+
+    def _handle_router(self, tool_name: str, args: dict) -> Any:
+        if tool_name == "ping":
+            return {"status": "ok"}
+
+        if tool_name == "list_tools":
+            return [t["name"] for t in self.list_backend_tools()]
+
+        if tool_name == "get_full":
+            return self.get_full_content(args.get("content_id", ""))
+
+        if tool_name == "register_agent":
+            info = self.permissions.register_agent(
+                agent_id=args.get("agent_id", ""),
+                agent_type=args.get("agent_type", ""),
+                roles=args.get("roles"),
+            )
+            return {
+                "agent_id": info.agent_id,
+                "agent_type": info.agent_type,
+                "roles": info.roles,
+            }
+
+        if tool_name == "update_agent_phase":
+            self.permissions.update_agent_phase(
+                agent_id=args.get("agent_id", ""),
+                workflow=args.get("workflow", ""),
+                phase=args.get("phase", ""),
+            )
+            return {"result": "ok"}
+
+        if tool_name == "get_allowed_tools":
+            return self.permissions.get_allowed_tools(
+                agent_type=args.get("agent_type")
+            )
+
+        raise RouterError(f"Unknown router tool: {tool_name}")
+
+    # --- Workflow state operations ---
+
+    def _handle_workflow(self, tool_name: str, args: dict) -> Any:
+        dispatch = {
+            "workflow_start": self._wf_start,
+            "workflow_stop": self._wf_stop,
+            "workflow_is_active": self._wf_is_active,
+            "workflow_get_state": self._wf_get_state,
+            "workflow_set_state": self._wf_set_state,
+            "workflow_update": self._wf_update,
+            "workflow_get_value": self._wf_get_value,
+            "workflow_set_value": self._wf_set_value,
+            "agent_get_state": self._agent_get_state,
+            "agent_set_state": self._agent_set_state,
+            "agent_delete": self._agent_delete,
+            "list_agents": self._agent_list,
+        }
+        handler = dispatch.get(tool_name)
+        if handler is None:
+            raise RouterError(f"Unknown workflow tool: {tool_name}")
+        return handler(args)
+
+    def _wf_start(self, args: dict) -> dict:
+        wf_id = args.get("workflow_id", "")
+        with self._state_lock:
+            if wf_id in self._workflow_state:
+                raise WorkflowError(f"Workflow already exists: {wf_id}")
+            initial = args.get("initial_state", {})
+            self._workflow_state[wf_id] = dict(initial)
+            self.data.record_event({
+                "tool": "workflow__workflow_start",
+                "backend": "workflow",
+                "status": "success",
+                "workflow_id": wf_id,
+            })
+            return copy.deepcopy(self._workflow_state[wf_id])
+
+    def _wf_stop(self, args: dict) -> bool:
+        wf_id = args.get("workflow_id", "")
+        with self._state_lock:
+            if wf_id not in self._workflow_state:
+                raise WorkflowError(f"Workflow not found: {wf_id}")
+            del self._workflow_state[wf_id]
+            self.data.record_event({
+                "tool": "workflow__workflow_stop",
+                "backend": "workflow",
+                "status": "success",
+                "workflow_id": wf_id,
+            })
+            return True
+
+    def _wf_is_active(self, args: dict) -> bool:
+        wf_id = args.get("workflow_id", "")
+        with self._state_lock:
+            return wf_id in self._workflow_state
+
+    def _wf_get_state(self, args: dict) -> dict | None:
+        wf_id = args.get("workflow_id", "")
+        with self._state_lock:
+            state = self._workflow_state.get(wf_id)
+            return copy.deepcopy(state) if state is not None else None
+
+    def _wf_set_state(self, args: dict) -> dict:
+        wf_id = args.get("workflow_id", "")
+        state = args.get("state", {})
+        with self._state_lock:
+            if wf_id not in self._workflow_state:
+                raise WorkflowError(f"Workflow not found: {wf_id}")
+            self._workflow_state[wf_id] = dict(state)
+            return copy.deepcopy(self._workflow_state[wf_id])
+
+    def _wf_update(self, args: dict) -> dict:
+        wf_id = args.get("workflow_id", "")
+        updates = args.get("updates", {})
+        with self._state_lock:
+            if wf_id not in self._workflow_state:
+                raise WorkflowError(f"Workflow not found: {wf_id}")
+            self._workflow_state[wf_id].update(updates)
+            return copy.deepcopy(self._workflow_state[wf_id])
+
+    def _wf_get_value(self, args: dict) -> Any:
+        wf_id = args.get("workflow_id", "")
+        key = args.get("key", "")
+        with self._state_lock:
+            state = self._workflow_state.get(wf_id)
+            if state is None:
+                return None
+            return copy.deepcopy(state.get(key))
+
+    def _wf_set_value(self, args: dict) -> bool:
+        wf_id = args.get("workflow_id", "")
+        key = args.get("key", "")
+        value = args.get("value")
+        with self._state_lock:
+            if wf_id not in self._workflow_state:
+                raise WorkflowError(f"Workflow not found: {wf_id}")
+            self._workflow_state[wf_id][key] = value
+            return True
+
+    def _agent_get_state(self, args: dict) -> dict | None:
+        agent_id = args.get("agent_id", "")
+        with self._state_lock:
+            state = self._agent_state.get(agent_id)
+            return copy.deepcopy(state) if state is not None else None
+
+    def _agent_set_state(self, args: dict) -> dict:
+        agent_id = args.get("agent_id", "")
+        state = args.get("state", {})
+        with self._state_lock:
+            self._agent_state[agent_id] = dict(state)
+            return copy.deepcopy(self._agent_state[agent_id])
+
+    def _agent_delete(self, args: dict) -> bool:
+        agent_id = args.get("agent_id", "")
+        with self._state_lock:
+            self._agent_state.pop(agent_id, None)
+            return True
+
+    def _agent_list(self, args: dict) -> list[str]:
+        with self._state_lock:
+            return list(self._agent_state.keys())
+
+    # --- Backend dispatch ---
+
+    def _handle_backend(self, backend: str, tool_name: str, args: dict) -> Any:
+        return self.backends.dispatch(backend, tool_name, args)
+
+    # --- Summarization ---
+
+    def _maybe_summarize(
+        self, result: Any, content_id: str, original_size: int
+    ) -> tuple[Any, bool]:
+        """Summarize if above threshold. Returns (result, was_summarized)."""
+        if original_size <= self._summarization_threshold:
+            return result, False
+
+        summary = self.llm.summarize(str(result), self._summarization_threshold)
+        return {
+            "summary": summary,
+            "content_id": content_id,
+            "full_available": True,
+        }, True
+
+    # --- Agent resolution ---
+
+    def _resolve_agent(self, caller: str | None) -> AgentInfo | None:
+        """Resolve caller identifier to AgentInfo."""
+        if caller is None:
+            return None
+        return self.permissions.get_agent(caller)
