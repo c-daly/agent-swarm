@@ -2,13 +2,14 @@
 """Tests for the core orchestrator."""
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
 
-from lib.controller import Controller
+from lib.controller import Controller, PROTECTED_KEYS, _is_protected_key
 from lib.errors import (
     PermissionDeniedError,
     RouterError,
@@ -32,9 +33,47 @@ _BACKEND_CONFIG = {
 }
 
 
+@dataclass
+class MockPhaseConfig:
+    """Lightweight stand-in for PhaseConfig."""
+    name: str
+    checkpoint: bool = False
+
+
+@dataclass
+class MockWorkflowConfig:
+    """Lightweight stand-in for WorkflowConfig."""
+    name: str
+    initial_phase: str
+    terminal_phase: str
+    phases: dict  # name -> MockPhaseConfig
+    transitions: dict  # phase -> set of targets
+
+
+def _make_iterate_config():
+    """Build a mock iterate workflow config for testing."""
+    return MockWorkflowConfig(
+        name="iterate",
+        initial_phase="test_writing",
+        terminal_phase="complete",
+        phases={
+            "test_writing": MockPhaseConfig(name="test_writing", checkpoint=False),
+            "implement": MockPhaseConfig(name="implement", checkpoint=False),
+            "test": MockPhaseConfig(name="test", checkpoint=True),
+            "review": MockPhaseConfig(name="review", checkpoint=True),
+        },
+        transitions={
+            "test_writing": {"implement"},
+            "implement": {"test"},
+            "test": {"implement", "review"},
+            "review": {"implement", "complete"},
+        },
+    )
+
+
 @pytest.fixture
 def ctrl(tmp_path):
-    """Create a Controller with minimal config."""
+    """Create a Controller with minimal config (no workflow configs)."""
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     (config_dir / "permissions.yaml").write_text(yaml.dump(_PERM_CONFIG))
@@ -44,6 +83,27 @@ def ctrl(tmp_path):
     data_dir.mkdir()
 
     c = Controller(config_dir=config_dir, data_dir=data_dir)
+    yield c
+    c.shutdown()
+
+
+@pytest.fixture
+def ctrl_with_config(tmp_path):
+    """Create a Controller with mock workflow configs."""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "permissions.yaml").write_text(yaml.dump(_PERM_CONFIG))
+    (config_dir / "backends.json").write_text(json.dumps(_BACKEND_CONFIG))
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+
+    wf_configs = {"iterate": _make_iterate_config()}
+    c = Controller(
+        config_dir=config_dir,
+        data_dir=data_dir,
+        workflow_configs=wf_configs,
+    )
     yield c
     c.shutdown()
 
@@ -194,15 +254,37 @@ class TestRouterOps:
 
 
 class TestWorkflowState:
-    def test_start_and_get_state(self, ctrl):
-        ctrl.handle_call(
-            "workflow__workflow_start",
-            {"workflow_id": "wf1", "initial_state": {"phase": "init"}},
-        )
+    def test_start_adds_daemon_managed_keys(self, ctrl):
+        """Starting a workflow (no config) strips protected keys and adds managed ones."""
         state = ctrl.handle_call(
-            "workflow__workflow_get_state", {"workflow_id": "wf1"}
+            "workflow__workflow_start",
+            {"workflow_id": "wf1", "initial_state": {"custom": "data", "phase": "sneaky"}},
         )
-        assert state == {"phase": "init"}
+        # Protected key "phase" stripped, daemon sets it to ""
+        assert state["phase"] == ""
+        # Custom key preserved
+        assert state["custom"] == "data"
+        # Daemon-managed keys added
+        assert "started_at" in state
+        assert state["active_agents"] == {}
+
+    def test_start_with_config_sets_initial_phase(self, ctrl_with_config):
+        """Starting a configured workflow uses config's initial_phase."""
+        state = ctrl_with_config.handle_call(
+            "workflow__workflow_start",
+            {"workflow_id": "iterate", "initial_state": {"custom": 1}},
+        )
+        assert state["phase"] == "test_writing"
+        assert state["custom"] == 1
+        assert "started_at" in state
+
+    def test_start_unknown_workflow_with_config_raises(self, ctrl_with_config):
+        """When configs are loaded, unknown workflow_id is rejected."""
+        with pytest.raises(WorkflowError, match="Unknown workflow"):
+            ctrl_with_config.handle_call(
+                "workflow__workflow_start",
+                {"workflow_id": "nonexistent", "initial_state": {}},
+            )
 
     def test_start_duplicate_raises(self, ctrl):
         ctrl.handle_call(
@@ -233,30 +315,20 @@ class TestWorkflowState:
                 "workflow__workflow_stop", {"workflow_id": "ghost"}
             )
 
-    def test_set_and_get_value(self, ctrl):
+    def test_set_and_get_value_unprotected(self, ctrl):
+        """set_value works for non-protected keys."""
         ctrl.handle_call(
             "workflow__workflow_start", {"workflow_id": "wf1"}
         )
         ctrl.handle_call(
             "workflow__workflow_set_value",
-            {"workflow_id": "wf1", "key": "phase", "value": "test"},
+            {"workflow_id": "wf1", "key": "my_data", "value": "test"},
         )
         val = ctrl.handle_call(
             "workflow__workflow_get_value",
-            {"workflow_id": "wf1", "key": "phase"},
+            {"workflow_id": "wf1", "key": "my_data"},
         )
         assert val == "test"
-
-    def test_update(self, ctrl):
-        ctrl.handle_call(
-            "workflow__workflow_start",
-            {"workflow_id": "wf1", "initial_state": {"a": 1}},
-        )
-        result = ctrl.handle_call(
-            "workflow__workflow_update",
-            {"workflow_id": "wf1", "updates": {"b": 2}},
-        )
-        assert result == {"a": 1, "b": 2}
 
     def test_is_active(self, ctrl):
         assert ctrl.handle_call(
@@ -282,6 +354,321 @@ class TestWorkflowState:
             "workflow__workflow_get_state", {"workflow_id": "wf1"}
         )
         assert 999 not in state2["items"]
+
+    def test_set_state_and_update_removed_from_dispatch(self, ctrl):
+        """workflow_set_state and workflow_update are no longer in dispatch."""
+        ctrl.handle_call(
+            "workflow__workflow_start", {"workflow_id": "wf1"}
+        )
+        with pytest.raises(RouterError, match="Unknown workflow tool"):
+            ctrl.handle_call(
+                "workflow__workflow_set_state",
+                {"workflow_id": "wf1", "state": {"x": 1}},
+            )
+        with pytest.raises(RouterError, match="Unknown workflow tool"):
+            ctrl.handle_call(
+                "workflow__workflow_update",
+                {"workflow_id": "wf1", "updates": {"y": 2}},
+            )
+
+    def test_internal_set_state_still_works(self, ctrl):
+        """__wf_set_state is still callable internally (daemon use)."""
+        ctrl.handle_call(
+            "workflow__workflow_start", {"workflow_id": "wf1"}
+        )
+        result = ctrl._Controller__wf_set_state({"workflow_id": "wf1", "state": {"x": 1}})
+        assert result == {"x": 1}
+
+    def test_internal_update_still_works(self, ctrl):
+        """__wf_update is still callable internally (daemon use)."""
+        ctrl.handle_call(
+            "workflow__workflow_start", {"workflow_id": "wf1"}
+        )
+        result = ctrl._Controller__wf_update({"workflow_id": "wf1", "updates": {"extra": 99}})
+        assert result["extra"] == 99
+
+
+# --- Protected keys ---
+
+
+class TestProtectedKeys:
+    def test_is_protected_key_exact_matches(self):
+        for key in PROTECTED_KEYS:
+            assert _is_protected_key(key), f"{key} should be protected"
+
+    def test_is_protected_key_checkpoint_pattern(self):
+        assert _is_protected_key("test_checkpoint_passed")
+        assert _is_protected_key("review_checkpoint_passed")
+        assert _is_protected_key("x_checkpoint_passed")
+
+    def test_is_not_protected(self):
+        assert not _is_protected_key("my_data")
+        assert not _is_protected_key("custom_key")
+        assert not _is_protected_key("checkpoint_note")  # doesn't end with _checkpoint_passed
+
+    def test_set_value_rejects_phase(self, ctrl):
+        ctrl.handle_call(
+            "workflow__workflow_start", {"workflow_id": "wf1"}
+        )
+        with pytest.raises(WorkflowError, match="Protected key 'phase'"):
+            ctrl.handle_call(
+                "workflow__workflow_set_value",
+                {"workflow_id": "wf1", "key": "phase", "value": "hack"},
+            )
+
+    def test_set_value_rejects_started_at(self, ctrl):
+        ctrl.handle_call(
+            "workflow__workflow_start", {"workflow_id": "wf1"}
+        )
+        with pytest.raises(WorkflowError, match="Protected key"):
+            ctrl.handle_call(
+                "workflow__workflow_set_value",
+                {"workflow_id": "wf1", "key": "started_at", "value": "fake"},
+            )
+
+    def test_set_value_rejects_checkpoint_passed(self, ctrl):
+        ctrl.handle_call(
+            "workflow__workflow_start", {"workflow_id": "wf1"}
+        )
+        with pytest.raises(WorkflowError, match="Protected key"):
+            ctrl.handle_call(
+                "workflow__workflow_set_value",
+                {"workflow_id": "wf1", "key": "test_checkpoint_passed", "value": "2025-01-01T00:00:00+00:00"},
+            )
+
+    def test_start_strips_all_protected_keys(self, ctrl):
+        state = ctrl.handle_call(
+            "workflow__workflow_start",
+            {
+                "workflow_id": "wf1",
+                "initial_state": {
+                    "phase": "sneaky",
+                    "started_at": "fake",
+                    "active_agents": {"bad": True},
+                    "agent_id": "evil",
+                    "test_checkpoint_passed": "2025-01-01T00:00:00+00:00",
+                    "legit_key": "kept",
+                },
+            },
+        )
+        # Protected keys set by daemon, not user values
+        assert state["phase"] == ""  # daemon default (no config)
+        assert state["started_at"] != "fake"
+        assert state["active_agents"] == {}  # daemon default
+        assert "agent_id" not in state  # stripped, not re-added by daemon
+        assert "test_checkpoint_passed" not in state  # stripped
+        # Non-protected key preserved
+        assert state["legit_key"] == "kept"
+
+
+# --- Phase transitions ---
+
+
+class TestAdvancePhase:
+    def test_advance_without_config(self, ctrl):
+        """Without config, any transition is allowed."""
+        ctrl.handle_call(
+            "workflow__workflow_start", {"workflow_id": "wf1"}
+        )
+        # Directly set phase internally for testing
+        ctrl._Controller__wf_set_state({"workflow_id": "wf1", "state": {"phase": "a"}})
+        result = ctrl.handle_call(
+            "workflow__workflow_advance_phase",
+            {"workflow_id": "wf1", "target_phase": "b"},
+        )
+        assert result == {"status": "advanced", "phase": "b"}
+
+    def test_advance_valid_transition(self, ctrl_with_config):
+        ctrl_with_config.handle_call(
+            "workflow__workflow_start",
+            {"workflow_id": "iterate", "initial_state": {}},
+        )
+        # test_writing -> implement is valid
+        result = ctrl_with_config.handle_call(
+            "workflow__workflow_advance_phase",
+            {"workflow_id": "iterate", "target_phase": "implement"},
+        )
+        assert result == {"status": "advanced", "phase": "implement"}
+
+    def test_advance_invalid_transition(self, ctrl_with_config):
+        ctrl_with_config.handle_call(
+            "workflow__workflow_start",
+            {"workflow_id": "iterate", "initial_state": {}},
+        )
+        # test_writing -> review is NOT valid
+        with pytest.raises(WorkflowError, match="Invalid transition"):
+            ctrl_with_config.handle_call(
+                "workflow__workflow_advance_phase",
+                {"workflow_id": "iterate", "target_phase": "review"},
+            )
+
+    def test_advance_blocked_by_checkpoint(self, ctrl_with_config):
+        ctrl_with_config.handle_call(
+            "workflow__workflow_start",
+            {"workflow_id": "iterate", "initial_state": {}},
+        )
+        # Move to implement, then test
+        ctrl_with_config.handle_call(
+            "workflow__workflow_advance_phase",
+            {"workflow_id": "iterate", "target_phase": "implement"},
+        )
+        ctrl_with_config.handle_call(
+            "workflow__workflow_advance_phase",
+            {"workflow_id": "iterate", "target_phase": "test"},
+        )
+        # test -> review requires checkpoint
+        with pytest.raises(WorkflowError, match="Checkpoint not passed"):
+            ctrl_with_config.handle_call(
+                "workflow__workflow_advance_phase",
+                {"workflow_id": "iterate", "target_phase": "review"},
+            )
+
+    def test_advance_after_checkpoint_passed(self, ctrl_with_config):
+        ctrl_with_config.handle_call(
+            "workflow__workflow_start",
+            {"workflow_id": "iterate", "initial_state": {}},
+        )
+        # Navigate: test_writing -> implement -> test
+        ctrl_with_config.handle_call(
+            "workflow__workflow_advance_phase",
+            {"workflow_id": "iterate", "target_phase": "implement"},
+        )
+        ctrl_with_config.handle_call(
+            "workflow__workflow_advance_phase",
+            {"workflow_id": "iterate", "target_phase": "test"},
+        )
+        # Pass checkpoint
+        ctrl_with_config.handle_call(
+            "workflow__workflow_pass_checkpoint",
+            {"workflow_id": "iterate"},
+        )
+        # Now test -> review should work
+        result = ctrl_with_config.handle_call(
+            "workflow__workflow_advance_phase",
+            {"workflow_id": "iterate", "target_phase": "review"},
+        )
+        assert result == {"status": "advanced", "phase": "review"}
+
+    def test_advance_to_terminal_sets_completed_at(self, ctrl_with_config):
+        ctrl_with_config.handle_call(
+            "workflow__workflow_start",
+            {"workflow_id": "iterate", "initial_state": {}},
+        )
+        # Navigate: test_writing -> implement -> test -> review -> complete
+        ctrl_with_config.handle_call(
+            "workflow__workflow_advance_phase",
+            {"workflow_id": "iterate", "target_phase": "implement"},
+        )
+        ctrl_with_config.handle_call(
+            "workflow__workflow_advance_phase",
+            {"workflow_id": "iterate", "target_phase": "test"},
+        )
+        ctrl_with_config.handle_call(
+            "workflow__workflow_pass_checkpoint",
+            {"workflow_id": "iterate"},
+        )
+        ctrl_with_config.handle_call(
+            "workflow__workflow_advance_phase",
+            {"workflow_id": "iterate", "target_phase": "review"},
+        )
+        ctrl_with_config.handle_call(
+            "workflow__workflow_pass_checkpoint",
+            {"workflow_id": "iterate"},
+        )
+        result = ctrl_with_config.handle_call(
+            "workflow__workflow_advance_phase",
+            {"workflow_id": "iterate", "target_phase": "complete"},
+        )
+        assert result == {"status": "advanced", "phase": "complete"}
+        # State should have completed_at
+        state = ctrl_with_config.handle_call(
+            "workflow__workflow_get_state", {"workflow_id": "iterate"}
+        )
+        assert "completed_at" in state
+        # is_active should be False (terminal phase)
+        assert ctrl_with_config.handle_call(
+            "workflow__workflow_is_active", {"workflow_id": "iterate"}
+        ) is False
+
+    def test_advance_missing_workflow(self, ctrl):
+        with pytest.raises(WorkflowError, match="not found"):
+            ctrl.handle_call(
+                "workflow__workflow_advance_phase",
+                {"workflow_id": "ghost", "target_phase": "x"},
+            )
+
+
+# --- Pass checkpoint ---
+
+
+class TestPassCheckpoint:
+    def test_pass_checkpoint_without_config(self, ctrl):
+        """Without config, checkpoint sets the key unconditionally."""
+        ctrl.handle_call(
+            "workflow__workflow_start", {"workflow_id": "wf1"}
+        )
+        ctrl._Controller__wf_set_state({"workflow_id": "wf1", "state": {"phase": "test"}})
+        result = ctrl.handle_call(
+            "workflow__workflow_pass_checkpoint",
+            {"workflow_id": "wf1"},
+        )
+        assert result == {"status": "checkpoint_passed", "phase": "test"}
+        state = ctrl.handle_call(
+            "workflow__workflow_get_state", {"workflow_id": "wf1"}
+        )
+        assert isinstance(state["test_checkpoint_passed"], str)  # ISO timestamp
+
+    def test_pass_checkpoint_with_config(self, ctrl_with_config):
+        ctrl_with_config.handle_call(
+            "workflow__workflow_start",
+            {"workflow_id": "iterate", "initial_state": {}},
+        )
+        # Navigate to test phase (which has checkpoint: true)
+        ctrl_with_config.handle_call(
+            "workflow__workflow_advance_phase",
+            {"workflow_id": "iterate", "target_phase": "implement"},
+        )
+        ctrl_with_config.handle_call(
+            "workflow__workflow_advance_phase",
+            {"workflow_id": "iterate", "target_phase": "test"},
+        )
+        result = ctrl_with_config.handle_call(
+            "workflow__workflow_pass_checkpoint",
+            {"workflow_id": "iterate"},
+        )
+        assert result == {"status": "checkpoint_passed", "phase": "test"}
+
+    def test_pass_checkpoint_rejects_non_checkpoint_phase(self, ctrl_with_config):
+        """Phase without checkpoint: true rejects pass_checkpoint."""
+        ctrl_with_config.handle_call(
+            "workflow__workflow_start",
+            {"workflow_id": "iterate", "initial_state": {}},
+        )
+        # test_writing has checkpoint: false
+        with pytest.raises(WorkflowError, match="does not have a checkpoint"):
+            ctrl_with_config.handle_call(
+                "workflow__workflow_pass_checkpoint",
+                {"workflow_id": "iterate"},
+            )
+
+    def test_pass_checkpoint_no_phase(self, ctrl):
+        """Empty phase raises error."""
+        ctrl.handle_call(
+            "workflow__workflow_start", {"workflow_id": "wf1"}
+        )
+        # phase is "" by default (no config)
+        with pytest.raises(WorkflowError, match="No active phase"):
+            ctrl.handle_call(
+                "workflow__workflow_pass_checkpoint",
+                {"workflow_id": "wf1"},
+            )
+
+    def test_pass_checkpoint_missing_workflow(self, ctrl):
+        with pytest.raises(WorkflowError, match="not found"):
+            ctrl.handle_call(
+                "workflow__workflow_pass_checkpoint",
+                {"workflow_id": "ghost"},
+            )
 
 
 # --- Agent state ---

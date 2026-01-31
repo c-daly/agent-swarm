@@ -16,6 +16,7 @@ import subprocess
 import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,21 @@ from lib.permissions import AgentInfo, PermissionChecker
 
 log = logging.getLogger(__name__)
 
+# Keys that agents cannot write directly via set_value.
+# Use workflow_advance_phase or workflow_pass_checkpoint instead.
+PROTECTED_KEYS = frozenset({
+    "phase", "active_agents", "started_at", "completed_at",
+    "agent_id", "agent_type", "session_id", "workflow_id",
+})
+
+
+def _is_protected_key(key: str) -> bool:
+    """Check whether a workflow state key is daemon-managed."""
+    return (
+        key in PROTECTED_KEYS
+        or (len(key) > len("_checkpoint_passed") and key.endswith("_checkpoint_passed"))
+    )
+
 
 class Controller:
     """Orchestrates all request handling. Owns all services as properties."""
@@ -41,7 +57,9 @@ class Controller:
         self,
         config_dir: Path,
         data_dir: Path,
+        workflow_configs: dict | None = None,
     ) -> None:
+        self._workflow_configs = workflow_configs or {}
         self.permissions = PermissionChecker(config_dir / "permissions.yaml")
         self.backends = BackendManager(config_dir / "backends.json")
         self.llm = LLMService()
@@ -429,10 +447,10 @@ class Controller:
             "workflow_stop": self._wf_stop,
             "workflow_is_active": self._wf_is_active,
             "workflow_get_state": self._wf_get_state,
-            "workflow_set_state": self._wf_set_state,
-            "workflow_update": self._wf_update,
             "workflow_get_value": self._wf_get_value,
             "workflow_set_value": self._wf_set_value,
+            "workflow_advance_phase": self._wf_advance_phase,
+            "workflow_pass_checkpoint": self._wf_pass_checkpoint,
             "agent_get_state": self._agent_get_state,
             "agent_set_state": self._agent_set_state,
             "agent_delete": self._agent_delete,
@@ -448,8 +466,19 @@ class Controller:
         with self._state_lock:
             if wf_id in self._workflow_state:
                 raise WorkflowError(f"Workflow already exists: {wf_id}")
+            # Validate against workflow config if available
+            config = self._workflow_configs.get(wf_id)
+            if self._workflow_configs and config is None:
+                raise WorkflowError(f"Unknown workflow: {wf_id}")
+            # Strip protected keys from user-provided initial state
             initial = args.get("initial_state", {})
-            self._workflow_state[wf_id] = dict(initial)
+            clean = {k: v for k, v in initial.items()
+                     if not _is_protected_key(k)}
+            # Add daemon-managed keys
+            clean["started_at"] = datetime.now(timezone.utc).isoformat()
+            clean["active_agents"] = {}
+            clean["phase"] = config.initial_phase if config else ""
+            self._workflow_state[wf_id] = clean
             self.data.record_event({
                 "tool": "workflow__workflow_start",
                 "backend": "workflow",
@@ -475,7 +504,13 @@ class Controller:
     def _wf_is_active(self, args: dict) -> bool:
         wf_id = args.get("workflow_id", "")
         with self._state_lock:
-            return wf_id in self._workflow_state
+            if wf_id not in self._workflow_state:
+                return False
+            # Terminal phase means workflow completed
+            config = self._workflow_configs.get(wf_id)
+            if config and self._workflow_state[wf_id].get("phase") == config.terminal_phase:
+                return False
+            return True
 
     def _wf_get_state(self, args: dict) -> dict | None:
         wf_id = args.get("workflow_id", "")
@@ -483,7 +518,8 @@ class Controller:
             state = self._workflow_state.get(wf_id)
             return copy.deepcopy(state) if state is not None else None
 
-    def _wf_set_state(self, args: dict) -> dict:
+    def __wf_set_state(self, args: dict) -> dict:
+        """Internal only -- not exposed via client dispatch."""
         wf_id = args.get("workflow_id", "")
         state = args.get("state", {})
         with self._state_lock:
@@ -492,7 +528,8 @@ class Controller:
             self._workflow_state[wf_id] = dict(state)
             return copy.deepcopy(self._workflow_state[wf_id])
 
-    def _wf_update(self, args: dict) -> dict:
+    def __wf_update(self, args: dict) -> dict:
+        """Internal only -- not exposed via client dispatch."""
         wf_id = args.get("workflow_id", "")
         updates = args.get("updates", {})
         with self._state_lock:
@@ -517,8 +554,67 @@ class Controller:
         with self._state_lock:
             if wf_id not in self._workflow_state:
                 raise WorkflowError(f"Workflow not found: {wf_id}")
+            if _is_protected_key(key):
+                raise WorkflowError(
+                    f"Protected key '{key}' cannot be set directly. "
+                    "Use workflow_advance_phase or workflow_pass_checkpoint."
+                )
             self._workflow_state[wf_id][key] = value
             return True
+
+    def _wf_advance_phase(self, args: dict) -> dict:
+        """Advance workflow to a new phase, validating the transition."""
+        wf_id = args.get("workflow_id", "")
+        target = args.get("target_phase", "")
+        with self._state_lock:
+            if wf_id not in self._workflow_state:
+                raise WorkflowError(f"Workflow not found: {wf_id}")
+            state = self._workflow_state[wf_id]
+            current = state.get("phase", "")
+            # Validate transition if config available
+            config = self._workflow_configs.get(wf_id)
+            if config:
+                valid_targets = config.transitions.get(current, set())
+                if target not in valid_targets:
+                    raise WorkflowError(
+                        f"Invalid transition: {current} -> {target}. "
+                        f"Valid targets: {sorted(valid_targets)}"
+                    )
+                # Check checkpoint if current phase requires it
+                phase_config = config.phases.get(current)
+                if phase_config and phase_config.checkpoint:
+                    ck_key = f"{current}_checkpoint_passed"
+                    if not state.get(ck_key):
+                        raise WorkflowError(
+                            f"Checkpoint not passed for phase '{current}'. "
+                            "Call workflow_pass_checkpoint first."
+                        )
+            state["phase"] = target
+            # Handle terminal phase
+            if config and target == config.terminal_phase:
+                state["completed_at"] = datetime.now(timezone.utc).isoformat()
+            return {"status": "advanced", "phase": target}
+
+    def _wf_pass_checkpoint(self, args: dict) -> dict:
+        """Mark the current phase's checkpoint as passed."""
+        wf_id = args.get("workflow_id", "")
+        with self._state_lock:
+            if wf_id not in self._workflow_state:
+                raise WorkflowError(f"Workflow not found: {wf_id}")
+            state = self._workflow_state[wf_id]
+            current = state.get("phase", "")
+            if not current:
+                raise WorkflowError("No active phase to checkpoint")
+            # Validate that current phase has a checkpoint (if config available)
+            config = self._workflow_configs.get(wf_id)
+            if config:
+                phase_config = config.phases.get(current)
+                if phase_config and not phase_config.checkpoint:
+                    raise WorkflowError(
+                        f"Phase '{current}' does not have a checkpoint"
+                    )
+            state[f"{current}_checkpoint_passed"] = datetime.now(timezone.utc).isoformat()
+            return {"status": "checkpoint_passed", "phase": current}
 
     def _agent_get_state(self, args: dict) -> dict | None:
         agent_id = args.get("agent_id", "")
