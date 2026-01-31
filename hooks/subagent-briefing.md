@@ -12,6 +12,14 @@
 
 Multi-repo: `native__bash 'git -C /path/to/repo status'`
 
+## Long-Running Commands (pytest, builds)
+MCP tool calls timeout at ~30s. For commands that take longer (e.g. full test suite):
+```bash
+nohup <command> > /tmp/output.txt 2>&1 &
+# then later:
+cat /tmp/output.txt
+```
+
 ## Efficiency
 - >=3 reads or searches -> batch script with `mcp_bridge`
 - Track what you've read -- no duplicate reads
