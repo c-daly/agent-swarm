@@ -201,77 +201,8 @@ def extract_agent_id_from_filename(filepath: Path) -> str | None:
     return None
 
 
-def build_agent_type_map(projects_dir: str) -> dict[str, str]:
-    """Scan main session files for Task tool calls to build agentId -> subagent_type map.
 
-    Parses assistant messages looking for Task tool_use blocks with subagent_type,
-    then correlates with tool_result blocks containing agentId.
-    """
-    agent_map: dict[str, str] = {}
-    root = Path(projects_dir).expanduser()
-    if not root.exists():
-        return agent_map
-
-    for filepath in root.rglob("*.jsonl"):
-        # Skip hidden dirs and subagent files
-        rel_parts = filepath.relative_to(root).parts
-        if any(part.startswith(".") for part in rel_parts):
-            continue
-        if filepath.stem.startswith("agent-"):
-            continue
-
-        try:
-            lines = filepath.read_text(errors="replace").splitlines()
-        except OSError:
-            continue
-
-        # Pass 1: collect Task tool_use_id -> subagent_type
-        task_types: dict[str, str] = {}  # tool_use_id -> subagent_type
-        # Pass 2: collect tool_use_id -> agentId from results
-        task_agents: dict[str, str] = {}  # tool_use_id -> agentId
-
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-
-            if entry.get("type") == "assistant":
-                for block in entry.get("message", {}).get("content", []):
-                    if (isinstance(block, dict)
-                            and block.get("type") == "tool_use"
-                            and block.get("name") == "Task"):
-                        inp = block.get("input", {})
-                        st = inp.get("subagent_type", "")
-                        if st:
-                            task_types[block.get("id", "")] = st
-
-            elif entry.get("type") == "user":
-                for block in entry.get("message", {}).get("content", []):
-                    if not isinstance(block, dict) or block.get("type") != "tool_result":
-                        continue
-                    tuid = block.get("tool_use_id", "")
-                    if tuid not in task_types:
-                        continue
-                    content = str(block.get("content", ""))
-                    # Extract agentId from result text
-                    for pattern in [r"agentId:\s*(\w+)", r"task_id>(\w+)<"]:
-                        m = re.search(pattern, content)
-                        if m:
-                            task_agents[tuid] = m.group(1)
-                            break
-
-        # Merge: agentId -> subagent_type
-        for tuid, agent_id in task_agents.items():
-            if tuid in task_types:
-                agent_map[agent_id] = task_types[tuid]
-
-    return agent_map
-
-
+# ── DuckDB Import
 # ── DuckDB Import ──────────────────────────────────────────────────────────
 
 def import_duckdb(conn: sqlite3.Connection, duckdb_path: str, *, force: bool = False, dry_run: bool = False) -> dict:
@@ -410,7 +341,12 @@ def find_jsonl_files(projects_dir: str) -> list[Path]:
 
 
 def parse_jsonl_file(filepath: Path, agent_type_map: dict[str, str] | None = None) -> list[dict]:
-    """Parse a JSONL file and extract per-tool-call events."""
+    """Parse a JSONL file and extract per-tool-call events.
+
+    If agent_type_map is provided (mutable dict), also extracts Task tool_use
+    -> agentId -> subagent_type mappings in-place during parsing. This avoids
+    needing a separate pass over the file.
+    """
     lines = filepath.read_text(errors="replace").splitlines()
     entries = []
     for line in lines:
@@ -424,6 +360,33 @@ def parse_jsonl_file(filepath: Path, agent_type_map: dict[str, str] | None = Non
 
     if not entries:
         return []
+
+    # Extract agent_type mappings from Task tool_use blocks (main sessions only)
+    if agent_type_map is not None:
+        task_types: dict[str, str] = {}  # tool_use_id -> subagent_type
+        for entry in entries:
+            if entry.get("type") == "assistant":
+                for block in entry.get("message", {}).get("content", []):
+                    if (isinstance(block, dict)
+                            and block.get("type") == "tool_use"
+                            and block.get("name") == "Task"):
+                        inp = block.get("input", {})
+                        st = inp.get("subagent_type", "")
+                        if st:
+                            task_types[block.get("id", "")] = st
+            elif entry.get("type") == "user" and task_types:
+                for block in entry.get("message", {}).get("content", []):
+                    if not isinstance(block, dict) or block.get("type") != "tool_result":
+                        continue
+                    tuid = block.get("tool_use_id", "")
+                    if tuid not in task_types:
+                        continue
+                    content = str(block.get("content", ""))
+                    for pattern in [r"agentId:\s*(\w+)", r"task_id>(\w+)<"]:
+                        m = re.search(pattern, content)
+                        if m:
+                            agent_type_map[m.group(1)] = task_types[tuid]
+                            break
 
     # Build tool_result map: tool_use_id -> (content, timestamp)
     tool_results: dict[str, tuple] = {}
@@ -597,65 +560,23 @@ def import_claude_transcripts(
 
         return inserted, skipped
 
-    def _extract_agent_types_from_file(filepath: Path) -> None:
-        """Extract Task tool_use -> agentId -> subagent_type from a main session file."""
-        try:
-            lines = filepath.read_text(errors="replace").splitlines()
-        except OSError:
-            return
-
-        task_types: dict[str, str] = {}
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-
-            if entry.get("type") == "assistant":
-                for block in entry.get("message", {}).get("content", []):
-                    if (isinstance(block, dict)
-                            and block.get("type") == "tool_use"
-                            and block.get("name") == "Task"):
-                        inp = block.get("input", {})
-                        st = inp.get("subagent_type", "")
-                        if st:
-                            task_types[block.get("id", "")] = st
-
-            elif entry.get("type") == "user" and task_types:
-                for block in entry.get("message", {}).get("content", []):
-                    if not isinstance(block, dict) or block.get("type") != "tool_result":
-                        continue
-                    tuid = block.get("tool_use_id", "")
-                    if tuid not in task_types:
-                        continue
-                    content = str(block.get("content", ""))
-                    for pattern in [r"agentId:\s*(\w+)", r"task_id>(\w+)<"]:
-                        m = re.search(pattern, content)
-                        if m:
-                            aid = m.group(1)
-                            agent_type_map[aid] = task_types[tuid]
-                            if not dry_run:
-                                conn.execute(
-                                    "INSERT OR REPLACE INTO agent_types (agent_id, agent_type, registered_at) VALUES (?, ?, ?)",
-                                    (aid, task_types[tuid], datetime.now(timezone.utc).isoformat()),
-                                )
-                            break
-
-    # Pass 1: main sessions — import events + extract agent_type mappings
+    # Pass 1: main sessions — parse extracts agent_type mappings into agent_type_map
     for filepath in main_files:
-        _extract_agent_types_from_file(filepath)
         ins, skip = _import_file(filepath)
         total_inserted += ins
         total_skipped += skip
         files_processed += 1
 
+    # Persist any new agent_type mappings discovered during pass 1
     if not dry_run and agent_type_map:
+        for aid, atype in agent_type_map.items():
+            conn.execute(
+                "INSERT OR REPLACE INTO agent_types (agent_id, agent_type, registered_at) VALUES (?, ?, ?)",
+                (aid, atype, datetime.now(timezone.utc).isoformat()),
+            )
         conn.commit()
 
-    # Pass 2: subagent files — import with agent_type lookups available
+    # Pass 2: subagent files — agent_type_map now populated for lookups
     for filepath in sub_files:
         ins, skip = _import_file(filepath)
         total_inserted += ins

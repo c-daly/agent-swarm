@@ -172,12 +172,14 @@ if __name__ == "__main__":
                     buf += sock.recv(8192)
                 result = _json.loads(buf.decode().strip())
                 data = result.get("result", {})
-                if isinstance(data, dict) and "content" in data:
-                    inner = _json.loads(data["content"][0]["text"])
+                try:
+                    content_list = data.get("content", []) if isinstance(data, dict) else []
+                    text = content_list[0].get("text", "{}") if content_list else "{}"
+                    inner = _json.loads(text)
                     print(f"Import: {inner.get('files', 0)} files, "
                           f"{inner.get('inserted', 0)} inserted, "
                           f"{inner.get('skipped', 0)} skipped")
-                else:
+                except (IndexError, KeyError, TypeError, _json.JSONDecodeError):
                     print(f"Import result: {data}")
             except ConnectionRefusedError:
                 print("Daemon not running", file=sys.stderr)

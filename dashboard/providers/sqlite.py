@@ -250,17 +250,17 @@ class SqliteProvider:
                 start = end = None
             events.append({**r, "_start": start, "_end": end})
 
-        for i, evt in enumerate(events):
+        # O(N log N) sweep-line: for each event, count overlapping intervals
+        from bisect import bisect_left, bisect_right
+        valid_starts = sorted(e["_start"] for e in events if e["_start"] is not None)
+        valid_ends = sorted(e["_end"] for e in events if e["_end"] is not None)
+        for evt in events:
             if evt["_start"] is None:
                 evt["concurrent_count"] = 0
                 continue
-            count = 0
-            for j, other in enumerate(events):
-                if i == j or other["_start"] is None:
-                    continue
-                if other["_start"] < evt["_end"] and other["_end"] > evt["_start"]:
-                    count += 1
-            evt["concurrent_count"] = count
+            started_before_end = bisect_left(valid_starts, evt["_end"])
+            ended_before_start = bisect_right(valid_ends, evt["_start"])
+            evt["concurrent_count"] = max(0, started_before_end - ended_before_start - 1)
 
         result_events = []
         for evt in events:

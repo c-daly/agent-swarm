@@ -33,10 +33,27 @@ def get_already_imported(db_path: str) -> set[str]:
     return {r[0] for r in rows}
 
 
+def load_agent_type_map(db_path: str) -> dict[str, str]:
+    """Load existing agent_type mappings from the DB."""
+    conn = sqlite3.connect(db_path)
+    rows = conn.execute("SELECT agent_id, agent_type FROM agent_types").fetchall()
+    conn.close()
+    return {r[0]: r[1] for r in rows}
+
+
+# Module-level map populated by worker initializer
+_worker_agent_type_map: dict[str, str] = {}
+
+
+def _init_worker(agent_type_map: dict[str, str]) -> None:
+    global _worker_agent_type_map
+    _worker_agent_type_map = agent_type_map
+
+
 def parse_one_file(filepath_str: str) -> tuple[str, list[dict]]:
     """Parse a single JSONL file — runs in worker process."""
     filepath = Path(filepath_str)
-    events = parse_jsonl_file(filepath)
+    events = parse_jsonl_file(filepath, agent_type_map=_worker_agent_type_map)
     return filepath_str, events
 
 
@@ -68,11 +85,19 @@ def main():
         print("Nothing to import.")
         return
 
+    # Load existing agent_type mappings for workers
+    agent_type_map = load_agent_type_map(db_path)
+    print(f"Agent type mappings: {len(agent_type_map)}")
+
     # Phase 1: Parse files in parallel
     print(f"\nParsing {len(pending)} files with {args.workers} workers...")
     t0 = time.time()
     parsed = {}
-    with ProcessPoolExecutor(max_workers=args.workers) as pool:
+    with ProcessPoolExecutor(
+        max_workers=args.workers,
+        initializer=_init_worker,
+        initargs=(agent_type_map,),
+    ) as pool:
         futures = {pool.submit(parse_one_file, str(f)): f for f in pending}
         done = 0
         for future in as_completed(futures):
