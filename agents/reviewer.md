@@ -3,6 +3,8 @@ name: reviewer
 tools: Bash(mcp*)
 description: Code review and quality checking - side-effects, test coverage, security
 model: sonnet
+max_output_chars: 3000
+can_write_files: false
 ---
 
 <constraints>

@@ -84,7 +84,7 @@ type=assistant              — assistant messages, tool_use blocks, usage data
 - `error_type` — first 200 chars of error content if status is error
 - `backend` — derived from tool name prefix: `mcp__router__*` → `"router"`, `mcp__plugin_*` → `"plugin"`, bare names (Read, Bash, Edit, etc.) → `"native"`
 - `original_size` — length of tool_result content string
-- `was_summarized` — `true` if `original_size > 2000` (matching the controller's `_summarization_threshold`)
+- `was_summarized` — `true` if `original_size > 2000` AND `tool` is not a `get_full` variant. This is approximate for JSONL data: transcript tool results are post-summarization (≤2000 chars), so this heuristic only reliably identifies unsummarized results (`original_size < 2000`). `get_full` results are excluded because they contain original unsummarized content fetched after a summarization was rejected. For aggregate metrics, compute net effective summarizations as `summarized_count - full_content_requests`.
 - `summary_size` — `min(original_size, 2000)` if `was_summarized`, else `null`
 
 **Existing parser:** `lib/jsonl_extractor.py` already finds and parses these files. It currently extracts session-level token aggregates but not per-tool-call events. The import script should either extend it or reimplement the per-event extraction described above.
@@ -167,6 +167,7 @@ CREATE TABLE IF NOT EXISTS events (
     was_summarized INTEGER DEFAULT 0, -- 0 or 1
     original_size INTEGER DEFAULT 0,
     summary_size INTEGER,             -- NULL if not summarized
+    tool_use_id TEXT DEFAULT '',      -- from JSONL content[].id, empty for DuckDB imports
     import_source TEXT DEFAULT ''     -- 'claude_transcript', 'duckdb', 'duckdb_only', 'daemon'
 );
 
@@ -201,6 +202,12 @@ CREATE TABLE IF NOT EXISTS import_log (
     events_skipped INTEGER DEFAULT 0
 );
 
+-- Session-to-JSONL file index (populated during import, used by /api/session/:id/replay)
+CREATE TABLE IF NOT EXISTS session_files (
+    session_id TEXT PRIMARY KEY,
+    file_path TEXT NOT NULL            -- absolute path to the JSONL transcript file
+);
+
 -- Session summary view
 CREATE VIEW IF NOT EXISTS v_sessions AS
 SELECT
@@ -224,14 +231,19 @@ GROUP BY session_id;
 
 ### 2.1 Deduplication Key
 
-Events are deduplicated by `(timestamp, session_id, agent_id, tool)`. Before inserting, check:
+Events are deduplicated by `(timestamp, session_id, agent_id, tool, tool_use_id)` when `tool_use_id` is available (JSONL imports). For DuckDB imports where `tool_use_id` is not available, fall back to the 4-column key `(timestamp, session_id, agent_id, tool)`.
 
 ```sql
+-- JSONL imports (tool_use_id available)
+SELECT COUNT(*) FROM events
+WHERE timestamp = ? AND session_id = ? AND agent_id = ? AND tool = ? AND tool_use_id = ?
+
+-- DuckDB imports (no tool_use_id)
 SELECT COUNT(*) FROM events
 WHERE timestamp = ? AND session_id = ? AND agent_id = ? AND tool = ?
 ```
 
-If count > 0, skip the event. Log it as `events_skipped` in `import_log`.
+If count > 0, skip the event. Log it as `events_skipped` in `import_log`. The 5-column key prevents false deduplication when an agent makes parallel calls to the same tool in the same API response (e.g., two `Read` calls in one message).
 
 ## 3. Import Script (`dashboard/import.py`)
 
@@ -270,6 +282,7 @@ python dashboard/import.py \
    - For each file, extract per-tool-call events (see Section 3.3).
    - Set `import_source = 'claude_transcript'`.
    - Insert into SQLite, deduplicating. DuckDB data wins on conflict (already inserted in step 1).
+   - For each file, record the `(session_id, file_path)` mapping in the `session_files` table. This index is used by `/api/session/:id/replay` to locate transcripts without filesystem searching.
    - Record in `import_log`.
 
 ### 3.3 Claude Transcript Parsing
@@ -386,8 +399,22 @@ Every provider method accepts a `filters` dict with these optional keys:
 
 ```python
 {
-    "from": "2026-01-15T00:00:00",   # ISO 8601 EST, converted to UTC for query
-    "to": "2026-01-20T23:59:59",     # ISO 8601 EST, converted to UTC for query
+    "from": "2026-01-15T00:00:00Z",   # ISO 8601 UTC
+    "to": "2026-01-20T23:59:59Z",     # ISO 8601 UTC
+    "period": "day",                  # hour | day | week | month
+    "tool": "Bash,Read",             # comma-separated tool filter
+    "backend": "native,router",      # comma-separated backend filter
+    "agent_type": "main",            # "main" (agent_id == session_id), "subagent", or specific type
+    "status": "success",             # success | error
+    "session": "abc123",             # specific session ID
+    "sort": "tokens",               # sort dimension (varies by endpoint)
+    "limit": 20,                    # max results
+    "import_source": "duckdb"       # filter by data provenance
+}
+```python
+{
+    "from": "2026-01-15T00:00:00Z",   # ISO 8601 UTC
+    "to": "2026-01-20T23:59:59Z",     # ISO 8601 UTC
     "period": "day",                  # hour | day | week | month
     "tool": "Bash,Read",             # comma-separated tool filter
     "backend": "native,router",      # comma-separated backend filter
@@ -407,22 +434,13 @@ Shared utility used by `SqliteProvider`:
 ```python
 # dashboard/providers/filters.py
 
-from datetime import datetime, timedelta, timezone
-
-EST = timezone(timedelta(hours=-5))
-
-def est_to_utc(est_str: str) -> str:
-    """Convert EST datetime string to UTC ISO 8601."""
-    dt = datetime.fromisoformat(est_str).replace(tzinfo=EST)
-    return dt.astimezone(timezone.utc).isoformat()
-
-def utc_to_est(utc_str: str) -> str:
-    """Convert UTC ISO 8601 string to EST."""
-    dt = datetime.fromisoformat(utc_str).replace(tzinfo=timezone.utc)
-    return dt.astimezone(EST).isoformat()
+from datetime import datetime, timezone
 
 def build_where(filters: dict) -> tuple[str, list]:
     """Build WHERE clause and params from filters dict.
+
+    All timestamps in the database and API are UTC. The frontend handles
+    local timezone conversion via JavaScript (toLocaleString / Intl.DateTimeFormat).
 
     Returns:
         (where_clause, params) where where_clause includes 'WHERE' prefix
@@ -433,10 +451,10 @@ def build_where(filters: dict) -> tuple[str, list]:
 
     if "from" in filters:
         clauses.append("timestamp >= ?")
-        params.append(est_to_utc(filters["from"]))
+        params.append(filters["from"])
     if "to" in filters:
         clauses.append("timestamp <= ?")
-        params.append(est_to_utc(filters["to"]))
+        params.append(filters["to"])
     if "tool" in filters:
         tools = [t.strip() for t in filters["tool"].split(",")]
         placeholders = ",".join("?" * len(tools))
@@ -473,19 +491,18 @@ def build_where(filters: dict) -> tuple[str, list]:
 def period_group_expr(period: str) -> str:
     """Return SQL expression for grouping timestamps by period.
 
-    All output is in EST. Timestamps in DB are UTC.
+    Timestamps are stored and grouped in UTC. The frontend converts
+    to local time for display.
     """
-    # SQLite doesn't have native timezone support, so we subtract 5 hours
-    utc_adj = "datetime(timestamp, '-5 hours')"
     if period == "hour":
-        return f"strftime('%Y-%m-%d %H:00', {utc_adj})"
+        return "strftime('%Y-%m-%d %H:00', timestamp)"
     elif period == "day":
-        return f"strftime('%Y-%m-%d', {utc_adj})"
+        return "strftime('%Y-%m-%d', timestamp)"
     elif period == "week":
-        return f"strftime('%Y-W%W', {utc_adj})"
+        return "strftime('%Y-W%W', timestamp)"
     elif period == "month":
-        return f"strftime('%Y-%m', {utc_adj})"
-    return f"strftime('%Y-%m-%d', {utc_adj})"
+        return "strftime('%Y-%m', timestamp)"
+    return "strftime('%Y-%m-%d', timestamp)"
 ```
 
 ### 4.4 SqliteProvider
@@ -604,6 +621,47 @@ Each endpoint below specifies: route, SQL query, response JSON shape.
 
 ---
 
+#### `GET /api/health`
+
+Basic health check and database stats. Useful for verifying imports and diagnosing issues.
+
+**SQL:**
+
+```sql
+SELECT
+    COUNT(*) as total_events,
+    COUNT(DISTINCT session_id) as total_sessions,
+    MIN(timestamp) as first_event,
+    MAX(timestamp) as last_event
+FROM events
+```
+
+```sql
+SELECT source, MAX(imported_at) as last_import, SUM(events_inserted) as total_inserted
+FROM import_log
+GROUP BY source
+```
+
+**Response:**
+
+```json
+{
+  "status": "ok",
+  "db_path": "/path/to/dashboard.db",
+  "db_size_bytes": 52428800,
+  "total_events": 50156,
+  "total_sessions": 4268,
+  "first_event": "2026-01-09T21:18:01Z",
+  "last_event": "2026-01-31T15:55:21Z",
+  "imports": [
+    {"source": "duckdb", "last_import": "2026-01-31T20:00:00Z", "total_inserted": 19785},
+    {"source": "claude_transcript", "last_import": "2026-01-31T20:01:00Z", "total_inserted": 30371}
+  ]
+}
+```
+
+---
+
 #### `GET /api/overview`
 
 Top-level stats for the filtered time range.
@@ -641,8 +699,8 @@ FROM events
   "total_cache_creation": 90437266,
   "total_errors": 2446,
   "error_rate": 0.124,
-  "first_event": "2026-01-09T16:18:01-05:00",
-  "last_event": "2026-01-31T10:55:21-05:00",
+  "first_event": "2026-01-09T21:18:01Z",
+  "last_event": "2026-01-31T15:55:21Z",
   "avg_duration_ms": 1234.5,
   "total_summarized": 1171,
   "unique_tools": 181,
@@ -650,7 +708,7 @@ FROM events
 }
 ```
 
-All timestamps in response are EST.
+All timestamps in responses are UTC (ISO 8601 with `Z` suffix). The frontend converts to the user's local timezone for display.
 
 ---
 
@@ -800,7 +858,7 @@ ORDER BY timestamp
   "session_id": "abc123",
   "events": [
     {
-      "timestamp": "2026-01-15T10:30:00-05:00",
+      "timestamp": "2026-01-15T15:30:00Z",
       "tool": "Task",
       "agent_id": "abc123",
       "duration_ms": 15000,
@@ -817,7 +875,7 @@ ORDER BY timestamp
 
 #### `GET /api/summarization`
 
-Summarization statistics including acceptance rate.
+Summarization statistics including acceptance rate. The `effective_summarized` field computes `summarized_count - full_content_requests` — the net count of summarizations that stuck (were not overridden by a `get_full` request). This is the most meaningful metric for evaluating summarization effectiveness.
 
 **SQL:**
 
@@ -872,6 +930,7 @@ ORDER BY period
   "summarized_count": 1171,
   "summarization_rate": 0.059,
   "full_content_requests": 67,
+  "effective_summarized": 1104,
   "rejection_rate": 0.057,
   "avg_compression_ratio": 0.28,
   "avg_original_size": 8542,
@@ -925,8 +984,8 @@ Page size is 50. Offset = `(page - 1) * 50`.
   "sessions": [
     {
       "session_id": "abc123",
-      "start_time": "2026-01-15T10:30:00-05:00",
-      "end_time": "2026-01-15T11:45:00-05:00",
+      "start_time": "2026-01-15T15:30:00Z",
+      "end_time": "2026-01-15T16:45:00Z",
       "event_count": 145,
       "total_tokens": 543210,
       "error_count": 3,
@@ -965,7 +1024,7 @@ ORDER BY timestamp
   "session_id": "abc123",
   "events": [
     {
-      "timestamp": "2026-01-15T10:30:00-05:00",
+      "timestamp": "2026-01-15T10:30:00Z",
       "tool": "Read",
       "backend": "native",
       "status": "success",
@@ -998,7 +1057,7 @@ ORDER BY timestamp
 
 Lazy-load conversation text from Claude's JSONL transcript for session replay.
 
-**Server logic:** Search `jsonl_dir` recursively for a file matching the session_id (either `<session_id>.jsonl` or containing `sessionId` matching). Read the file, extract `user` and `assistant` entries with their text content and timestamps. Strip `tool_use` input details to keep payload small — include tool name and status but not the full input/output.
+**Server logic:** Look up the JSONL file path from the `session_files` table (populated during import). This avoids a recursive filesystem search on every replay request. Read the file, extract `user` and `assistant` entries with their text content and timestamps. Strip `tool_use` input details to keep payload small — include tool name and status but not the full input/output.
 
 **Response:**
 
@@ -1007,12 +1066,12 @@ Lazy-load conversation text from Claude's JSONL transcript for session replay.
   "session_id": "abc123",
   "messages": [
     {
-      "timestamp": "2026-01-15T10:30:00-05:00",
+      "timestamp": "2026-01-15T10:30:00Z",
       "role": "user",
       "text": "have a look at the architecture docs"
     },
     {
-      "timestamp": "2026-01-15T10:30:05-05:00",
+      "timestamp": "2026-01-15T10:30:05Z",
       "role": "assistant",
       "text": "Let me read those files.",
       "tool_calls": [
@@ -1052,14 +1111,14 @@ Before/after comparison. Runs the `overview` query twice with different date ran
 
 #### `GET /api/activity_heatmap`
 
-Event counts by hour-of-day (EST) and day-of-week.
+Event counts by hour-of-day (UTC) and day-of-week. The frontend converts to local time for display.
 
 **SQL:**
 
 ```sql
 SELECT
-    CAST(strftime('%w', datetime(timestamp, '-5 hours')) AS INTEGER) as day_of_week,
-    CAST(strftime('%H', datetime(timestamp, '-5 hours')) AS INTEGER) as hour_of_day,
+    CAST(strftime('%w', timestamp) AS INTEGER) as day_of_week,
+    CAST(strftime('%H', timestamp) AS INTEGER) as hour_of_day,
     COUNT(*) as event_count
 FROM events
 {where}
@@ -1077,7 +1136,7 @@ GROUP BY day_of_week, hour_of_day
 }
 ```
 
-`day`: 0=Sunday, 6=Saturday. `hour`: 0–23 in EST.
+`day`: 0=Sunday, 6=Saturday. `hour`: 0–23 in UTC. The frontend shifts to local timezone for display.
 
 ---
 
@@ -1155,16 +1214,27 @@ LIMIT {limit}
 **SQL (group_by=tool):**
 
 ```sql
+WITH tool_totals AS (
+    SELECT tool, COUNT(*) as total_count
+    FROM events
+    {where}
+    GROUP BY tool
+),
+tool_errors AS (
+    SELECT tool, COUNT(*) as error_count
+    FROM events
+    WHERE status = 'error'
+    {and_where}
+    GROUP BY tool
+)
 SELECT
-    tool,
-    COUNT(*) as error_count,
-    (SELECT COUNT(*) FROM events e2 WHERE e2.tool = events.tool {and_where_inner}) as total_count,
-    CAST(COUNT(*) AS FLOAT) / (SELECT COUNT(*) FROM events e2 WHERE e2.tool = events.tool {and_where_inner}) as error_rate
-FROM events
-WHERE status = 'error'
-{and_where}
-GROUP BY tool
-ORDER BY error_count DESC
+    e.tool,
+    e.error_count,
+    t.total_count,
+    CAST(e.error_count AS FLOAT) / t.total_count as error_rate
+FROM tool_errors e
+JOIN tool_totals t ON e.tool = t.tool
+ORDER BY e.error_count DESC
 LIMIT {limit}
 ```
 
@@ -1310,6 +1380,8 @@ function renderChart(canvasId, type, data, options = {}) {
 
 ### 6.4 View Specifications
 
+**Token attribution note:** For JSONL-imported data, per-tool-call token counts are approximations (divided evenly from per-API-response totals). Charts displaying token data should show a tooltip or footnote indicator (e.g., "≈" prefix or info icon) when the displayed data includes JSONL-sourced events, so users understand the precision level. This can be detected by checking if any events in the current filter range have `import_source = 'claude_transcript'`.
+
 **Overview View** — 4 chart cards:
 1. Sessions over time (line) — `/api/tokens?group_by=day` → plot `event_count`
 2. Token spend (stacked area) — `/api/tokens?group_by=day` → stack input/output/cache_read/cache_creation
@@ -1430,7 +1502,7 @@ Each task in the implementation plan includes specific tests. General approach:
 
 - **Import tests:** Create temp SQLite DB, import from fixture JSONL files and a small DuckDB fixture. Verify event counts, deduplication, import_source flags.
 - **Provider tests:** Use an in-memory SQLite DB seeded with known events. Verify each provider method returns correct shapes and values.
-- **Filter tests:** Unit tests for `build_where()` and `period_group_expr()`. Verify EST→UTC conversion.
+- **Filter tests:** Unit tests for `build_where()` and `period_group_expr()`. Verify correct UTC handling and period grouping.
 - **Mock tests:** Verify MockProvider returns same JSON shapes as SqliteProvider.
 - **Server tests:** Use `unittest` with `HTTPServer` on a random port. Hit each endpoint, verify 200 status and JSON shape.
 - **No frontend tests** — manual verification via browser.

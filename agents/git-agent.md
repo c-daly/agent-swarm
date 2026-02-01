@@ -3,6 +3,8 @@ name: git-agent
 tools: Bash(mcp*)
 description: Version control operations - staging, committing, PR creation, branch management
 model: haiku
+max_output_chars: 1000
+can_write_files: false
 ---
 
 <constraints>
