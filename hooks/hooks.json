@@ -3,16 +3,6 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "mcp__router__router__*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/router-event-hook.py",
-            "timeout": 10
-          }
-        ]
-      },
-      {
         "matcher": "mcp__*",
         "hooks": [
           {
