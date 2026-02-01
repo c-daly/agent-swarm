@@ -18,6 +18,7 @@ Subagents do NOT:
 import json
 import sys
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 # Add lib to path for workflow_client and permission_store
@@ -25,7 +26,7 @@ lib_dir = Path(__file__).parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
 try:
-    from workflow_client import workflow_get_state, agent_set_state, workflow_is_active
+    from workflow_client import workflow_get_state, agent_set_state, workflow_is_active, workflow_get_value, workflow_update
 except ImportError:
     def workflow_get_state(workflow_id: str) -> dict | None:
         return None
@@ -33,6 +34,10 @@ except ImportError:
         return None
     def workflow_is_active(workflow_id: str) -> bool:
         return False
+    def workflow_get_value(workflow_id: str, key: str):
+        return None
+    def workflow_update(workflow_id: str, updates: dict) -> dict | None:
+        return None
 
 try:
     from permission_store import PermissionStore, TOOL_CATEGORIES, get_tool_category
@@ -319,6 +324,19 @@ def main():
         "parent_session": session_id,
     }
     agent_set_state(agent_id, agent_state)
+
+    # Track in iterate workflow's active_agents (for subagent-complete.py to pop)
+    try:
+        if workflow_is_active("iterate"):
+            agents = workflow_get_value("iterate", "active_agents") or {}
+            agents[agent_id] = {
+                "description": task_desc[:100] if task_desc else "No description",
+                "type": agent_type,
+                "spawned_at": datetime.now().isoformat(),
+            }
+            workflow_update("iterate", {"active_agents": agents})
+    except Exception:
+        pass  # Non-critical tracking
 
     # Build context to inject based on mode and phase
     additional_context = []

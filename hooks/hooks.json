@@ -36,11 +36,6 @@
             "type": "command",
             "command": "cd /home/fearsidhe/.claude/plugins/agent-swarm && poetry run python3 hooks/telemetry-posttool.py",
             "timeout": 2
-          },
-          {
-            "type": "command",
-            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/post-tool-hook.py",
-            "timeout": 3
           }
         ]
       }
