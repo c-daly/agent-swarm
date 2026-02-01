@@ -44,7 +44,10 @@ PROTECTED_KEYS = frozenset({
 
 def _is_protected_key(key: str) -> bool:
     """Check whether a workflow state key is daemon-managed."""
-    return key in PROTECTED_KEYS or key.endswith("_checkpoint_passed")
+    return (
+        key in PROTECTED_KEYS
+        or (len(key) > len("_checkpoint_passed") and key.endswith("_checkpoint_passed"))
+    )
 
 
 class Controller:
@@ -515,7 +518,7 @@ class Controller:
             state = self._workflow_state.get(wf_id)
             return copy.deepcopy(state) if state is not None else None
 
-    def _wf_set_state(self, args: dict) -> dict:
+    def __wf_set_state(self, args: dict) -> dict:
         """Internal only -- not exposed via client dispatch."""
         wf_id = args.get("workflow_id", "")
         state = args.get("state", {})
@@ -525,7 +528,7 @@ class Controller:
             self._workflow_state[wf_id] = dict(state)
             return copy.deepcopy(self._workflow_state[wf_id])
 
-    def _wf_update(self, args: dict) -> dict:
+    def __wf_update(self, args: dict) -> dict:
         """Internal only -- not exposed via client dispatch."""
         wf_id = args.get("workflow_id", "")
         updates = args.get("updates", {})
@@ -548,14 +551,14 @@ class Controller:
         wf_id = args.get("workflow_id", "")
         key = args.get("key", "")
         value = args.get("value")
-        if _is_protected_key(key):
-            raise WorkflowError(
-                f"Protected key '{key}' cannot be set directly. "
-                "Use workflow_advance_phase or workflow_pass_checkpoint."
-            )
         with self._state_lock:
             if wf_id not in self._workflow_state:
                 raise WorkflowError(f"Workflow not found: {wf_id}")
+            if _is_protected_key(key):
+                raise WorkflowError(
+                    f"Protected key '{key}' cannot be set directly. "
+                    "Use workflow_advance_phase or workflow_pass_checkpoint."
+                )
             self._workflow_state[wf_id][key] = value
             return True
 
@@ -610,7 +613,7 @@ class Controller:
                     raise WorkflowError(
                         f"Phase '{current}' does not have a checkpoint"
                     )
-            state[f"{current}_checkpoint_passed"] = True
+            state[f"{current}_checkpoint_passed"] = datetime.now(timezone.utc).isoformat()
             return {"status": "checkpoint_passed", "phase": current}
 
     def _agent_get_state(self, args: dict) -> dict | None:
