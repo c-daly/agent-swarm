@@ -452,4 +452,4 @@ class TestSummarizeAndRetrieve:
             "Agent did not call router__get_full — "
             "it should have recognized the summary was insufficient"
         )
-        assert final_answer is not None, "Agent did not produce a final answer"  # was_summarized = True
+        assert final_answer is not None, "Agent did not produce a final answer"

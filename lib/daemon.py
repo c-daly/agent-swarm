@@ -160,7 +160,15 @@ if __name__ == "__main__":
                     "jsonrpc": "2.0", "id": 1,
                     "method": "initialize", "params": {},
                 }).encode() + b"\n")
-                sock.recv(8192)  # consume init response
+                init_resp = sock.recv(8192)
+                try:
+                    init_data = _json.loads(init_resp.decode().strip())
+                    if "error" in init_data:
+                        print(f"Initialize failed: {init_data['error']}", file=sys.stderr)
+                        sys.exit(1)
+                except (_json.JSONDecodeError, UnicodeDecodeError):
+                    print("Invalid initialize response", file=sys.stderr)
+                    sys.exit(1)
                 # Send initialized notification (required by MCP protocol)
                 sock.sendall(_json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}).encode() + b"\n")
                 # Call import
@@ -174,15 +182,21 @@ if __name__ == "__main__":
                     buf += sock.recv(8192)
                 result = _json.loads(buf.decode().strip())
                 data = result.get("result", {})
-                try:
-                    content_list = data.get("content", []) if isinstance(data, dict) else []
-                    text = content_list[0].get("text", "{}") if content_list else "{}"
-                    inner = _json.loads(text)
-                    print(f"Import: {inner.get('files', 0)} files, "
-                          f"{inner.get('inserted', 0)} inserted, "
-                          f"{inner.get('skipped', 0)} skipped")
-                except (IndexError, KeyError, TypeError, _json.JSONDecodeError):
+                if not isinstance(data, dict):
                     print(f"Import result: {data}")
+                else:
+                    content_list = data.get("content", [])
+                    text = ""
+                    if isinstance(content_list, list) and content_list:
+                        first = content_list[0]
+                        text = first.get("text", "{}") if isinstance(first, dict) else ""
+                    try:
+                        inner = _json.loads(text) if text else {}
+                        print(f"Import: {inner.get('files', 0)} files, "
+                              f"{inner.get('inserted', 0)} inserted, "
+                              f"{inner.get('skipped', 0)} skipped")
+                    except _json.JSONDecodeError:
+                        print(f"Import result: {data}")
             except ConnectionRefusedError:
                 print("Daemon not running", file=sys.stderr)
                 sys.exit(1)

@@ -104,10 +104,10 @@ def _check_bash_file_io(command: str) -> str | None:
 
     # Strip quoted strings before checking redirections so that '>' inside
     # e.g. git commit -m "feat: x > y" does not false-positive.
-    unquoted = re.sub(r"""('[^']*'|"[^"]*")""", "", cmd)
+    unquoted = re.sub(r"""('[^'\\]*(?:\\.[^'\\]*)*'|"[^"\\]*(?:\\.[^"\\]*)*")""", "", cmd)
 
     # 2. Output redirection to a real file  (allow /dev/* and fd dup >&N)
-    if re.search(r"(?<![&])>{1,2}\s*(?!/dev/)(?!&)\S", unquoted):
+    if re.search(r"(?<![&])>{1,2}(?!&)\s*(?!/dev/)\S", unquoted):
         return "Output redirection blocked — use native__write_file to write files"
 
     # 3. Input redirection from a real file  (allow heredocs << and /dev/*)

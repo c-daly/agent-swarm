@@ -87,6 +87,8 @@ def _connect() -> socket.socket | None:
 
 def _flush_inflight_errors() -> None:
   with _inflight_lock:
+      if not _inflight:
+          return
       ids = list(_inflight.keys())
       _inflight.clear()
   for req_id in ids:
@@ -168,11 +170,8 @@ def main():
                   sys.stdout.write(decoded + "\n")
                   sys.stdout.flush()
           except socket.timeout:
-              with _inflight_lock:
-                  has_old = len(_inflight) > 0
-              if has_old:
-                  connected.clear()
-                  _flush_inflight_errors()
+              connected.clear()
+              _flush_inflight_errors()
           except (BrokenPipeError, OSError):
               connected.clear()
               _flush_inflight_errors()
