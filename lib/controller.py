@@ -102,12 +102,16 @@ def _check_bash_file_io(command: str) -> str | None:
         if first_cmd in _BASH_WRITE_CMDS:
             return f"'{first_cmd}' blocked — use native__write_file to write files"
 
+    # Strip quoted strings before checking redirections so that '>' inside
+    # e.g. git commit -m "feat: x > y" does not false-positive.
+    unquoted = re.sub(r"""('[^']*'|"[^"]*")""", "", cmd)
+
     # 2. Output redirection to a real file  (allow /dev/* and fd dup >&N)
-    if re.search(r"(?<![&])>{1,2}\s*(?!/dev/)(?!&)\S", cmd):
+    if re.search(r"(?<![&])>{1,2}\s*(?!/dev/)(?!&)\S", unquoted):
         return "Output redirection blocked — use native__write_file to write files"
 
     # 3. Input redirection from a real file  (allow heredocs << and /dev/*)
-    if re.search(r"(?<!<)<(?!<)\s*(?!/dev/)\S", cmd):
+    if re.search(r"(?<!<)<(?!<)\s*(?!/dev/)\S", unquoted):
         return "Input redirection blocked — use native__read_file to read files"
 
     # 4. Inline-script file I/O  (python/ruby/perl/node -c '…open(…')
