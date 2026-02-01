@@ -50,6 +50,85 @@ def _is_protected_key(key: str) -> bool:
     )
 
 
+# --- Bash file-I/O lockdown ---------------------------------------------------
+# These commands read file *contents* — agents must use native__read_file so
+# the output flows through the summarization pipeline.
+_BASH_READ_CMDS = frozenset({
+    "cat", "head", "tail", "less", "more", "bat", "tac", "nl",
+    "strings", "xxd", "hexdump", "od",
+})
+# File-content search — agents must use native__grep / native__glob.
+_BASH_SEARCH_CMDS = frozenset({
+    "grep", "egrep", "fgrep", "rg", "ag", "ack",
+})
+# Read-and-transform — agents must use native__read_file + native__edit_file.
+_BASH_PROCESS_CMDS = frozenset({"sed", "awk"})
+# Write via pipe — agents must use native__write_file.
+_BASH_WRITE_CMDS = frozenset({"tee"})
+_BASH_BLOCKED_CMDS = (
+    _BASH_READ_CMDS | _BASH_SEARCH_CMDS | _BASH_PROCESS_CMDS | _BASH_WRITE_CMDS
+)
+
+
+def _check_bash_file_io(command: str) -> str | None:
+    """Return an error message if *command* attempts file I/O, else ``None``.
+
+    Splits on shell operators to inspect the first word of each segment,
+    then checks for output/input redirections and inline-script patterns.
+    """
+    cmd = command.strip()
+
+    # 1. Blocked commands in any segment
+    for segment in re.split(r"[;|&]+|\$\(|`|\(", cmd):
+        words = segment.strip().split()
+        if not words:
+            continue
+        # Skip sudo / env prefixes
+        idx = 0
+        while idx < len(words) and words[idx] in ("sudo", "env"):
+            idx += 1
+        if idx >= len(words):
+            continue
+        first_cmd = words[idx].rsplit("/", 1)[-1]  # /usr/bin/cat -> cat
+
+        if first_cmd in _BASH_READ_CMDS:
+            return f"'{first_cmd}' blocked — use native__read_file to read files"
+        if first_cmd in _BASH_SEARCH_CMDS:
+            return f"'{first_cmd}' blocked — use native__grep or native__glob to search"
+        if first_cmd in _BASH_PROCESS_CMDS:
+            return (
+                f"'{first_cmd}' blocked — use native__read_file + native__edit_file"
+            )
+        if first_cmd in _BASH_WRITE_CMDS:
+            return f"'{first_cmd}' blocked — use native__write_file to write files"
+
+    # Strip quoted strings before checking redirections so that '>' inside
+    # e.g. git commit -m "feat: x > y" does not false-positive.
+    unquoted = re.sub(r"""('[^'\\]*(?:\\.[^'\\]*)*'|"[^"\\]*(?:\\.[^"\\]*)*")""", "", cmd)
+
+    # 2. Output redirection to a real file  (allow /dev/* and fd dup >&N)
+    if re.search(r"(?<![&])>{1,2}(?!&)\s*(?!/dev/)\S", unquoted):
+        return "Output redirection blocked — use native__write_file to write files"
+
+    # 3. Input redirection from a real file  (allow heredocs << and /dev/*)
+    if re.search(r"(?<!<)<(?!<)\s*(?!/dev/)\S", unquoted):
+        return "Input redirection blocked — use native__read_file to read files"
+
+    # 4. Inline-script file I/O  (python/ruby/perl/node -c '…open(…')
+    if re.search(
+        r"(?:python|python3|ruby|perl|node)\s+-[ce]\s+.*\bopen\s*\(",
+        cmd,
+        re.DOTALL,
+    ):
+        return "Inline script file I/O blocked — use native__read_file / native__write_file"
+
+    # 5. dd with file operands
+    if re.search(r"\bdd\b.*\b(?:if|of)=(?!/dev/)", cmd):
+        return "dd file I/O blocked — use native__read_file / native__write_file"
+
+    return None
+
+
 class Controller:
     """Orchestrates all request handling. Owns all services as properties."""
 
@@ -71,6 +150,47 @@ class Controller:
         self._agent_state: dict[str, dict] = {}
         self._state_lock = threading.RLock()
         self._summarization_threshold = 2000
+
+        # Import previous session data into dashboard DB on startup
+        threading.Thread(
+            target=self.run_dashboard_import, daemon=True, name="dashboard-import"
+        ).start()
+
+    def run_dashboard_import(self) -> dict:
+        """Import Claude JSONL transcripts into the dashboard database.
+
+        Safe to call repeatedly — uses dedup and import_log to skip
+        already-imported files.
+        """
+        try:
+            base_dir = Path(__file__).parent.parent
+            db_path = base_dir / "dashboard" / "data" / "dashboard.db"
+            projects_dir = Path("~/.claude/projects").expanduser()
+
+            if not projects_dir.exists():
+                return {"status": "skipped", "reason": "projects dir not found"}
+
+            # Load dashboard/import.py via importlib ("import" is a keyword)
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "dashboard_import", base_dir / "dashboard" / "import.py"
+            )
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            conn = mod.init_db(str(db_path))
+            result = mod.import_claude_transcripts(conn, str(projects_dir))
+            conn.close()
+
+            log.info(
+                "Dashboard import: %d files, %d inserted, %d skipped",
+                result["files"], result["inserted"], result["skipped"],
+            )
+            return {"status": "ok", **result}
+        except Exception as e:
+            log.warning("Dashboard import failed: %s", e)
+            return {"status": "error", "error": str(e)}
 
     # --- Main entry point ---
 
@@ -117,15 +237,24 @@ class Controller:
             )
             raise
 
-        # Cache full response
-        content_id = f"c{uuid.uuid4().hex[:12]}"
-        original_size = len(str(raw_result))
-        self.cache.store(content_id, raw_result)
+        # Skip caching/summarization for get_full (agent explicitly wants full content)
+        skip_summarization = (prefix == "router" and tool_name == "get_full")
 
-        # Summarize if needed
-        result, was_summarized = self._maybe_summarize(
-            raw_result, content_id, original_size
-        )
+        if skip_summarization:
+            result = raw_result
+            was_summarized = False
+            original_size = len(str(raw_result))
+            content_id = None
+        else:
+            # Cache full response
+            content_id = f"c{uuid.uuid4().hex[:12]}"
+            original_size = len(str(raw_result))
+            self.cache.store(content_id, raw_result)
+
+            # Summarize if needed
+            result, was_summarized = self._maybe_summarize(
+                raw_result, content_id, original_size
+            )
 
         # Record success telemetry
         duration_ms = int((time.monotonic() - start_time) * 1000)
@@ -373,6 +502,12 @@ class Controller:
         and restricts bash access per agent type and workflow phase.
         """
         command = args.get("command", "")
+
+        # Block file I/O — force agents through native tools / summarization
+        violation = _check_bash_file_io(command)
+        if violation:
+            return {"error": violation, "isError": True}
+
         timeout = min(args.get("timeout", 120), 600)
         cwd = args.get("cwd")
 
@@ -436,6 +571,9 @@ class Controller:
             return self.permissions.get_allowed_tools(
                 agent_type=args.get("agent_type")
             )
+
+        if tool_name == "import_dashboard":
+            return self.run_dashboard_import()
 
         raise RouterError(f"Unknown router tool: {tool_name}")
 
@@ -657,6 +795,7 @@ class Controller:
         return {
             "summary": summary,
             "content_id": content_id,
+            "instruction": f"To retrieve full content, call router__get_full with content_id='{content_id}'",
             "full_available": True,
         }, True
 

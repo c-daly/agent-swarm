@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""bin/mcp-router — stdio-to-TCP bridge shim.
+"""bin/mcp-router — stdio-to-TCP bridge with reconnect and keepalive.
 
 Claude Code spawns this as a subprocess. It bridges MCP JSON-RPC
-over stdio to the daemon's TCP port. No logic, no state, pure pipe.
-
-Replaces the old mcp_router.py-based entry point.
+over stdio to the daemon's TCP port.
 """
 
 import json
@@ -19,103 +17,226 @@ from pathlib import Path
 DAEMON_PORT = int(os.environ.get("DAEMON_PORT", "7523"))
 ROOT = Path(__file__).resolve().parent.parent
 
+MAX_RECONNECT_ATTEMPTS = 5
+RECONNECT_DELAY = 0.5
+RECV_TIMEOUT = 90.0
+
+_inflight_lock = threading.Lock()
+_inflight: dict[int | str, bool] = {}
+_sock_lock = threading.Lock()
+
+
+def _set_keepalive(sock: socket.socket) -> None:
+  """Enable TCP keepalive with aggressive timings."""
+  sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+  try:
+      sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 10)
+      sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 5)
+      sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+  except (AttributeError, OSError):
+      pass
+
 
 def _try_start_daemon() -> bool:
-    """Attempt to start the daemon if not running. Returns True if started."""
-    start_script = ROOT / "bin" / "start-daemon"
-    if not start_script.exists():
-        return False
-    try:
-        subprocess.Popen(
-            [sys.executable, str(start_script)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        # Give the daemon a moment to bind
-        for _ in range(10):
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            try:
-                s.settimeout(1.0)
-                s.connect(("127.0.0.1", DAEMON_PORT))
-                return True
-            except (ConnectionRefusedError, socket.timeout):
-                time.sleep(0.3)
-            finally:
-                s.close()
-    except Exception:
-        pass
-    return False
+  start_script = ROOT / "bin" / "start-daemon"
+  if not start_script.exists():
+      return False
+  try:
+      subprocess.Popen(
+          [sys.executable, str(start_script)],
+          stdout=subprocess.DEVNULL,
+          stderr=subprocess.DEVNULL,
+      )
+      for _ in range(10):
+          s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+          try:
+              s.settimeout(1.0)
+              s.connect(("127.0.0.1", DAEMON_PORT))
+              return True
+          except (ConnectionRefusedError, socket.timeout):
+              time.sleep(0.3)
+          finally:
+              s.close()
+  except Exception:
+      pass
+  return False
+
+
+def _connect() -> socket.socket | None:
+  sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+  try:
+      sock.connect(("127.0.0.1", DAEMON_PORT))
+      _set_keepalive(sock)
+      sock.settimeout(RECV_TIMEOUT)
+      return sock
+  except ConnectionRefusedError:
+      sock.close()
+      if _try_start_daemon():
+          sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+          try:
+              sock.connect(("127.0.0.1", DAEMON_PORT))
+              _set_keepalive(sock)
+              sock.settimeout(RECV_TIMEOUT)
+              return sock
+          except (ConnectionRefusedError, OSError):
+              sock.close()
+  except OSError:
+      sock.close()
+  return None
+
+
+def _flush_inflight_errors() -> None:
+  with _inflight_lock:
+      if not _inflight:
+          return
+      ids = list(_inflight.keys())
+      _inflight.clear()
+  for req_id in ids:
+      error_resp = {
+          "jsonrpc": "2.0",
+          "id": req_id,
+          "error": {
+              "code": -32603,
+              "message": "Connection to daemon lost. Reconnecting...",
+          },
+      }
+      try:
+          sys.stdout.write(json.dumps(error_resp) + "\n")
+          sys.stdout.flush()
+      except (BrokenPipeError, OSError):
+          pass
+
+
+def _track_request(line: str) -> None:
+  try:
+      msg = json.loads(line)
+      req_id = msg.get("id")
+      if req_id is not None:
+          with _inflight_lock:
+              _inflight[req_id] = True
+  except (json.JSONDecodeError, TypeError):
+      pass
+
+
+def _untrack_response(line: str) -> None:
+  try:
+      msg = json.loads(line)
+      req_id = msg.get("id")
+      if req_id is not None:
+          with _inflight_lock:
+              _inflight.pop(req_id, None)
+  except (json.JSONDecodeError, TypeError):
+      pass
 
 
 def main():
-    # Connect to daemon
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.connect(("127.0.0.1", DAEMON_PORT))
-    except ConnectionRefusedError:
-        # Try auto-starting the daemon
-        if not _try_start_daemon():
-            error = {
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {
-                    "code": -32603,
-                    "message": "Daemon not running. Run start-claude to start it.",
-                },
-            }
-            sys.stdout.write(json.dumps(error) + "\n")
-            sys.stdout.flush()
-            sys.exit(1)
-        # Retry connection after auto-start
-        try:
-            sock.connect(("127.0.0.1", DAEMON_PORT))
-        except ConnectionRefusedError:
-            error = {
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {
-                    "code": -32603,
-                    "message": "Daemon failed to start.",
-                },
-            }
-            sys.stdout.write(json.dumps(error) + "\n")
-            sys.stdout.flush()
-            sys.exit(1)
+  sock = _connect()
+  if sock is None:
+      error = {
+          "jsonrpc": "2.0",
+          "id": None,
+          "error": {
+              "code": -32603,
+              "message": "Daemon not running. Run start-claude to start it.",
+          },
+      }
+      sys.stdout.write(json.dumps(error) + "\n")
+      sys.stdout.flush()
+      sys.exit(1)
 
-    def stdin_to_tcp():
-        """Read from stdin (Claude Code), forward to daemon TCP."""
-        try:
-            for line in sys.stdin:
-                sock.sendall(line.encode())
-        except (BrokenPipeError, OSError):
-            pass
-        finally:
-            try:
-                sock.shutdown(socket.SHUT_WR)
-            except OSError:
-                pass
+  connected = threading.Event()
+  connected.set()
+  shutdown = threading.Event()
 
-    def tcp_to_stdout():
-        """Read from daemon TCP, forward to stdout (Claude Code)."""
-        buf = b""
-        try:
-            while True:
-                chunk = sock.recv(8192)
-                if not chunk:
-                    break
-                buf += chunk
-                while b"\n" in buf:
-                    line, buf = buf.split(b"\n", 1)
-                    sys.stdout.write(line.decode() + "\n")
-                    sys.stdout.flush()
-        except (BrokenPipeError, OSError):
-            pass
+  def tcp_to_stdout():
+      nonlocal sock
+      buf = b""
+      while not shutdown.is_set():
+          if not connected.is_set():
+              connected.wait(timeout=1.0)
+              buf = b""
+              continue
+          try:
+              chunk = sock.recv(8192)
+              if not chunk:
+                  connected.clear()
+                  _flush_inflight_errors()
+                  continue
+              buf += chunk
+              while b"\n" in buf:
+                  line, buf = buf.split(b"\n", 1)
+                  decoded = line.decode()
+                  _untrack_response(decoded)
+                  sys.stdout.write(decoded + "\n")
+                  sys.stdout.flush()
+          except socket.timeout:
+              connected.clear()
+              _flush_inflight_errors()
+          except (BrokenPipeError, OSError):
+              connected.clear()
+              _flush_inflight_errors()
+              buf = b""
 
-    reader = threading.Thread(target=tcp_to_stdout, daemon=True)
-    reader.start()
-    stdin_to_tcp()
-    sock.close()
+  def reconnect_loop():
+      nonlocal sock
+      while not shutdown.is_set():
+          if connected.is_set():
+              shutdown.wait(timeout=1.0)
+              continue
+          for attempt in range(MAX_RECONNECT_ATTEMPTS):
+              if shutdown.is_set():
+                  return
+              time.sleep(RECONNECT_DELAY * (attempt + 1))
+              new_sock = _connect()
+              if new_sock is not None:
+                  with _sock_lock:
+                      try:
+                          sock.close()
+                      except OSError:
+                          pass
+                      sock = new_sock
+                  connected.set()
+                  break
+          else:
+              shutdown.set()
+              sys.exit(1)
+
+  reader = threading.Thread(target=tcp_to_stdout, daemon=True)
+  reconnector = threading.Thread(target=reconnect_loop, daemon=True)
+  reader.start()
+  reconnector.start()
+
+  try:
+      for line in sys.stdin:
+          _track_request(line)
+          if not connected.is_set():
+              connected.wait(timeout=5.0)
+              if not connected.is_set():
+                  _flush_inflight_errors()
+                  continue
+          try:
+              with _sock_lock:
+                  sock.sendall(line.encode())
+          except (BrokenPipeError, OSError):
+              connected.clear()
+              _flush_inflight_errors()
+              connected.wait(timeout=10.0)
+              if connected.is_set():
+                  try:
+                      with _sock_lock:
+                          sock.sendall(line.encode())
+                  except (BrokenPipeError, OSError):
+                      pass
+  except (BrokenPipeError, OSError):
+      pass
+  finally:
+      shutdown.set()
+      try:
+          sock.close()
+      except OSError:
+          pass
 
 
 if __name__ == "__main__":
-    main()
+  main()
+

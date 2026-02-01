@@ -3,6 +3,10 @@
 
 One instance per consumer. NOT thread-safe — each thread that needs
 daemon access should create its own instance.
+
+Connection is persistent for the lifetime of the client. The daemon
+tracks agent identity per connection, so a single client instance
+represents a single agent.
 """
 
 import json
@@ -14,11 +18,17 @@ DAEMON_HOST = "127.0.0.1"
 DAEMON_PORT = 7523
 RECV_BUFFER = 8192
 DEFAULT_TIMEOUT = 30.0
-MAX_RESPONSE_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_RESPONSE_SIZE = 10 * 1024 * 1024  # 10 MB — matches daemon MAX_MESSAGE_SIZE
 
 
 class DaemonError(Exception):
-    """Error returned by the daemon."""
+    """Error returned by the daemon.
+
+    Attributes:
+        code: JSON-RPC error code
+        message: Human-readable error message
+        data: Optional additional error data
+    """
 
     def __init__(self, code: int, message: str, data: Any = None) -> None:
         self.code = code
@@ -49,18 +59,27 @@ class DaemonClient:
         self._request_id = 0
         self._registered = False
 
+        # MCP initialize handshake
         self._request_id += 1
         init_req = {
-            "jsonrpc": "2.0", "id": self._request_id, "method": "initialize",
-            "params": {"protocolVersion": "2024-11-05", "capabilities": {},
-                       "clientInfo": {"name": "daemon-client", "version": "1.0"}},
+            "jsonrpc": "2.0",
+            "id": self._request_id,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "daemon-client", "version": "1.0"},
+            },
         }
         self._sock.sendall(json.dumps(init_req).encode() + b"\n")
-        resp = json.loads(self._read_response().decode())
+        resp_bytes = self._read_response()
+        resp = json.loads(resp_bytes.decode())
         if "error" in resp:
             raise ConnectionError(
-                f"MCP handshake failed: {resp['error'].get('message', 'unknown')}")
+                f"MCP handshake failed: {resp['error'].get('message', 'unknown')}"
+            )
 
+        # Send initialized notification
         notif = {"jsonrpc": "2.0", "method": "notifications/initialized"}
         self._sock.sendall(json.dumps(notif).encode() + b"\n")
 
@@ -77,15 +96,20 @@ class DaemonClient:
         if self._registered:
             raise RuntimeError("Already registered")
         result = self._call("agent/register", {
-            "agent_id": agent_id, "agent_type": agent_type,
-            "session_id": session_id, "workflow_id": workflow_id,
+            "agent_id": agent_id,
+            "agent_type": agent_type,
+            "session_id": session_id,
+            "workflow_id": workflow_id,
         })
         self._registered = True
         return result
 
     def call_tool(self, name: str, arguments: dict) -> Any:
         """Call a tool through the daemon."""
-        return self._call("tools/call", {"name": name, "arguments": arguments})
+        return self._call("tools/call", {
+            "name": name,
+            "arguments": arguments,
+        })
 
     def list_tools(self) -> list[dict]:
         """List tools available to this agent."""
@@ -93,98 +117,143 @@ class DaemonClient:
         return result.get("tools", [])
 
     def workflow_start(self, workflow_id: str, initial_state: dict) -> dict:
+        """Start a named workflow."""
         return self._call("workflow/start", {
-            "workflow_id": workflow_id, "initial_state": initial_state})
+            "workflow_id": workflow_id,
+            "initial_state": initial_state,
+        })
 
     def workflow_stop(self, workflow_id: str) -> dict:
+        """Stop a workflow and clear its state."""
         return self._call("workflow/stop", {"workflow_id": workflow_id})
 
     def workflow_get_state(self, workflow_id: str) -> dict:
+        """Get full workflow state."""
         return self._call("workflow/get_state", {"workflow_id": workflow_id})
 
     def workflow_get_value(self, workflow_id: str, key: str) -> Any:
+        """Get a single value from workflow state."""
         return self._call("workflow/get_value", {
-            "workflow_id": workflow_id, "key": key})
+            "workflow_id": workflow_id,
+            "key": key,
+        })
 
     def workflow_set_value(self, workflow_id: str, key: str, value: Any) -> dict:
+        """Set a single value in workflow state (protected keys rejected)."""
         return self._call("workflow/set_value", {
-            "workflow_id": workflow_id, "key": key, "value": value})
+            "workflow_id": workflow_id,
+            "key": key,
+            "value": value,
+        })
 
     def workflow_is_active(self, workflow_id: str) -> bool:
+        """Check if a workflow is currently active. Returns False on error."""
         try:
-            return bool(self._call("workflow/is_active", {
-                "workflow_id": workflow_id}))
+            result = self._call("workflow/is_active", {
+                "workflow_id": workflow_id,
+            })
+            return bool(result)
         except (DaemonError, ConnectionError):
             return False
 
-    def workflow_advance_phase(self, workflow_id: str, target_phase: str) -> dict:
+    def workflow_advance_phase(self, workflow_id: str,
+                               target_phase: str) -> dict:
+        """Request a phase transition in a workflow."""
         return self._call("workflow/advance_phase", {
-            "workflow_id": workflow_id, "target_phase": target_phase})
+            "workflow_id": workflow_id,
+            "target_phase": target_phase,
+        })
 
     def workflow_pass_checkpoint(self, workflow_id: str) -> dict:
+        """Mark the current phase's checkpoint as passed."""
         return self._call("workflow/pass_checkpoint", {
-            "workflow_id": workflow_id})
+            "workflow_id": workflow_id,
+        })
 
     def agent_get_state(self, agent_id: str) -> Optional[dict]:
+        """Get an agent's state."""
         try:
             return self._call("agent/get_state", {"agent_id": agent_id})
         except DaemonError:
             return None
 
     def agent_set_state(self, agent_id: str, state: dict) -> dict:
+        """Set an agent's state."""
         return self._call("agent/set_state", {
-            "agent_id": agent_id, "state": state})
+            "agent_id": agent_id,
+            "state": state,
+        })
 
     def agent_delete(self, agent_id: str) -> dict:
+        """Delete an agent's state."""
         return self._call("agent/delete", {"agent_id": agent_id})
 
     def agent_list(self) -> list[str]:
+        """List all registered agent IDs."""
         result = self._call("agent/list", {})
-        return result if isinstance(result, list) else []
+        if isinstance(result, list):
+            return result
+        return []
 
-    # ── Internal ──────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────
+    # Internal
+    # ─────────────────────────────────────────────────────────────────
 
     def _call(self, method: str, params: dict) -> Any:
+        """Send JSON-RPC request, block for response, return result."""
         if self._sock is None:
             raise ConnectionError("Not connected")
         if method != "agent/register" and not self._registered:
             raise RuntimeError("Must call register() before other methods")
 
         self._request_id += 1
-        request = {"jsonrpc": "2.0", "id": self._request_id,
-                    "method": method, "params": params}
-        self._sock.sendall(json.dumps(request).encode() + b"\n")
+        request = {
+            "jsonrpc": "2.0",
+            "id": self._request_id,
+            "method": method,
+            "params": params,
+        }
+        payload = json.dumps(request).encode() + b"\n"
+        self._sock.sendall(payload)
 
         raw = self._read_response()
         try:
             text = raw.decode("utf-8")
         except UnicodeDecodeError:
-            raise ConnectionError("Invalid UTF-8 from daemon")
+            raise ConnectionError(
+                "Invalid UTF-8 from daemon — possible protocol desynchronization"
+            )
         try:
             response = json.loads(text)
         except json.JSONDecodeError:
-            raise ConnectionError("Invalid JSON from daemon")
+            raise ConnectionError(
+                "Invalid JSON from daemon — possible protocol desynchronization"
+            )
 
         if response.get("id") != self._request_id:
             raise ConnectionError(
                 f"Response ID mismatch: expected {self._request_id}, "
-                f"got {response.get('id')}")
+                f"got {response.get('id')}"
+            )
 
         if "error" in response:
             err = response["error"]
-            raise DaemonError(err.get("code", -32603),
-                              err.get("message", "Unknown error"),
-                              err.get("data"))
+            raise DaemonError(
+                code=err.get("code", -32603),
+                message=err.get("message", "Unknown error"),
+                data=err.get("data"),
+            )
 
         return response.get("result")
 
     def _read_response(self) -> bytes:
-        if self._sock is None:
-            raise ConnectionError("Not connected")
+        """Read exactly one newline-delimited response from the socket."""
         while b"\n" not in self._buf:
             if len(self._buf) > MAX_RESPONSE_SIZE:
                 raise ConnectionError(
-                    f"Response exceeds {MAX_RESPONSE_SIZE} bytes")
+                    f"Response exceeds {MAX_RESPONSE_SIZE} bytes — "
+                    "possible protocol desynchronization"
+                )
             chunk = self._sock.recv(RECV_BUFFER)
             if not chunk:
                 raise ConnectionError("Daemon closed connection")

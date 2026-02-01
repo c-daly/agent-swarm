@@ -144,23 +144,23 @@ class RouterResponse:
         )
 
 
-def format_response_envelope(summary: str, correlation_id: str) -> dict:
+def format_response_envelope(summary: str, content_id: str) -> dict:
     """Format a response envelope with summary and retrieval instruction.
-    
+
     Creates a standardized response format that includes only the summary,
     with instructions on how to retrieve full content if needed.
-    
+
     Args:
         summary: The summary of the response (can be None or empty)
-        correlation_id: Unique ID for retrieving full content later
-        
+        content_id: Unique ID for retrieving full content later
+
     Returns:
-        Dict with summary, correlation_id, instruction, and full_available flag
+        Dict with summary, content_id, instruction, and full_available flag
     """
     return {
         "summary": summary if summary is not None else "",
-        "correlation_id": correlation_id,
-        "instruction": f"To retrieve full content, call router__get_full with correlation_id='{correlation_id}'",
+        "content_id": content_id,
+        "instruction": f"To retrieve full content, call router__get_full with content_id='{content_id}'",
         "full_available": True,
     }
 

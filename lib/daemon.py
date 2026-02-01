@@ -149,12 +149,66 @@ if __name__ == "__main__":
             else:
                 print("Daemon is not running")
             sys.exit(0)
+        elif sys.argv[1] == "--import-dashboard":
+            import json as _json
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(60.0)
+            try:
+                sock.connect(("127.0.0.1", DEFAULT_PORT))
+                # Initialize connection
+                sock.sendall(_json.dumps({
+                    "jsonrpc": "2.0", "id": 1,
+                    "method": "initialize", "params": {},
+                }).encode() + b"\n")
+                init_resp = sock.recv(8192)
+                try:
+                    init_data = _json.loads(init_resp.decode().strip())
+                    if "error" in init_data:
+                        print(f"Initialize failed: {init_data['error']}", file=sys.stderr)
+                        sys.exit(1)
+                except (_json.JSONDecodeError, UnicodeDecodeError):
+                    print("Invalid initialize response", file=sys.stderr)
+                    sys.exit(1)
+                # Send initialized notification (required by MCP protocol)
+                sock.sendall(_json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}).encode() + b"\n")
+                # Call import
+                sock.sendall(_json.dumps({
+                    "jsonrpc": "2.0", "id": 2,
+                    "method": "tools/call",
+                    "params": {"name": "router__import_dashboard", "arguments": {}},
+                }).encode() + b"\n")
+                buf = b""
+                while b"\n" not in buf:
+                    buf += sock.recv(8192)
+                result = _json.loads(buf.decode().strip())
+                data = result.get("result", {})
+                if not isinstance(data, dict):
+                    print(f"Import result: {data}")
+                else:
+                    content_list = data.get("content", [])
+                    text = ""
+                    if isinstance(content_list, list) and content_list:
+                        first = content_list[0]
+                        text = first.get("text", "{}") if isinstance(first, dict) else ""
+                    try:
+                        inner = _json.loads(text) if text else {}
+                        print(f"Import: {inner.get('files', 0)} files, "
+                              f"{inner.get('inserted', 0)} inserted, "
+                              f"{inner.get('skipped', 0)} skipped")
+                    except _json.JSONDecodeError:
+                        print(f"Import result: {data}")
+            except ConnectionRefusedError:
+                print("Daemon not running", file=sys.stderr)
+                sys.exit(1)
+            finally:
+                sock.close()
+            sys.exit(0)
         else:
             try:
                 port = int(sys.argv[1])
             except ValueError:
                 print(
-                    f"Usage: {sys.argv[0]} [port|--shutdown|--status]",
+                    f"Usage: {sys.argv[0]} [port|--shutdown|--status|--import-dashboard]",
                     file=sys.stderr,
                 )
                 sys.exit(1)
