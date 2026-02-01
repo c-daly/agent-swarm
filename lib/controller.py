@@ -50,6 +50,81 @@ def _is_protected_key(key: str) -> bool:
     )
 
 
+# --- Bash file-I/O lockdown ---------------------------------------------------
+# These commands read file *contents* — agents must use native__read_file so
+# the output flows through the summarization pipeline.
+_BASH_READ_CMDS = frozenset({
+    "cat", "head", "tail", "less", "more", "bat", "tac", "nl",
+    "strings", "xxd", "hexdump", "od",
+})
+# File-content search — agents must use native__grep / native__glob.
+_BASH_SEARCH_CMDS = frozenset({
+    "grep", "egrep", "fgrep", "rg", "ag", "ack",
+})
+# Read-and-transform — agents must use native__read_file + native__edit_file.
+_BASH_PROCESS_CMDS = frozenset({"sed", "awk"})
+# Write via pipe — agents must use native__write_file.
+_BASH_WRITE_CMDS = frozenset({"tee"})
+_BASH_BLOCKED_CMDS = (
+    _BASH_READ_CMDS | _BASH_SEARCH_CMDS | _BASH_PROCESS_CMDS | _BASH_WRITE_CMDS
+)
+
+
+def _check_bash_file_io(command: str) -> str | None:
+    """Return an error message if *command* attempts file I/O, else ``None``.
+
+    Splits on shell operators to inspect the first word of each segment,
+    then checks for output/input redirections and inline-script patterns.
+    """
+    cmd = command.strip()
+
+    # 1. Blocked commands in any segment
+    for segment in re.split(r"[;|&]+|\$\(|`|\(", cmd):
+        words = segment.strip().split()
+        if not words:
+            continue
+        # Skip sudo / env prefixes
+        idx = 0
+        while idx < len(words) and words[idx] in ("sudo", "env"):
+            idx += 1
+        if idx >= len(words):
+            continue
+        first_cmd = words[idx].rsplit("/", 1)[-1]  # /usr/bin/cat -> cat
+
+        if first_cmd in _BASH_READ_CMDS:
+            return f"'{first_cmd}' blocked — use native__read_file to read files"
+        if first_cmd in _BASH_SEARCH_CMDS:
+            return f"'{first_cmd}' blocked — use native__grep or native__glob to search"
+        if first_cmd in _BASH_PROCESS_CMDS:
+            return (
+                f"'{first_cmd}' blocked — use native__read_file + native__edit_file"
+            )
+        if first_cmd in _BASH_WRITE_CMDS:
+            return f"'{first_cmd}' blocked — use native__write_file to write files"
+
+    # 2. Output redirection to a real file  (allow /dev/* and fd dup >&N)
+    if re.search(r"(?<![&])>{1,2}\s*(?!/dev/)(?!&)\S", cmd):
+        return "Output redirection blocked — use native__write_file to write files"
+
+    # 3. Input redirection from a real file  (allow heredocs << and /dev/*)
+    if re.search(r"(?<!<)<(?!<)\s*(?!/dev/)\S", cmd):
+        return "Input redirection blocked — use native__read_file to read files"
+
+    # 4. Inline-script file I/O  (python/ruby/perl/node -c '…open(…')
+    if re.search(
+        r"(?:python|python3|ruby|perl|node)\s+-[ce]\s+.*\bopen\s*\(",
+        cmd,
+        re.DOTALL,
+    ):
+        return "Inline script file I/O blocked — use native__read_file / native__write_file"
+
+    # 5. dd with file operands
+    if re.search(r"\bdd\b.*\b(?:if|of)=(?!/dev/)", cmd):
+        return "dd file I/O blocked — use native__read_file / native__write_file"
+
+    return None
+
+
 class Controller:
     """Orchestrates all request handling. Owns all services as properties."""
 
@@ -423,6 +498,12 @@ class Controller:
         and restricts bash access per agent type and workflow phase.
         """
         command = args.get("command", "")
+
+        # Block file I/O — force agents through native tools / summarization
+        violation = _check_bash_file_io(command)
+        if violation:
+            return {"error": violation, "isError": True}
+
         timeout = min(args.get("timeout", 120), 600)
         cwd = args.get("cwd")
 

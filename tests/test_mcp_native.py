@@ -477,6 +477,224 @@ class TestBashTool:
         assert "HELLO WORLD" in result["stdout"]
 
 
+class TestBashFileIOLockdown:
+    """Tests for _check_bash_file_io — blocks file reads/writes in bash."""
+
+    # -- Blocked: file-reading commands ----------------------------------------
+
+    @pytest.mark.parametrize("cmd", [
+        "cat /etc/passwd",
+        "head -n 10 file.txt",
+        "tail -f /var/log/syslog",
+        "less README.md",
+        "more README.md",
+        "tac file.txt",
+        "nl file.txt",
+        "strings binary.so",
+        "xxd dump.bin",
+        "hexdump -C file.bin",
+        "od -A x file.bin",
+    ])
+    def test_blocks_read_commands(self, cmd):
+        from lib.controller import _check_bash_file_io
+        result = _check_bash_file_io(cmd)
+        assert result is not None
+        assert "native__read_file" in result
+
+    # -- Blocked: search commands ----------------------------------------------
+
+    @pytest.mark.parametrize("cmd", [
+        "grep -r 'TODO' src/",
+        "egrep 'pattern' file.txt",
+        "fgrep 'literal' file.txt",
+        "rg 'pattern' .",
+        "ag 'search' lib/",
+        "ack 'needle'",
+    ])
+    def test_blocks_search_commands(self, cmd):
+        from lib.controller import _check_bash_file_io
+        result = _check_bash_file_io(cmd)
+        assert result is not None
+        assert "native__grep" in result or "native__glob" in result
+
+    # -- Blocked: process/transform commands -----------------------------------
+
+    @pytest.mark.parametrize("cmd", [
+        "sed 's/foo/bar/g' file.txt",
+        "awk '{print $1}' data.csv",
+    ])
+    def test_blocks_process_commands(self, cmd):
+        from lib.controller import _check_bash_file_io
+        result = _check_bash_file_io(cmd)
+        assert result is not None
+        assert "native__read_file" in result or "native__edit_file" in result
+
+    # -- Blocked: write commands -----------------------------------------------
+
+    def test_blocks_tee(self):
+        from lib.controller import _check_bash_file_io
+        result = _check_bash_file_io("echo hello | tee output.txt")
+        assert result is not None
+        assert "native__write_file" in result
+
+    # -- Blocked: output redirection -------------------------------------------
+
+    @pytest.mark.parametrize("cmd", [
+        "echo hello > output.txt",
+        "echo hello >> output.txt",
+        "ls -la >listing.txt",
+    ])
+    def test_blocks_output_redirect(self, cmd):
+        from lib.controller import _check_bash_file_io
+        result = _check_bash_file_io(cmd)
+        assert result is not None
+        assert "Output redirection blocked" in result
+
+    # -- Blocked: input redirection --------------------------------------------
+
+    def test_blocks_input_redirect(self):
+        from lib.controller import _check_bash_file_io
+        result = _check_bash_file_io("wc -l < data.txt")
+        assert result is not None
+        assert "Input redirection blocked" in result
+
+    # -- Blocked: inline script file I/O ---------------------------------------
+
+    @pytest.mark.parametrize("cmd", [
+        "python3 -c 'content = open(\"f.txt\").read()'",
+        "python -c 'open(\"f.txt\", \"w\").write(\"x\")'",
+        "ruby -e 'open(\"f.txt\").read'",
+    ])
+    def test_blocks_inline_script_file_io(self, cmd):
+        from lib.controller import _check_bash_file_io
+        result = _check_bash_file_io(cmd)
+        assert result is not None
+        assert "blocked" in result.lower()
+
+    # -- Blocked: dd with file operands ----------------------------------------
+
+    @pytest.mark.parametrize("cmd", [
+        "dd if=/tmp/input of=/tmp/output bs=1M",
+        "dd if=/tmp/input bs=512",
+        "dd of=/tmp/output bs=512",
+    ])
+    def test_blocks_dd_file_io(self, cmd):
+        from lib.controller import _check_bash_file_io
+        result = _check_bash_file_io(cmd)
+        assert result is not None
+        assert "dd file I/O blocked" in result
+
+    # -- Blocked: commands after shell operators --------------------------------
+
+    @pytest.mark.parametrize("cmd", [
+        "echo ok && cat secret.txt",
+        "echo ok ; head -5 file.txt",
+        "echo ok || tail file.txt",
+        "result=$(cat file.txt)",
+        "echo `grep pattern file`",
+    ])
+    def test_blocks_commands_after_operators(self, cmd):
+        from lib.controller import _check_bash_file_io
+        assert _check_bash_file_io(cmd) is not None
+
+    # -- Blocked: sudo / env prefix --------------------------------------------
+
+    @pytest.mark.parametrize("cmd", [
+        "sudo cat /etc/shadow",
+        "env cat file.txt",
+        "sudo env head -1 file.txt",
+    ])
+    def test_blocks_prefixed_commands(self, cmd):
+        from lib.controller import _check_bash_file_io
+        assert _check_bash_file_io(cmd) is not None
+
+    # -- Blocked: full-path commands -------------------------------------------
+
+    def test_blocks_full_path_commands(self):
+        from lib.controller import _check_bash_file_io
+        assert _check_bash_file_io("/usr/bin/cat file.txt") is not None
+        assert _check_bash_file_io("/bin/grep pattern file") is not None
+
+    # -- Allowed: safe commands ------------------------------------------------
+
+    @pytest.mark.parametrize("cmd", [
+        "echo 'Hello World'",
+        "ls -la",
+        "pwd",
+        "date",
+        "whoami",
+        "mkdir -p /tmp/test",
+        "rm /tmp/test/file.txt",
+        "mv /tmp/a /tmp/b",
+        "cp /tmp/a /tmp/b",
+        "chmod 644 /tmp/file",
+        "git status",
+        "git diff",
+        "npm install",
+        "pip install requests",
+        "python3 -c 'print(1+1)'",
+        "exit 0",
+        "sleep 1",
+        "echo 'hello world' | tr 'a-z' 'A-Z'",
+        "wc -l",
+    ])
+    def test_allows_safe_commands(self, cmd):
+        from lib.controller import _check_bash_file_io
+        assert _check_bash_file_io(cmd) is None
+
+    # -- Allowed: /dev/* redirections ------------------------------------------
+
+    @pytest.mark.parametrize("cmd", [
+        "echo error >/dev/null",
+        "echo error 2>/dev/null",
+        "echo error >/dev/stderr",
+        "cmd </dev/stdin",
+    ])
+    def test_allows_dev_redirections(self, cmd):
+        from lib.controller import _check_bash_file_io
+        assert _check_bash_file_io(cmd) is None
+
+    # -- Allowed: fd duplication -----------------------------------------------
+
+    @pytest.mark.parametrize("cmd", [
+        "echo error >&2",
+        "cmd 2>&1",
+    ])
+    def test_allows_fd_duplication(self, cmd):
+        from lib.controller import _check_bash_file_io
+        assert _check_bash_file_io(cmd) is None
+
+    # -- Allowed: heredocs -----------------------------------------------------
+
+    def test_allows_heredocs(self):
+        from lib.controller import _check_bash_file_io
+        assert _check_bash_file_io("python3 <<EOF\nprint('hi')\nEOF") is None
+
+    # -- Allowed: dd to /dev/* -------------------------------------------------
+
+    def test_allows_dd_to_dev(self):
+        from lib.controller import _check_bash_file_io
+        assert _check_bash_file_io("dd if=/dev/zero of=/dev/null bs=1M count=1") is None
+
+    # -- Integration: controller blocks bash file I/O --------------------------
+
+    def test_controller_blocks_cat(self, tmp_path):
+        """Controller._native_bash returns error for cat."""
+        from lib.controller import Controller
+        ctrl = Controller(config_dir=tmp_path, data_dir=tmp_path)
+        result = ctrl._native_bash({"command": "cat /etc/hostname"})
+        assert result.get("isError") is True
+        assert "blocked" in result["error"]
+
+    def test_controller_allows_echo(self, tmp_path):
+        """Controller._native_bash allows echo."""
+        from lib.controller import Controller
+        ctrl = Controller(config_dir=tmp_path, data_dir=tmp_path)
+        result = ctrl._native_bash({"command": "echo hello"})
+        assert result.get("isError") is not True
+        assert result["stdout"].strip() == "hello"
+
+
 class TestMCPProtocol:
     """Tests for MCP protocol compliance."""
 
