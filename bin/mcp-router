@@ -8,6 +8,7 @@ Replaces the old mcp_router.py-based entry point.
 """
 
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -15,7 +16,7 @@ import threading
 import time
 from pathlib import Path
 
-DAEMON_PORT = 7523
+DAEMON_PORT = int(os.environ.get("DAEMON_PORT", "7523"))
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -32,15 +33,15 @@ def _try_start_daemon() -> bool:
         )
         # Give the daemon a moment to bind
         for _ in range(10):
-            time.sleep(0.3)
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 s.settimeout(1.0)
                 s.connect(("127.0.0.1", DAEMON_PORT))
-                s.close()
                 return True
             except (ConnectionRefusedError, socket.timeout):
-                continue
+                time.sleep(0.3)
+            finally:
+                s.close()
     except Exception:
         pass
     return False

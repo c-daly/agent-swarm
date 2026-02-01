@@ -179,6 +179,8 @@ class DaemonClient:
         return response.get("result")
 
     def _read_response(self) -> bytes:
+        if self._sock is None:
+            raise ConnectionError("Not connected")
         while b"\n" not in self._buf:
             if len(self._buf) > MAX_RESPONSE_SIZE:
                 raise ConnectionError(
