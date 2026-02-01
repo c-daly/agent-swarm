@@ -1,37 +1,78 @@
 #!/usr/bin/env python3
-"""PreToolUse hook for Task tool — consolidated enforcement.
+"""PreToolUse hook for Task tool — thin client to router enforcement.
 
-Combines three checks (fail-fast order, cheapest first):
-1. Background enforcement: run_in_background=true required
-2. Briefing enforcement: prompt must contain SUBAGENT OPERATING PROTOCOL
-3. Implementer-only enforcement: during iterate/orchestrate, only implementer agents
-
-Replaces: background-enforcement.py, inject-subagent-briefing.sh, implementer-only-enforcement.py
+All enforcement logic lives in the router (router__check_task_enforcement).
+This hook just forwards the tool_input and relays the decision.
+If the router is unreachable, fail-closed (block the call).
 """
 
 import json
+import os
+import socket
 import sys
-from pathlib import Path
 
-# Add lib to path for workflow_client
-lib_dir = Path(__file__).parent.parent / "lib"
-sys.path.insert(0, str(lib_dir))
 
-try:
-    from workflow_client import workflow_is_active, workflow_get_state
-except ImportError:
-    def workflow_is_active(workflow_id: str) -> bool:
-        return False
-    def workflow_get_state(workflow_id: str) -> dict | None:
-        return None
+DAEMON_PORT = int(os.environ.get("DAEMON_PORT", "7523"))
+
+
+def _call_router(tool_input: dict) -> dict:
+    """Call router's check_task_enforcement tool."""
+    port = DAEMON_PORT
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(3.0)
+            s.connect(("127.0.0.1", port))
+
+            request = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "router__check_task_enforcement",
+                    "arguments": {"tool_input": tool_input, "_caller": "main_agent"},
+                },
+            }
+            s.sendall(json.dumps(request).encode() + b"\n")
+
+            data = b""
+            while b"\n" not in data:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+
+            if not data:
+                return {"decision": "deny", "reason": "[ROUTER_DOWN] No response from router."}
+
+            response = json.loads(data.decode().strip())
+
+            if "error" in response:
+                return {"decision": "deny", "reason": f"[ROUTER_ERROR] {response['error']}"}
+
+            result = response.get("result", {})
+            # Unwrap MCP content envelope
+            if isinstance(result, dict) and "content" in result:
+                content = result["content"]
+                if content and isinstance(content[0], dict):
+                    text = content[0].get("text", "")
+                    try:
+                        return json.loads(text)
+                    except json.JSONDecodeError:
+                        pass
+            if isinstance(result, dict) and "decision" in result:
+                return result
+            return {"decision": "deny", "reason": "[ROUTER_ERROR] Unexpected response format."}
+
+    except (socket.timeout, socket.error, json.JSONDecodeError) as e:
+        return {"decision": "deny", "reason": f"[ROUTER_DOWN] {e}"}
 
 
 def allow(reason: str = "") -> dict:
-    """Return allow decision."""
     result = {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
-            "permissionDecision": "allow"
+            "permissionDecision": "allow",
         }
     }
     if reason:
@@ -39,82 +80,13 @@ def allow(reason: str = "") -> dict:
     return result
 
 
-def deny(reason: str) -> dict:
-    """Return deny decision."""
-    return {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": reason
-        }
-    }
-
-
-def check_background(tool_input: dict) -> dict | None:
-    """Check that run_in_background=true is set."""
-    if not tool_input.get("run_in_background", False):
-        return deny(
-            "[BACKGROUND_REQUIRED] Task tool must use run_in_background=true "
-            "for parallel execution. Add run_in_background=true to your Task call."
-        )
-    return None
-
-
-def check_briefing(tool_input: dict) -> dict | None:
-    """Check that prompt contains the subagent briefing marker."""
-    prompt = tool_input.get("prompt", "")
-    if not prompt:
-        # No prompt — allow (Task tool will handle the error)
-        return None
-    if "SUBAGENT OPERATING PROTOCOL" not in prompt:
-        return deny(
-            "[BRIEFING_REQUIRED] Task prompt must include subagent briefing.\n\n"
-            "Assemble the prompt:\n"
-            "1. Read: cat ~/.claude/plugins/agent-swarm/hooks/subagent-briefing.md\n"
-            "2. Prepend to your task with header: # SUBAGENT OPERATING PROTOCOL\n"
-            "3. Add phase restrictions if in iterate workflow\n"
-            "4. Re-call Task with assembled prompt\n\n"
-            "Subagent Tools (allowed_tools to include):\n"
-            "- Shell: mcp-call pytest, mcp-call ruff, mcp-call git, etc.\n"
-            "- Files: mcp-call native__read_file, mcp-call native__write_file\n"
-            "- Search: mcp-call native__glob, mcp-call native__grep\n"
-            "- Serena: mcp-call serena__find_symbol, etc.\n\n"
-            "See 'Subagent Prompt Assembly' in iterate skill for details."
-        )
-    return None
-
-
-def check_implementer_only(tool_input: dict) -> dict | None:
-    """During iterate/orchestrate phase, only allow implementer agents."""
-    if not workflow_is_active("iterate"):
-        return None
-
-    state = workflow_get_state("iterate")
-    if not state:
-        return None
-
-    phase = state.get("phase", "")
-    if phase != "orchestrate":
-        return None
-
-    subagent_type = tool_input.get("subagent_type", "")
-    if not subagent_type:
-        return None
-
-    if subagent_type == "agent-swarm:implementer":
-        return None
-
-    return deny(
-        f"[ITERATE/ORCHESTRATE] Only agent-swarm:implementer agents allowed during "
-        f"orchestrate phase of iterate workflow (TDD enforcement). "
-        f"Attempted to spawn: {subagent_type}. "
-        f"Implementers go through full TDD loop (test_writing → implement → test → review). "
-        f"Spawning other agent types bypasses TDD discipline."
-    )
+def deny(reason: str) -> None:
+    """Block tool via exit code 2."""
+    print(reason, file=sys.stderr)
+    sys.exit(2)
 
 
 def main():
-    """Run all Task enforcement checks in fail-fast order."""
     try:
         input_data = json.loads(sys.stdin.read())
     except json.JSONDecodeError:
@@ -122,20 +94,17 @@ def main():
         return
 
     tool_name = input_data.get("tool_name", "")
-    tool_input = input_data.get("tool_input", {})
-
     if tool_name != "Task":
         print(json.dumps(allow()))
         return
 
-    # Run checks in order: cheapest/most common failures first
-    for check in [check_background, check_briefing, check_implementer_only]:
-        result = check(tool_input)
-        if result is not None:
-            print(json.dumps(result))
-            return
+    tool_input = input_data.get("tool_input", {})
+    result = _call_router(tool_input)
 
-    print(json.dumps(allow()))
+    if result.get("decision") == "allow":
+        print(json.dumps(allow()))
+    else:
+        deny(result.get("reason", "[BLOCKED] Task call denied by router."))
 
 
 if __name__ == "__main__":

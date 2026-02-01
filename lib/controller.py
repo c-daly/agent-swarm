@@ -575,7 +575,71 @@ class Controller:
         if tool_name == "import_dashboard":
             return self.run_dashboard_import()
 
+        if tool_name == "check_task_enforcement":
+            return self._check_task_enforcement(args)
+
         raise RouterError(f"Unknown router tool: {tool_name}")
+
+    def _check_task_enforcement(self, args: dict) -> dict:
+        """Enforce rules on Task tool calls.
+
+        Checks (fail-fast, cheapest first):
+        1. run_in_background=true required
+        2. Prompt must contain SUBAGENT OPERATING PROTOCOL
+        3. During iterate/orchestrate, only implementer agents allowed
+        """
+        tool_input = args.get("tool_input", {})
+
+        # Check 1: Background enforcement
+        if not tool_input.get("run_in_background", False):
+            return {
+                "decision": "deny",
+                "reason": (
+                    "[BACKGROUND_REQUIRED] Task tool must use run_in_background=true "
+                    "for parallel execution. Add run_in_background=true to your Task call."
+                ),
+            }
+
+        # Check 2: Briefing enforcement
+        prompt = tool_input.get("prompt", "")
+        if prompt and "SUBAGENT OPERATING PROTOCOL" not in prompt:
+            return {
+                "decision": "deny",
+                "reason": (
+                    "[BRIEFING_REQUIRED] Task prompt must include subagent briefing.\n\n"
+                    "Assemble the prompt:\n"
+                    "1. Read: cat ~/.claude/plugins/agent-swarm/hooks/subagent-briefing.md\n"
+                    "2. Prepend to your task with header: # SUBAGENT OPERATING PROTOCOL\n"
+                    "3. Add phase restrictions if in iterate workflow\n"
+                    "4. Re-call Task with assembled prompt\n\n"
+                    "Subagent Tools (allowed_tools to include):\n"
+                    "- Shell: mcp-call pytest, mcp-call ruff, mcp-call git, etc.\n"
+                    "- Files: mcp-call native__read_file, mcp-call native__write_file\n"
+                    "- Search: mcp-call native__glob, mcp-call native__grep\n"
+                    "- Serena: mcp-call serena__find_symbol, etc.\n\n"
+                    "See 'Subagent Prompt Assembly' in iterate skill for details."
+                ),
+            }
+
+        # Check 3: Implementer-only during iterate/orchestrate
+        with self._state_lock:
+            iterate_state = self._workflow_state.get("iterate")
+        if iterate_state and iterate_state.get("phase") == "orchestrate":
+            subagent_type = tool_input.get("subagent_type", "")
+            if subagent_type and subagent_type != "agent-swarm:implementer":
+                return {
+                    "decision": "deny",
+                    "reason": (
+                        f"[ITERATE/ORCHESTRATE] Only agent-swarm:implementer agents allowed "
+                        f"during orchestrate phase of iterate workflow (TDD enforcement). "
+                        f"Attempted to spawn: {subagent_type}. "
+                        f"Implementers go through full TDD loop "
+                        f"(test_writing → implement → test → review). "
+                        f"Spawning other agent types bypasses TDD discipline."
+                    ),
+                }
+
+        return {"decision": "allow"}
 
     # --- Workflow state operations ---
 
