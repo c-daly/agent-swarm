@@ -160,13 +160,13 @@ def main():
     args = parser.parse_args()
 
     if args.mock:
-        from providers.mock import MockProvider
+        from dashboard.providers.mock import MockProvider
         DashboardHandler.provider = MockProvider()
         print("Using MockProvider (deterministic seed=42)")
     else:
         if not args.db:
             parser.error("--db is required when not using --mock")
-        from providers.sqlite import SqliteProvider
+        from dashboard.providers.sqlite import SqliteProvider
         DashboardHandler.provider = SqliteProvider(args.db)
         print(f"Using SqliteProvider: {args.db}")
 
