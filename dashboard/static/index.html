@@ -7,8 +7,6 @@
     <link rel="stylesheet" href="/style.css">
     <script defer src="/vendor/alpine.3.14.3.min.js"></script>
     <script src="/vendor/chart.4.4.7.min.js"></script>
-    <script src="/vendor/hammer.2.0.8.min.js"></script>
-    <script src="/vendor/chartjs-plugin-zoom.2.2.0.min.js"></script>
     <script src="/app.js"></script>
 </head>
 <body x-data="dashboard()" class="dark">
@@ -25,6 +23,7 @@
             </select>
         </div>
     </header>
+
     <div class="layout">
         <nav>
             <a @click="view='overview'" :class="{active: view==='overview'}">Overview</a>
@@ -35,159 +34,162 @@
             <a @click="view='sessions'" :class="{active: view==='sessions'}">Sessions</a>
             <a @click="view='compare'" :class="{active: view==='compare'}">Compare</a>
         </nav>
+
         <main>
             <!-- OVERVIEW -->
             <div x-show="view==='overview'" x-init="$watch('view', v => { if(v==='overview') loadOverview() })">
                 <div class="stat-grid" x-show="overview">
                     <div class="stat-card"><div class="value" x-text="fmt(overview?.total_events)"></div><div class="label">Events</div></div>
                     <div class="stat-card"><div class="value" x-text="fmt(overview?.total_sessions)"></div><div class="label">Sessions</div></div>
-                    <div class="stat-card"><div class="value" x-text="fmtTokens((overview?.total_input_tokens||0)+(overview?.total_output_tokens||0))"></div><div class="label">New In + Out</div></div>
+                    <div class="stat-card"><div class="value" x-text="fmtTokens(overview?.total_input_tokens + overview?.total_output_tokens)"></div><div class="label">Total Tokens</div></div>
                     <div class="stat-card"><div class="value" x-text="pct(overview?.error_rate)"></div><div class="label">Error Rate</div></div>
                     <div class="stat-card"><div class="value" x-text="fmt(overview?.unique_tools)"></div><div class="label">Unique Tools</div></div>
                     <div class="stat-card"><div class="value" x-text="fmt(overview?.subagent_count)"></div><div class="label">Subagents</div></div>
                 </div>
                 <div class="chart-grid">
-                    <div class="chart-card"><h3 @click="expandChart('c-overview-events')" style="cursor:pointer">Events Over Time</h3><canvas id="c-overview-events" height="280"></canvas></div>
-                    <div class="chart-card"><h3 @click="expandChart('c-overview-tokens')" style="cursor:pointer">Token Spend</h3><canvas id="c-overview-tokens" height="280"></canvas></div>
-                    <div class="chart-card"><h3>Activity Heatmap</h3><div style="font-size:11px;color:var(--text-secondary);margin-bottom:8px" x-text="(filters.from||overview?.first_event?.substring(0,10)||'all')+' → '+(filters.to||overview?.last_event?.substring(0,10)||'now')"></div><div id="heatmap-container"></div></div>
-                    <div class="chart-card"><h3 @click="expandChart('c-overview-latency')" style="cursor:pointer">Latency Distribution</h3><canvas id="c-overview-latency" height="280"></canvas></div>
+                    <div class="chart-card"><h3>Events Over Time</h3><canvas id="c-overview-events" height="280"></canvas></div>
+                    <div class="chart-card"><h3>Token Spend</h3><canvas id="c-overview-tokens" height="280"></canvas></div>
+                    <div class="chart-card"><h3>Activity Heatmap</h3><div id="heatmap-container"></div></div>
+                    <div class="chart-card"><h3>Latency Distribution</h3><canvas id="c-overview-latency" height="280"></canvas></div>
                 </div>
             </div>
+
             <!-- TOKENS -->
             <div x-show="view==='tokens'" x-init="$watch('view', v => { if(v==='tokens') loadTokens() })">
                 <div class="chart-grid">
-                    <div class="chart-card"><h3 @click="expandChart('c-tokens-time')" style="cursor:pointer">Token Usage Over Time</h3><canvas id="c-tokens-time" height="280"></canvas></div>
-                    <div class="chart-card"><h3 @click="expandChart('c-tokens-tool')" style="cursor:pointer">Tokens by Tool (Top 20)</h3><canvas id="c-tokens-tool" height="280"></canvas></div>
-                    <div class="chart-card"><h3 @click="expandChart('c-tokens-cache')" style="cursor:pointer">Cache Reuse Rate</h3><canvas id="c-tokens-cache" height="280"></canvas></div>
-                    <div class="chart-card"><h3 @click="expandChart('c-tokens-cache-vol')" style="cursor:pointer">Cache Volume</h3><canvas id="c-tokens-cache-vol" height="280"></canvas></div>
-                    <div class="chart-card"><h3 @click="expandChart('c-tokens-role')" style="cursor:pointer">Tokens by Agent Role</h3><canvas id="c-tokens-role" height="280"></canvas></div>
+                    <div class="chart-card"><h3>Tokens Over Time</h3><canvas id="c-tokens-time" height="280"></canvas></div>
+                    <div class="chart-card"><h3>Tokens by Tool (Top 20)</h3><canvas id="c-tokens-tool" height="280"></canvas></div>
+                    <div class="chart-card"><h3>Cache Efficiency</h3><canvas id="c-tokens-cache" height="280"></canvas></div>
+                    <div class="chart-card"><h3>Cache Volume</h3><canvas id="c-tokens-cache-vol" height="280"></canvas></div>
+                    <div class="chart-card"><h3>Tokens by Agent Role</h3><canvas id="c-tokens-role" height="280"></canvas></div>
                 </div>
             </div>
+
             <!-- CONCURRENCY -->
             <div x-show="view==='concurrency'" x-init="$watch('view', v => { if(v==='concurrency') loadConcurrency() })">
-                <div class="stat-grid" x-show="concData">
-                    <div class="stat-card"><div class="value" x-text="fmt(concData?.total_sessions_with_subagents)"></div><div class="label">Sessions w/ Subagents</div></div>
-                    <div class="stat-card"><div class="value" x-text="fmt(concData?.total_subagents_spawned)"></div><div class="label">Total Subagents</div></div>
-                </div>
                 <div class="chart-grid">
-                    <div class="chart-card"><h3 @click="expandChart('c-conc-over-time')" style="cursor:pointer">Subagents Over Time</h3><canvas id="c-conc-over-time" height="280"></canvas></div>
-                    <div class="chart-card"><h3 @click="expandChart('c-conc-dist')" style="cursor:pointer">Session Distribution</h3><canvas id="c-conc-dist" height="280"></canvas></div>
-                    <div class="chart-card"><h3 @click="expandChart('c-conc-types')" style="cursor:pointer">Agent Types</h3><canvas id="c-conc-types" height="280"></canvas></div>
+                    <div class="chart-card"><h3>Subagents Over Time</h3><canvas id="c-conc-over-time" height="280"></canvas></div>
+                    <div class="chart-card"><h3>Concurrency Distribution</h3><canvas id="c-conc-dist" height="280"></canvas></div>
+                    <div class="chart-card"><h3>Agent Types</h3><canvas id="c-conc-types" height="280"></canvas></div>
                 </div>
-                <!-- Drill-down: top sessions table -->
-                <div class="chart-card" style="margin-top:16px" x-show="concData?.top_sessions?.length">
-                    <h3>Top Sessions by Subagent Count</h3>
-                    <table>
-                        <thead><tr><th>Session</th><th>Start</th><th>Subagents</th><th>Events</th><th>Tokens</th></tr></thead>
-                        <tbody>
-                            <template x-for="s in concData?.top_sessions||[]" :key="s.session_id">
-                                <tr class="clickable" @click="loadConcurrencyDrill(s.session_id)">
-                                    <td x-text="s.session_id.substring(0,16)+'...'"></td>
-                                    <td x-text="toEST(s.start_time)"></td>
-                                    <td class="num" x-text="fmt(s.num_subagents)"></td>
-                                    <td class="num" x-text="fmt(s.event_count)"></td>
-                                    <td class="num" x-text="fmtTokens(s.total_tokens)"></td>
-                                </tr>
+                <div class="chart-card" style="margin-top:16px">
+                    <h3>Session Drill-Down</h3>
+                    <div class="chart-controls">
+                        <label>Session:</label>
+                        <select x-model="concDrillSession" @change="if(concDrillSession) loadConcurrencyDrill(concDrillSession)">
+                            <option value="">Select session...</option>
+                            <template x-for="s in concData?.top_sessions || []" :key="s.session_id">
+                                <option :value="s.session_id" x-text="s.session_id.substring(0,12) + '... (' + s.event_count + ' events)'"></option>
                             </template>
-                        </tbody>
-                    </table>
-                </div>
-                <!-- Session drill-down chart -->
-                <div class="chart-card" style="margin-top:16px" x-show="concDrillData">
-                    <h3 x-text="'Session: ' + concDrillSession.substring(0,16) + '...'"></h3>
-                    <div class="stat-grid" style="margin-bottom:12px">
-                        <div class="stat-card"><div class="value" x-text="concDrillData?.max_concurrency||0"></div><div class="label">Max Concurrent</div></div>
-                        <div class="stat-card"><div class="value" x-text="(concDrillData?.avg_concurrency||0).toFixed(1)"></div><div class="label">Avg Concurrent</div></div>
-                        <div class="stat-card"><div class="value" x-text="concDrillData?.events?.length||0"></div><div class="label">Total Events</div></div>
+                        </select>
                     </div>
-                    <canvas id="c-conc-drill" height="300"></canvas>
+                    <div x-show="concDrillData">
+                        <div class="stat-grid" style="margin:12px 0">
+                            <div class="stat-card"><div class="value" x-text="concDrillData?.max_concurrency || 0"></div><div class="label">Max Concurrency</div></div>
+                            <div class="stat-card"><div class="value" x-text="(concDrillData?.avg_concurrency || 0).toFixed(1)"></div><div class="label">Avg Concurrency</div></div>
+                        </div>
+                        <canvas id="c-conc-drill" height="300"></canvas>
+                    </div>
                 </div>
             </div>
+
             <!-- TOOLS & ERRORS -->
             <div x-show="view==='tools'" x-init="$watch('view', v => { if(v==='tools') loadTools() })">
                 <div class="chart-grid">
-                    <div class="chart-card"><h3 @click="expandChart('c-tools-freq')" style="cursor:pointer">Tool Frequency</h3><canvas id="c-tools-freq" height="280"></canvas></div>
-                    <div class="chart-card"><h3 @click="expandChart('c-tools-errors')" style="cursor:pointer">Error Rate by Tool</h3><canvas id="c-tools-errors" height="280"></canvas></div>
-                    <div class="chart-card"><h3 @click="expandChart('c-error-types')" style="cursor:pointer">Error Types</h3><canvas id="c-error-types" height="280"></canvas></div>
-                    <div class="chart-card"><h3 @click="expandChart('c-tools-latency')" style="cursor:pointer">Tool Latency</h3><canvas id="c-tools-latency" height="280"></canvas></div>
+                    <div class="chart-card"><h3>Tool Frequency</h3><canvas id="c-tools-freq" height="280"></canvas></div>
+                    <div class="chart-card"><h3>Error Rate by Tool</h3><canvas id="c-tools-errors" height="280"></canvas></div>
+                    <div class="chart-card"><h3>Error Types</h3><canvas id="c-error-types" height="280"></canvas></div>
+                    <div class="chart-card"><h3>Tool Latency</h3><canvas id="c-tools-latency" height="280"></canvas></div>
                 </div>
             </div>
+
             <!-- SUMMARIZATION -->
             <div x-show="view==='summarization'" x-init="$watch('view', v => { if(v==='summarization') loadSummarization() })">
                 <div class="stat-grid" x-show="summData">
-                    <div class="stat-card"><div class="value" x-text="fmt(summData?.summarized_count)"></div><div class="label">Summarized Events</div></div>
-                    <div class="stat-card"><div class="value" x-text="pct(summData?.summarization_rate)"></div><div class="label">% Results > 2KB</div></div>
-                    <div class="stat-card"><div class="value" x-text="fmtTokens(summData?.total_bytes_saved)"></div><div class="label">Est. Bytes Truncated</div></div>
-                    <div class="stat-card"><div class="value" x-text="pct(summData?.avg_compression_ratio)"></div><div class="label">Avg Retained %</div></div>
-                    <div class="stat-card"><div class="value" x-text="fmtTokens(summData?.avg_original_size)"></div><div class="label">Avg Result Size</div></div>
-                    <div class="stat-card"><div class="value" x-text="fmtTokens(summData?.avg_summary_size)"></div><div class="label">Truncation Cap</div></div>
+                    <div class="stat-card"><div class="value" x-text="fmt(summData?.summarized_count)"></div><div class="label">Summarized</div></div>
+                    <div class="stat-card"><div class="value" x-text="pct(summData?.summarization_rate)"></div><div class="label">Rate</div></div>
+                    <div class="stat-card"><div class="value" x-text="fmt(summData?.full_content_requests)"></div><div class="label">Full Requests</div></div>
+                    <div class="stat-card"><div class="value" x-text="summData?.get_full_rate != null ? pct(summData.get_full_rate) : 'N/A'"></div><div class="label">get_full Rate</div></div>
+                    <div class="stat-card"><div class="value" x-text="pct(summData?.avg_compression_ratio)"></div><div class="label">Compression</div></div>
                 </div>
                 <div class="chart-grid">
-                    <div class="chart-card"><h3 @click="expandChart('c-summ-compression')" style="cursor:pointer">Truncation Over Time</h3><canvas id="c-summ-compression" height="280"></canvas></div>
-                    <div class="chart-card"><h3 @click="expandChart('c-summ-tools')" style="cursor:pointer">Top Tools by Summarization</h3><canvas id="c-summ-tools" height="280"></canvas></div>
-                    <div class="chart-card"><h3 @click="expandChart('c-summ-tool-compression')" style="cursor:pointer">Avg Retained % by Tool</h3><canvas id="c-summ-tool-compression" height="280"></canvas></div>
-                    <div class="chart-card"><h3 @click="expandChart('c-summ-role')" style="cursor:pointer">By Agent Role</h3><canvas id="c-summ-role" height="280"></canvas></div>
+                    <div class="chart-card"><h3>Compression Over Time</h3><canvas id="c-summ-compression" height="280"></canvas></div>
+                    <div class="chart-card"><h3>Top Tools by Summarization</h3><canvas id="c-summ-tools" height="280"></canvas></div>
+                    <div class="chart-card"><h3>Tool Compression Efficiency</h3><canvas id="c-summ-tool-compression" height="280"></canvas></div>
+                    <div class="chart-card"><h3>By Agent Role</h3><canvas id="c-summ-role" height="280"></canvas></div>
                 </div>
             </div>
+
             <!-- SESSIONS -->
             <div x-show="view==='sessions'" x-init="$watch('view', v => { if(v==='sessions') loadSessions() })">
-                <div class="chart-card" style="padding:12px">
-                    <div class="chart-controls" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <div class="chart-grid" x-show="!sessDetail">
+                    <div class="chart-card"><h3>Tokens per Session</h3><canvas id="c-sess-tokens" height="280"></canvas></div>
+                    <div class="chart-card"><h3>Session Duration</h3><canvas id="c-sess-duration" height="280"></canvas></div>
+                    <div class="chart-card"><h3>Events per Session</h3><canvas id="c-sess-events" height="280"></canvas></div>
+                    <div class="chart-card"><h3>Errors per Session</h3><canvas id="c-sess-errors" height="280"></canvas></div>
+                </div>
+                <div class="chart-card">
+                    <div class="chart-controls">
                         <label>Sort:</label>
-                        <select x-model="sessSort" @change="loadSessions()" style="width:auto">
+                        <select x-model="sessSort" @change="loadSessions()">
                             <option value="tokens">Tokens</option>
                             <option value="errors">Errors</option>
                             <option value="events">Events</option>
                             <option value="duration">Duration</option>
                         </select>
-                        <label style="margin-left:8px">Session:</label>
-                        <select style="flex:1;min-width:200px" @change="$event.target.value ? loadSessionDetail($event.target.value) : (sessDetail=null, replayData=null)">
-                            <option value="">All Sessions</option>
-                            <template x-for="s in sessData?.sessions||[]" :key="s.session_id">
-                                <option :value="s.session_id" x-text="toEST(s.start_time)+' — '+fmtTokens(s.total_tokens)+' tok, '+s.event_count+' events'+(s.error_count?' ⚠'+s.error_count:'')"></option>
+                    </div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Session</th>
+                                <th>Start</th>
+                                <th>Events</th>
+                                <th>Tokens</th>
+                                <th>Errors</th>
+                                <th>Tools</th>
+                                <th>Duration</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="s in sessData?.sessions || []" :key="s.session_id">
+                                <tr class="clickable" @click="loadSessionDetail(s.session_id)">
+                                    <td x-text="s.session_id.substring(0,16) + '...'"></td>
+                                    <td x-text="toEST(s.start_time)"></td>
+                                    <td class="num" x-text="fmt(s.event_count)"></td>
+                                    <td class="num" x-text="fmtTokens(s.total_tokens)"></td>
+                                    <td class="num" x-text="s.error_count"></td>
+                                    <td class="num" x-text="s.unique_tools"></td>
+                                    <td class="num" x-text="fmtDuration(s.duration_ms)"></td>
+                                </tr>
                             </template>
-                        </select>
-                        <div style="display:flex;gap:4px;align-items:center">
-                            <button @click="sessPage--;loadSessions()" :disabled="sessPage<=1" style="padding:2px 8px">&laquo;</button>
-                            <span style="font-size:11px;color:#999" x-text="sessPage+'/'+( sessData?.total_pages||1)"></span>
-                            <button @click="sessPage++;loadSessions()" :disabled="sessPage>=(sessData?.total_pages||1)" style="padding:2px 8px">&raquo;</button>
-                        </div>
+                        </tbody>
+                    </table>
+                    <div class="pagination" x-show="sessData">
+                        <button @click="sessPage--; loadSessions()" :disabled="sessPage <= 1">&laquo; Prev</button>
+                        <span class="page-info" x-text="'Page ' + sessPage + ' of ' + (sessData?.total_pages || 1)"></span>
+                        <button @click="sessPage++; loadSessions()" :disabled="sessPage >= (sessData?.total_pages || 1)">Next &raquo;</button>
                     </div>
                 </div>
-                <!-- All sessions aggregate -->
-                <div x-show="!sessDetail && sessData" style="margin-top:12px">
-                    <div class="stat-grid">
-                        <div class="stat-card"><div class="value" x-text="fmt(sessAgg?.total_sessions)"></div><div class="label">Total Sessions</div></div>
-                        <div class="stat-card"><div class="value" x-text="fmt(sessAgg?.total_events)"></div><div class="label">Total Events</div></div>
-                        <div class="stat-card"><div class="value" x-text="fmtTokens(sessAgg?.total_tokens)"></div><div class="label">Total Tokens</div></div>
-                        <div class="stat-card"><div class="value" x-text="fmt(sessAgg?.total_errors)"></div><div class="label">Total Errors</div></div>
-                    </div>
-                    <div class="chart-grid" style="margin-top:12px">
-                        <div class="chart-card"><h3 @click="expandChart('c-sess-tokens')" style="cursor:pointer">Avg Tokens per Session</h3><canvas id="c-sess-tokens" height="280"></canvas></div>
-                        <div class="chart-card"><h3 @click="expandChart('c-sess-duration')" style="cursor:pointer">Avg Duration per Session</h3><canvas id="c-sess-duration" height="280"></canvas></div>
-                        <div class="chart-card"><h3 @click="expandChart('c-sess-events')" style="cursor:pointer">Avg Events per Session</h3><canvas id="c-sess-events" height="280"></canvas></div>
-                        <div class="chart-card"><h3 @click="expandChart('c-sess-errors')" style="cursor:pointer">Avg Errors per Session</h3><canvas id="c-sess-errors" height="280"></canvas></div>
-                    </div>
-                </div>
+
                 <!-- Session detail -->
                 <div class="detail-panel" x-show="sessDetail">
-                    <h3 x-text="'Session: '+(sessDetail?.session_id||'')"></h3>
+                    <h3 x-text="'Session: ' + (sessDetail?.session_id || '')"></h3>
                     <div class="stat-grid" x-show="sessDetail?.summary">
                         <div class="stat-card"><div class="value" x-text="fmt(sessDetail?.summary?.total_events)"></div><div class="label">Events</div></div>
                         <div class="stat-card"><div class="value" x-text="fmtTokens(sessDetail?.summary?.total_tokens)"></div><div class="label">Tokens</div></div>
                         <div class="stat-card"><div class="value" x-text="sessDetail?.summary?.error_count"></div><div class="label">Errors</div></div>
                         <div class="stat-card"><div class="value" x-text="fmtDuration(sessDetail?.summary?.duration_ms)"></div><div class="label">Duration</div></div>
                     </div>
-                    <canvas id="c-session-timeline" style="margin:12px 0;max-height:250px"></canvas>
+                    <canvas id="c-session-timeline" height="200" style="margin:12px 0"></canvas>
                     <button @click="loadReplay(sessDetail.session_id)" style="margin:8px 0;padding:6px 16px;background:var(--accent);color:#000;border:none;border-radius:4px;cursor:pointer">Replay</button>
-                    <div x-show="replayData?.messages?.length>0" style="margin-top:12px;max-height:400px;overflow-y:auto">
-                        <template x-for="msg in replayData?.messages||[]" :key="msg.timestamp+msg.role">
+                    <div x-show="replayData?.messages?.length > 0" style="margin-top:12px;max-height:400px;overflow-y:auto">
+                        <template x-for="msg in replayData?.messages || []" :key="msg.timestamp + msg.role">
                             <div class="replay-msg" :class="msg.role">
-                                <div class="role" x-text="msg.role+' \u00b7 '+toEST(msg.timestamp)"></div>
+                                <div class="role" x-text="msg.role + ' · ' + toEST(msg.timestamp)"></div>
                                 <div x-text="msg.text"></div>
                                 <div class="tools" x-show="msg.tool_calls?.length">
-                                    <template x-for="tc in msg.tool_calls||[]">
-                                        <span :class="tc.status==='error'?'error':''" x-text="tc.tool+' '"></span>
+                                    <template x-for="tc in msg.tool_calls || []">
+                                        <span :class="tc.status === 'error' ? 'error' : ''" x-text="tc.tool + ' '"></span>
                                     </template>
                                 </div>
                             </div>
@@ -195,8 +197,9 @@
                     </div>
                 </div>
             </div>
+
             <!-- COMPARE -->
-            <div x-show="view==='compare'">
+            <div x-show="view==='compare'" x-init="$watch('view', v => { if(v==='compare') {} })">
                 <div class="chart-card">
                     <div class="chart-controls">
                         <label>Range A:</label>
@@ -207,27 +210,27 @@
                     </div>
                     <div x-show="cmpData" class="stat-grid" style="margin-top:16px">
                         <div class="stat-card"><div class="value" x-text="cmpDelta('total_events')"></div><div class="label">Events Delta</div></div>
-                        <div class="stat-card"><div class="value" x-text="cmpData?.deltas?.total_tokens_pct!=null?cmpData.deltas.total_tokens_pct.toFixed(1)+'%':'-'"></div><div class="label">Tokens Change</div></div>
-                        <div class="stat-card"><div class="value" x-text="cmpData?.deltas?.error_rate_pct!=null?cmpData.deltas.error_rate_pct.toFixed(1)+'%':'-'"></div><div class="label">Error Rate Change</div></div>
-                        <div class="stat-card"><div class="value" x-text="cmpData?.deltas?.avg_duration_ms_pct!=null?cmpData.deltas.avg_duration_ms_pct.toFixed(1)+'%':'-'"></div><div class="label">Duration Change</div></div>
+                        <div class="stat-card"><div class="value" x-text="cmpData?.deltas?.total_tokens_pct != null ? cmpData.deltas.total_tokens_pct.toFixed(1) + '%' : '-'"></div><div class="label">Tokens Change</div></div>
+                        <div class="stat-card"><div class="value" x-text="cmpData?.deltas?.error_rate_pct != null ? cmpData.deltas.error_rate_pct.toFixed(1) + '%' : '-'"></div><div class="label">Error Rate Change</div></div>
+                        <div class="stat-card"><div class="value" x-text="cmpData?.deltas?.avg_duration_ms_pct != null ? cmpData.deltas.avg_duration_ms_pct.toFixed(1) + '%' : '-'"></div><div class="label">Duration Change</div></div>
                     </div>
                 </div>
             </div>
+
         </main>
     </div>
-
     <!-- Chart expand modal -->
-    <div id="chart-modal-overlay" class="chart-modal-overlay" @click.self="closeChartModal()" @keydown.escape.window="closeChartModal()">
+    <div id="chart-modal-overlay" class="chart-modal-overlay" style="display:none" @click.self="closeChartModal()">
         <div class="chart-modal">
             <div class="chart-modal-header">
                 <h2 id="chart-modal-title"></h2>
-                <div class="chart-modal-controls">
-                    <button onclick="modalChangeType('line')" title="Line chart">Line</button>
-                    <button onclick="modalChangeType('bar')" title="Bar chart">Bar</button>
-                    <button onclick="modalToggleLog()" title="Toggle log scale">Log</button>
-                    <button onclick="modalResetZoom()" title="Reset zoom">Reset</button>
+                <div style="display:flex;gap:6px;align-items:center">
+                    <button onclick="modalChangeType('line')" style="padding:2px 8px;background:var(--bg-secondary);color:var(--text-secondary);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px">Line</button>
+                    <button onclick="modalChangeType('bar')" style="padding:2px 8px;background:var(--bg-secondary);color:var(--text-secondary);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px">Bar</button>
+                    <button onclick="modalToggleLog()" style="padding:2px 8px;background:var(--bg-secondary);color:var(--text-secondary);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px">Log</button>
+                    <button onclick="modalResetZoom()" style="padding:2px 8px;background:var(--bg-secondary);color:var(--text-secondary);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px">Reset</button>
+                    <button class="chart-modal-close" onclick="closeChartModal()">&times;</button>
                 </div>
-                <button class="chart-modal-close" @click="closeChartModal()">&times;</button>
             </div>
             <div class="chart-modal-body">
                 <canvas id="chart-modal-canvas"></canvas>

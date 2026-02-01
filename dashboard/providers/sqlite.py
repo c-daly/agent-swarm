@@ -368,6 +368,22 @@ class SqliteProvider:
             params,
         )
 
+        # get_full rate scoped to period where get_full was available
+        gf_first = self._query_one(
+            "SELECT MIN(timestamp) as t FROM events WHERE tool LIKE '%get_full%'",
+            [],
+        )
+        gf_since = gf_first.get("t") or ""
+        if gf_since:
+            gf_scoped = self._query_one(
+                f"SELECT COUNT(*) as summaries_since "
+                f"FROM events WHERE was_summarized = 1 AND timestamp >= ? {and_where}",
+                [gf_since] + list(params),
+            )
+            summaries_since_gf = gf_scoped.get("summaries_since", 0) or 0
+        else:
+            summaries_since_gf = 0
+
         # By agent role (with actual agent_type)
         by_role = self._query(
             f"SELECT CASE "
@@ -417,6 +433,7 @@ class SqliteProvider:
         effective = summarized - full_reqs
         total_orig = stats.get("total_original_size", 0) or 0
         total_summ = stats.get("total_summary_size", 0) or 0
+        gf_rate = round(full_reqs / summaries_since_gf, 3) if summaries_since_gf else None
 
         return {
             "total_events": total,
@@ -425,6 +442,9 @@ class SqliteProvider:
             "full_content_requests": full_reqs,
             "effective_summarized": effective,
             "rejection_rate": round(full_reqs / summarized, 3) if summarized else 0,
+            "get_full_rate": gf_rate,
+            "get_full_since": gf_since or None,
+            "summaries_since_get_full": summaries_since_gf,
             "avg_compression_ratio": round(stats.get("avg_compression_ratio", 0) or 0, 2),
             "avg_original_size": round(stats.get("avg_original_size", 0) or 0, 0),
             "avg_summary_size": round(stats.get("avg_summary_size", 0) or 0, 0),

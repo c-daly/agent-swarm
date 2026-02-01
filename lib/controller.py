@@ -72,6 +72,47 @@ class Controller:
         self._state_lock = threading.RLock()
         self._summarization_threshold = 2000
 
+        # Import previous session data into dashboard DB on startup
+        threading.Thread(
+            target=self.run_dashboard_import, daemon=True, name="dashboard-import"
+        ).start()
+
+    def run_dashboard_import(self) -> dict:
+        """Import Claude JSONL transcripts into the dashboard database.
+
+        Safe to call repeatedly — uses dedup and import_log to skip
+        already-imported files.
+        """
+        try:
+            base_dir = Path(__file__).parent.parent
+            db_path = base_dir / "dashboard" / "data" / "dashboard.db"
+            projects_dir = Path("~/.claude/projects").expanduser()
+
+            if not projects_dir.exists():
+                return {"status": "skipped", "reason": "projects dir not found"}
+
+            # Load dashboard/import.py via importlib ("import" is a keyword)
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "dashboard_import", base_dir / "dashboard" / "import.py"
+            )
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            conn = mod.init_db(str(db_path))
+            result = mod.import_claude_transcripts(conn, str(projects_dir))
+            conn.close()
+
+            log.info(
+                "Dashboard import: %d files, %d inserted, %d skipped",
+                result["files"], result["inserted"], result["skipped"],
+            )
+            return {"status": "ok", **result}
+        except Exception as e:
+            log.warning("Dashboard import failed: %s", e)
+            return {"status": "error", "error": str(e)}
+
     # --- Main entry point ---
 
     def handle_call(self, tool: str, args: dict) -> Any:
@@ -445,6 +486,9 @@ class Controller:
             return self.permissions.get_allowed_tools(
                 agent_type=args.get("agent_type")
             )
+
+        if tool_name == "import_dashboard":
+            return self.run_dashboard_import()
 
         raise RouterError(f"Unknown router tool: {tool_name}")
 

@@ -9,13 +9,17 @@ Usage:
 
 import argparse
 import json
+import os
+import re
 import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+# DuckDB is optional (only needed for --duckdb imports)
 try:
     import duckdb
+
     HAS_DUCKDB = True
 except ImportError:
     HAS_DUCKDB = False
@@ -98,8 +102,10 @@ FROM events
 GROUP BY session_id;
 """
 
+# Cutoff for DuckDB data confidence
 DUCKDB_CUTOFF = "2026-01-21T12:00:00"
 
+# Tools that are Claude-internal (not MCP)
 CLAUDE_TOOLS = frozenset({
     "Task", "Skill", "AskUserQuestion", "WebFetch", "WebSearch",
     "TodoWrite", "TodoRead", "EnterPlanMode", "ExitPlanMode",
@@ -110,10 +116,9 @@ CLAUDE_TOOLS = frozenset({
 
 def init_db(db_path: str) -> sqlite3.Connection:
     """Create/open SQLite DB and ensure schema exists."""
-    conn = sqlite3.connect(db_path, timeout=30)
+    conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=30000")
     conn.executescript(SCHEMA_SQL)
     return conn
 
@@ -133,15 +138,25 @@ def derive_backend(tool_name: str) -> str:
 
 
 def detect_error(content) -> tuple[bool, str]:
-    """Detect if tool result content indicates an error."""
+    """Detect if tool result content indicates an error.
+
+    Only matches errors that appear in structured positions (first line,
+    dict fields), not arbitrary substrings buried in file content.
+    """
     if isinstance(content, dict):
         if content.get("isError"):
             return True, str(content.get("content", ""))[:200]
         if "error" in content:
             return True, str(content["error"])[:200]
     if isinstance(content, str):
-        lower = content.lower()
-        if any(x in lower for x in ["error:", "exception:", "failed:"]):
+        # Only check the first line — real errors surface at the top,
+        # not buried inside file content or code listings.
+        first_line = content.split("\n", 1)[0].strip()
+        # Skip line-numbered file output (e.g. "     1\t#!/usr/bin/env python3")
+        if re.match(r"^\s*\d+[\t→]", first_line):
+            return False, ""
+        lower = first_line.lower()
+        if any(x in lower for x in ["error:", "error executing", "exception:", "failed:"]):
             return True, content[:200]
     return False, ""
 
@@ -174,12 +189,90 @@ def dedup_check_jsonl(conn: sqlite3.Connection, ts: str, sid: str, aid: str, too
 
 
 def extract_agent_id_from_filename(filepath: Path) -> str | None:
-    """Extract agent ID from subagent file path, or None for main sessions."""
-    name = filepath.stem
-    if filepath.parent.name == "subagents" and name.startswith("agent-"):
-        return name[6:]
+    """Extract agent ID from subagent file path, or None for main sessions.
+
+    Main session: <uuid>.jsonl -> returns None (caller should use session_id)
+    Subagent (nested): <uuid>/subagents/agent-<id>.jsonl -> returns the <id>
+    Subagent (flat): agent-<id>.jsonl -> returns the <id>
+    """
+    name = filepath.stem  # e.g. "agent-abc123"
+    if name.startswith("agent-"):
+        return name[6:]  # strip "agent-" prefix
     return None
 
+
+def build_agent_type_map(projects_dir: str) -> dict[str, str]:
+    """Scan main session files for Task tool calls to build agentId -> subagent_type map.
+
+    Parses assistant messages looking for Task tool_use blocks with subagent_type,
+    then correlates with tool_result blocks containing agentId.
+    """
+    agent_map: dict[str, str] = {}
+    root = Path(projects_dir).expanduser()
+    if not root.exists():
+        return agent_map
+
+    for filepath in root.rglob("*.jsonl"):
+        # Skip hidden dirs and subagent files
+        rel_parts = filepath.relative_to(root).parts
+        if any(part.startswith(".") for part in rel_parts):
+            continue
+        if filepath.stem.startswith("agent-"):
+            continue
+
+        try:
+            lines = filepath.read_text(errors="replace").splitlines()
+        except OSError:
+            continue
+
+        # Pass 1: collect Task tool_use_id -> subagent_type
+        task_types: dict[str, str] = {}  # tool_use_id -> subagent_type
+        # Pass 2: collect tool_use_id -> agentId from results
+        task_agents: dict[str, str] = {}  # tool_use_id -> agentId
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            if entry.get("type") == "assistant":
+                for block in entry.get("message", {}).get("content", []):
+                    if (isinstance(block, dict)
+                            and block.get("type") == "tool_use"
+                            and block.get("name") == "Task"):
+                        inp = block.get("input", {})
+                        st = inp.get("subagent_type", "")
+                        if st:
+                            task_types[block.get("id", "")] = st
+
+            elif entry.get("type") == "user":
+                for block in entry.get("message", {}).get("content", []):
+                    if not isinstance(block, dict) or block.get("type") != "tool_result":
+                        continue
+                    tuid = block.get("tool_use_id", "")
+                    if tuid not in task_types:
+                        continue
+                    content = str(block.get("content", ""))
+                    # Extract agentId from result text
+                    for pattern in [r"agentId:\s*(\w+)", r"task_id>(\w+)<"]:
+                        m = re.search(pattern, content)
+                        if m:
+                            task_agents[tuid] = m.group(1)
+                            break
+
+        # Merge: agentId -> subagent_type
+        for tuid, agent_id in task_agents.items():
+            if tuid in task_types:
+                agent_map[agent_id] = task_types[tuid]
+
+    return agent_map
+
+
+# ── DuckDB Import ──────────────────────────────────────────────────────────
 
 def import_duckdb(conn: sqlite3.Connection, duckdb_path: str, *, force: bool = False, dry_run: bool = False) -> dict:
     """Import events from legacy DuckDB file."""
@@ -203,6 +296,7 @@ def import_duckdb(conn: sqlite3.Connection, duckdb_path: str, *, force: bool = F
     for row in rows:
         rec = dict(zip(columns, row))
         ts = rec["timestamp"]
+        # Normalize timestamp to ISO 8601 string
         if isinstance(ts, datetime):
             ts = ts.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
         ts_str = str(ts)
@@ -224,7 +318,8 @@ def import_duckdb(conn: sqlite3.Connection, duckdb_path: str, *, force: bool = F
                     timestamp, session_id, agent_id, tool, backend, duration_ms,
                     status, input_tokens, output_tokens, cache_read_tokens,
                     cache_creation_tokens, agent_type, workflow_id, error_type,
-                    was_summarized, original_size, summary_size, tool_use_id, import_source
+                    was_summarized, original_size, summary_size, tool_use_id,
+                    import_source
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     ts_str, sid, aid, tool,
@@ -241,7 +336,7 @@ def import_duckdb(conn: sqlite3.Connection, duckdb_path: str, *, force: bool = F
                     int(rec.get("was_summarized", False) or 0),
                     int(rec.get("original_size", 0) or 0),
                     rec.get("summary_size"),
-                    "",
+                    "",  # tool_use_id not available in DuckDB
                     import_source,
                 ),
             )
@@ -260,10 +355,15 @@ def import_duckdb(conn: sqlite3.Connection, duckdb_path: str, *, force: bool = F
             if not dry_run:
                 conn.execute(
                     "INSERT OR IGNORE INTO content_retrievals (content_id, created_at, retrieved_at, was_retrieved) VALUES (?, ?, ?, ?)",
-                    (str(rec.get("content_id", "")), str(rec.get("created_at", "") or ""), str(rec.get("retrieved_at", "") or ""), int(rec.get("was_retrieved", 0) or 0)),
+                    (
+                        str(rec.get("content_id", "")),
+                        str(rec.get("created_at", "") or ""),
+                        str(rec.get("retrieved_at", "") or ""),
+                        int(rec.get("was_retrieved", 0) or 0),
+                    ),
                 )
     except Exception:
-        pass
+        pass  # Table may not exist
 
     # Import agent_types
     try:
@@ -274,10 +374,14 @@ def import_duckdb(conn: sqlite3.Connection, duckdb_path: str, *, force: bool = F
             if not dry_run:
                 conn.execute(
                     "INSERT OR IGNORE INTO agent_types (agent_id, agent_type, registered_at) VALUES (?, ?, ?)",
-                    (str(rec.get("agent_id", "")), str(rec.get("agent_type", "")), str(rec.get("registered_at", "") or "")),
+                    (
+                        str(rec.get("agent_id", "")),
+                        str(rec.get("agent_type", "")),
+                        str(rec.get("registered_at", "") or ""),
+                    ),
                 )
     except Exception:
-        pass
+        pass  # Table may not exist
 
     if not dry_run:
         conn.execute(
@@ -287,8 +391,11 @@ def import_duckdb(conn: sqlite3.Connection, duckdb_path: str, *, force: bool = F
         conn.commit()
 
     ddb.close()
+
     return {"pre": pre_count, "post": post_count, "skipped": skipped}
 
+
+# ── Claude JSONL Import ────────────────────────────────────────────────────
 
 def find_jsonl_files(projects_dir: str) -> list[Path]:
     """Find all .jsonl files under the Claude projects directory."""
@@ -302,7 +409,7 @@ def find_jsonl_files(projects_dir: str) -> list[Path]:
     return sorted(results)
 
 
-def parse_jsonl_file(filepath: Path) -> list[dict]:
+def parse_jsonl_file(filepath: Path, agent_type_map: dict[str, str] | None = None) -> list[dict]:
     """Parse a JSONL file and extract per-tool-call events."""
     lines = filepath.read_text(errors="replace").splitlines()
     entries = []
@@ -334,8 +441,10 @@ def parse_jsonl_file(filepath: Path) -> list[dict]:
                 if tuid:
                     tool_results[tuid] = (block.get("content", ""), ts)
 
+    # Determine agent_id from filename
     agent_id_override = extract_agent_id_from_filename(filepath)
 
+    # Extract events from assistant entries
     events = []
     for entry in entries:
         if entry.get("type") != "assistant":
@@ -353,9 +462,11 @@ def parse_jsonl_file(filepath: Path) -> list[dict]:
         timestamp = entry.get("timestamp", "")
         session_id = entry.get("sessionId", "")
 
+        # Count tool_use blocks in this message for token attribution
         tool_use_blocks = [b for b in content_blocks if isinstance(b, dict) and b.get("type") == "tool_use"]
         n_tools = max(len(tool_use_blocks), 1)
 
+        # Divide tokens evenly across tool calls
         input_tokens = int(usage.get("input_tokens", 0)) // n_tools
         output_tokens = int(usage.get("output_tokens", 0)) // n_tools
         cache_read = int(usage.get("cache_read_input_tokens", 0)) // n_tools
@@ -365,14 +476,17 @@ def parse_jsonl_file(filepath: Path) -> list[dict]:
             tool_name = block.get("name", "")
             tool_use_id = block.get("id", "")
             backend = derive_backend(tool_name)
+
             agent_id = agent_id_override if agent_id_override else session_id
 
+            # Find matching result
             result_content, result_ts = tool_results.get(tool_use_id, ("", ""))
             is_error, error_type = detect_error(result_content)
             original_size = len(str(result_content))
             was_summarized = 1 if (original_size > 2000 and "get_full" not in tool_name.lower()) else 0
             summary_size = min(original_size, 2000) if was_summarized else None
 
+            # Duration
             duration_ms = 0
             if timestamp and result_ts:
                 try:
@@ -394,7 +508,7 @@ def parse_jsonl_file(filepath: Path) -> list[dict]:
                 "output_tokens": output_tokens,
                 "cache_read_tokens": cache_read,
                 "cache_creation_tokens": cache_creation,
-                "agent_type": "",
+                "agent_type": (agent_type_map or {}).get(agent_id_override, "") if agent_id_override else "",
                 "workflow_id": "",
                 "error_type": error_type,
                 "was_summarized": was_summarized,
@@ -407,24 +521,41 @@ def parse_jsonl_file(filepath: Path) -> list[dict]:
     return events
 
 
-def import_claude_transcripts(conn: sqlite3.Connection, projects_dir: str, *, force: bool = False, dry_run: bool = False, limit: int = 0) -> dict:
-    """Import Claude JSONL transcripts."""
+def import_claude_transcripts(
+    conn: sqlite3.Connection, projects_dir: str, *, force: bool = False, dry_run: bool = False
+) -> dict:
+    """Import Claude JSONL transcripts.
+
+    Processes main sessions first to build agentId -> subagent_type map,
+    then processes subagent files with type info available.
+    """
     files = find_jsonl_files(projects_dir)
     total_inserted = 0
     total_skipped = 0
     files_processed = 0
 
-    for filepath in files:
+    # Separate main sessions from subagent files so we process mains first
+    main_files = [f for f in files if not f.stem.startswith("agent-")]
+    sub_files = [f for f in files if f.stem.startswith("agent-")]
+
+    # Load existing agent_type mappings from DB
+    agent_type_map: dict[str, str] = {}
+    for row in conn.execute("SELECT agent_id, agent_type FROM agent_types").fetchall():
+        agent_type_map[row[0]] = row[1]
+
+    def _import_file(filepath: Path) -> tuple[int, int]:
         source_path = str(filepath.resolve())
         if not force and is_already_imported(conn, "claude_transcript", source_path):
-            continue
+            return 0, 0
 
-        events = parse_jsonl_file(filepath)
-        inserted = 0
-        skipped = 0
+        events = parse_jsonl_file(filepath, agent_type_map=agent_type_map)
+        inserted = skipped = 0
 
         for evt in events:
-            if dedup_check_jsonl(conn, evt["timestamp"], evt["session_id"], evt["agent_id"], evt["tool"], evt["tool_use_id"]):
+            if dedup_check_jsonl(
+                conn, evt["timestamp"], evt["session_id"], evt["agent_id"],
+                evt["tool"], evt["tool_use_id"]
+            ):
                 skipped += 1
                 continue
 
@@ -434,7 +565,8 @@ def import_claude_transcripts(conn: sqlite3.Connection, projects_dir: str, *, fo
                         timestamp, session_id, agent_id, tool, backend, duration_ms,
                         status, input_tokens, output_tokens, cache_read_tokens,
                         cache_creation_tokens, agent_type, workflow_id, error_type,
-                        was_summarized, original_size, summary_size, tool_use_id, import_source
+                        was_summarized, original_size, summary_size, tool_use_id,
+                        import_source
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         evt["timestamp"], evt["session_id"], evt["agent_id"],
@@ -456,22 +588,84 @@ def import_claude_transcripts(conn: sqlite3.Connection, projects_dir: str, *, fo
                     (session_id, source_path),
                 )
 
-        if not dry_run:
+        if not dry_run and (inserted > 0 or skipped > 0):
             conn.execute(
                 "INSERT INTO import_log (source, source_path, imported_at, events_inserted, events_skipped) VALUES (?, ?, ?, ?, ?)",
                 ("claude_transcript", source_path, datetime.now(timezone.utc).isoformat(), inserted, skipped),
             )
             conn.commit()
 
-        total_inserted += inserted
-        total_skipped += skipped
+        return inserted, skipped
+
+    def _extract_agent_types_from_file(filepath: Path) -> None:
+        """Extract Task tool_use -> agentId -> subagent_type from a main session file."""
+        try:
+            lines = filepath.read_text(errors="replace").splitlines()
+        except OSError:
+            return
+
+        task_types: dict[str, str] = {}
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            if entry.get("type") == "assistant":
+                for block in entry.get("message", {}).get("content", []):
+                    if (isinstance(block, dict)
+                            and block.get("type") == "tool_use"
+                            and block.get("name") == "Task"):
+                        inp = block.get("input", {})
+                        st = inp.get("subagent_type", "")
+                        if st:
+                            task_types[block.get("id", "")] = st
+
+            elif entry.get("type") == "user" and task_types:
+                for block in entry.get("message", {}).get("content", []):
+                    if not isinstance(block, dict) or block.get("type") != "tool_result":
+                        continue
+                    tuid = block.get("tool_use_id", "")
+                    if tuid not in task_types:
+                        continue
+                    content = str(block.get("content", ""))
+                    for pattern in [r"agentId:\s*(\w+)", r"task_id>(\w+)<"]:
+                        m = re.search(pattern, content)
+                        if m:
+                            aid = m.group(1)
+                            agent_type_map[aid] = task_types[tuid]
+                            if not dry_run:
+                                conn.execute(
+                                    "INSERT OR REPLACE INTO agent_types (agent_id, agent_type, registered_at) VALUES (?, ?, ?)",
+                                    (aid, task_types[tuid], datetime.now(timezone.utc).isoformat()),
+                                )
+                            break
+
+    # Pass 1: main sessions — import events + extract agent_type mappings
+    for filepath in main_files:
+        _extract_agent_types_from_file(filepath)
+        ins, skip = _import_file(filepath)
+        total_inserted += ins
+        total_skipped += skip
         files_processed += 1
 
-        if limit > 0 and files_processed >= limit:
-            break
+    if not dry_run and agent_type_map:
+        conn.commit()
+
+    # Pass 2: subagent files — import with agent_type lookups available
+    for filepath in sub_files:
+        ins, skip = _import_file(filepath)
+        total_inserted += ins
+        total_skipped += skip
+        files_processed += 1
 
     return {"files": files_processed, "inserted": total_inserted, "skipped": total_skipped}
 
+
+# ── CLI ────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description="Import telemetry data into dashboard SQLite DB")
@@ -480,16 +674,18 @@ def main():
     parser.add_argument("--duckdb", default=None, help="Path to legacy DuckDB file")
     parser.add_argument("--dry-run", action="store_true", help="Print what would be imported without writing")
     parser.add_argument("--force", action="store_true", help="Re-import files already in import_log")
-    parser.add_argument("--limit", type=int, default=0, help="Max JSONL files to process per run (0=unlimited)")
     args = parser.parse_args()
 
+    # Ensure parent directory exists
     db_path = Path(args.db)
     db_path.parent.mkdir(parents=True, exist_ok=True)
+
     conn = init_db(str(db_path))
 
     print("Dashboard Import Pipeline")
     print("=" * 40)
 
+    # DuckDB import
     if args.duckdb:
         duckdb_path = Path(args.duckdb).expanduser()
         if not duckdb_path.exists():
@@ -501,16 +697,18 @@ def main():
             print(f"  Post-Jan 21 (duckdb_only): {result['post']} inserted")
             print(f"  Skipped (duplicates): {result['skipped']}")
 
+    # Claude transcripts
     projects_dir = Path(args.claude_projects).expanduser()
     if projects_dir.exists():
         print(f"\nImporting Claude transcripts: {projects_dir}")
-        result = import_claude_transcripts(conn, str(projects_dir), force=args.force, dry_run=args.dry_run, limit=args.limit)
+        result = import_claude_transcripts(conn, str(projects_dir), force=args.force, dry_run=args.dry_run)
         print(f"  Files processed: {result['files']}")
         print(f"  Events inserted: {result['inserted']}")
         print(f"  Events skipped (duplicates): {result['skipped']}")
     else:
         print(f"\n  WARNING: Claude projects dir not found: {projects_dir}")
 
+    # Summary
     total = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
     sessions = conn.execute("SELECT COUNT(DISTINCT session_id) FROM events").fetchone()[0]
     print(f"\nTotal events in database: {total}")

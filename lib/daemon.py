@@ -149,12 +149,48 @@ if __name__ == "__main__":
             else:
                 print("Daemon is not running")
             sys.exit(0)
+        elif sys.argv[1] == "--import-dashboard":
+            import json as _json
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(60.0)
+            try:
+                sock.connect(("127.0.0.1", DEFAULT_PORT))
+                # Initialize connection
+                sock.sendall(_json.dumps({
+                    "jsonrpc": "2.0", "id": 1,
+                    "method": "initialize", "params": {},
+                }).encode() + b"\n")
+                sock.recv(8192)  # consume init response
+                # Call import
+                sock.sendall(_json.dumps({
+                    "jsonrpc": "2.0", "id": 2,
+                    "method": "tools/call",
+                    "params": {"name": "router__import_dashboard", "arguments": {}},
+                }).encode() + b"\n")
+                buf = b""
+                while b"\n" not in buf:
+                    buf += sock.recv(8192)
+                result = _json.loads(buf.decode().strip())
+                data = result.get("result", {})
+                if isinstance(data, dict) and "content" in data:
+                    inner = _json.loads(data["content"][0]["text"])
+                    print(f"Import: {inner.get('files', 0)} files, "
+                          f"{inner.get('inserted', 0)} inserted, "
+                          f"{inner.get('skipped', 0)} skipped")
+                else:
+                    print(f"Import result: {data}")
+            except ConnectionRefusedError:
+                print("Daemon not running", file=sys.stderr)
+                sys.exit(1)
+            finally:
+                sock.close()
+            sys.exit(0)
         else:
             try:
                 port = int(sys.argv[1])
             except ValueError:
                 print(
-                    f"Usage: {sys.argv[0]} [port|--shutdown|--status]",
+                    f"Usage: {sys.argv[0]} [port|--shutdown|--status|--import-dashboard]",
                     file=sys.stderr,
                 )
                 sys.exit(1)

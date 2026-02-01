@@ -267,3 +267,192 @@ class TestKeepAlive:
             assert resp["id"] == 10 + i
 
         sock.close()
+
+
+class TestSummarizeAndRetrieve:
+    """Tests for the summarization → get_full pipeline."""
+
+    def test_summarization_pipeline(self, router_port, tmp_path):
+        """Deterministic: large file triggers summarization, get_full returns full content."""
+        port, router = router_port
+        ctrl = router._controller
+        ctrl._summarization_threshold = 200
+
+        # Build a file with @ characters spread throughout
+        lines = []
+        for i in range(80):
+            if i % 7 == 0:
+                lines.append(f"config_{i}: value@domain.com  # entry {i}")
+            else:
+                lines.append(f"config_{i}: plain_value  # entry {i}")
+        content = "\n".join(lines)
+        expected_count = content.count("@")
+
+        f = tmp_path / "large_config.txt"
+        f.write_text(content)
+        assert len(content) > 200
+
+        # Read through the controller — should get summarized
+        result = ctrl.handle_call("native__read_file", {"file_path": str(f)})
+
+        assert isinstance(result, dict)
+        assert result.get("full_available") is True
+        assert "content_id" in result
+        assert "summary" in result
+        assert "instruction" in result
+
+        content_id = result["content_id"]
+
+        # The summary (truncation fallback) should lose some @ characters
+        summary_at_count = str(result["summary"]).count("@")
+        assert summary_at_count < expected_count, (
+            f"Summary has {summary_at_count} @ but expected fewer than {expected_count}"
+        )
+
+        # get_full should return the complete original content
+        full_result = ctrl.handle_call("router__get_full", {"content_id": content_id})
+
+        full_text = str(full_result)
+        assert full_text.count("@") >= expected_count, (
+            f"Expected >= {expected_count} @ in full content, got {full_text.count('@')}"
+        )
+
+        # Telemetry should record both calls
+        events = ctrl.data._conn.execute(
+            "SELECT tool, was_summarized FROM events ORDER BY id"
+        ).fetchall()
+        tool_names = [e[0] for e in events]
+        assert "native__read_file" in tool_names
+        assert "router__get_full" in tool_names
+
+    @pytest.mark.integration
+    def test_agent_calls_get_full(self, router_port, tmp_path):
+        """LLM agent autonomously calls get_full when summary can't answer the question.
+
+        Routes every tool call through ctrl.handle_call() — the real pipeline.
+        Requires OPENAI_API_KEY.
+        """
+        import os
+
+        openai = pytest.importorskip("openai")
+
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            pytest.skip("OPENAI_API_KEY not set")
+
+        port, router = router_port
+        ctrl = router._controller
+        ctrl._summarization_threshold = 200
+
+        # File with @ characters spread throughout — impossible to count from truncation
+        lines = []
+        for i in range(80):
+            if i % 7 == 0:
+                lines.append(f"config_{i}: value@domain.com  # entry {i}")
+            else:
+                lines.append(f"config_{i}: plain_value  # entry {i}")
+        content = "\n".join(lines)
+        expected_count = content.count("@")
+
+        f = tmp_path / "large_config.txt"
+        f.write_text(content)
+
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "native__read_file",
+                    "description": "Read the contents of a file at the given path.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {
+                                "type": "string",
+                                "description": "Absolute path to the file",
+                            }
+                        },
+                        "required": ["file_path"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "router__get_full",
+                    "description": (
+                        "Retrieve the full, unsummarized content of a previously "
+                        "returned result using its content_id. Use this when a tool "
+                        "response was summarized and you need the complete content."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "content_id": {
+                                "type": "string",
+                                "description": "The content_id from a summarized response",
+                            }
+                        },
+                        "required": ["content_id"],
+                    },
+                },
+            },
+        ]
+
+        client = openai.OpenAI(api_key=api_key)
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a precise assistant. Use the provided tools to answer "
+                    "questions. When a tool response indicates content was summarized "
+                    "(full_available=true), use router__get_full with the content_id "
+                    "to retrieve the complete content before making calculations."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"How many '@' characters appear in the file {f}? "
+                    "Return ONLY the integer count, nothing else."
+                ),
+            },
+        ]
+
+        get_full_called = False
+        final_answer = None
+
+        for _turn in range(6):
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                tools=tools,
+                tool_choice="auto",
+            )
+            msg = response.choices[0].message
+
+            if msg.tool_calls:
+                messages.append(msg)
+                for tc in msg.tool_calls:
+                    if tc.function.name == "router__get_full":
+                        get_full_called = True
+
+                    args = json.loads(tc.function.arguments)
+                    result = ctrl.handle_call(tc.function.name, args)
+
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": json.dumps(result, default=str),
+                    })
+            else:
+                final_answer = msg.content
+                break
+
+        assert get_full_called, (
+            "Agent did not call router__get_full — "
+            "it should have recognized the summary was insufficient"
+        )
+        assert final_answer is not None, "Agent did not produce a final answer"
+        assert str(expected_count) in final_answer, (
+            f"Expected count {expected_count} not in agent answer: {final_answer}"
+        )  # was_summarized = True

@@ -598,3 +598,13 @@ function dashboard() {
         },
     };
 }
+
+// Delegate chart-card clicks to expandChart
+document.addEventListener('click', function(e) {
+    const card = e.target.closest('.chart-card');
+    if (!card) return;
+    // Don't expand if clicking controls or buttons inside the card
+    if (e.target.closest('.chart-controls') || e.target.closest('button') || e.target.closest('select') || e.target.closest('input')) return;
+    const canvas = card.querySelector('canvas');
+    if (canvas && canvas.id) expandChart(canvas.id);
+});
