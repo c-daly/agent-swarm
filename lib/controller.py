@@ -117,15 +117,24 @@ class Controller:
             )
             raise
 
-        # Cache full response
-        content_id = f"c{uuid.uuid4().hex[:12]}"
-        original_size = len(str(raw_result))
-        self.cache.store(content_id, raw_result)
+        # Skip caching/summarization for get_full (agent explicitly wants full content)
+        skip_summarization = (prefix == "router" and tool_name == "get_full")
 
-        # Summarize if needed
-        result, was_summarized = self._maybe_summarize(
-            raw_result, content_id, original_size
-        )
+        if skip_summarization:
+            result = raw_result
+            was_summarized = False
+            original_size = len(str(raw_result))
+            content_id = None
+        else:
+            # Cache full response
+            content_id = f"c{uuid.uuid4().hex[:12]}"
+            original_size = len(str(raw_result))
+            self.cache.store(content_id, raw_result)
+
+            # Summarize if needed
+            result, was_summarized = self._maybe_summarize(
+                raw_result, content_id, original_size
+            )
 
         # Record success telemetry
         duration_ms = int((time.monotonic() - start_time) * 1000)
@@ -657,6 +666,7 @@ class Controller:
         return {
             "summary": summary,
             "content_id": content_id,
+            "instruction": f"To retrieve full content, call router__get_full with content_id='{content_id}'",
             "full_available": True,
         }, True
 

@@ -1,0 +1,51 @@
+#!/usr/bin/env python3
+"""Start the agent-swarm daemon in the background.
+
+Called by bin/mcp-router (the shim) when the daemon isn't running,
+or manually by the user. Starts lib/daemon.py as a detached process.
+"""
+
+import os
+import socket
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+DAEMON_SCRIPT = ROOT / "lib" / "daemon.py"
+LOG_DIR = ROOT / "logs"
+
+
+def main() -> None:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+    port = int(os.environ.get("DAEMON_PORT", "7523"))
+
+    # Check if already running via TCP probe (avoid importing daemon module)
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(1.0)
+        s.connect(("127.0.0.1", port))
+        s.close()
+        print("Daemon is already running")
+        return
+    except (ConnectionRefusedError, OSError):
+        pass
+
+    # Start daemon as a detached background process
+    log_out = LOG_DIR / "daemon-stdout.log"
+    log_err = LOG_DIR / "daemon-stderr.log"
+
+    with open(log_out, "a") as out, open(log_err, "a") as err:
+        subprocess.Popen(
+            [sys.executable, str(DAEMON_SCRIPT)],
+            stdout=out,
+            stderr=err,
+            start_new_session=True,
+            cwd=str(ROOT),
+            env={**os.environ, "PYTHONPATH": str(ROOT)},
+        )
+
+
+if __name__ == "__main__":
+    main()
