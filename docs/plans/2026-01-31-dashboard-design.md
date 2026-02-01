@@ -90,7 +90,7 @@ Every chart supports:
 
 | Param | Type | Description |
 |---|---|---|
-| `from`, `to` | datetime | Date range (EST) |
+| `from`, `to` | datetime | Date range (UTC; frontend converts to local) |
 | `period` | string | hour, day, week, month |
 | `tool` | string | Comma-separated tool filter |
 | `backend` | string | Comma-separated backend filter |
@@ -188,7 +188,7 @@ python server.py --mock --port 8080
 | `GET /api/latency?group_by=tool` | Duration histogram buckets |
 | `GET /api/errors?group_by=type\|tool` | Error breakdown |
 
-All endpoints accept common filter params (from, to, period, tool, backend, agent_type, status, session, sort, limit). All timestamps returned in EST.
+All endpoints accept common filter params (from, to, period, tool, backend, agent_type, status, session, sort, limit). All timestamps in UTC; frontend handles local timezone display.
 
 ## Frontend
 
@@ -213,7 +213,7 @@ Single-page app, no build step:
 ## Repo Structure
 
 ```
-agent-swarm-dashboard/
+dashboard/
 ├── server.py              # HTTP server + REST API + static file serving
 ├── import.py              # DuckDB/JSONL → SQLite migration
 ├── providers/

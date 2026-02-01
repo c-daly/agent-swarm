@@ -3,6 +3,8 @@ name: researcher
 tools: Bash(mcp*)
 description: Research and documentation lookup - library docs, API patterns, guidance
 model: haiku
+max_output_chars: 2000
+can_write_files: false
 ---
 
 <constraints>

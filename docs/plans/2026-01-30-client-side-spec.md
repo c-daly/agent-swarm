@@ -162,7 +162,7 @@ class DaemonClient:
         """
 
     def connect(self) -> None:
-        """Connect to the daemon.
+        """Connect to the daemon and perform MCP handshake.
 
         1. Create socket (AF_INET, SOCK_STREAM)
         2. Set timeout to self._timeout
@@ -170,10 +170,22 @@ class DaemonClient:
         4. Reset self._buf to b""
         5. Reset self._request_id to 0
         6. Reset self._registered to False
+        7. Send MCP ``initialize`` request:
+           {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2024-11-05",
+                       "capabilities": {},
+                       "clientInfo": {"name": "daemon-client", "version": "1.0"}}}
+        8. Read and validate initialize response
+        9. Send ``notifications/initialized`` notification:
+           {"jsonrpc": "2.0", "method": "notifications/initialized"}
+
+        The MCP handshake is required by the daemon's router before it
+        accepts any other method calls.
 
         Raises:
             ConnectionRefusedError: Daemon is not running
             socket.timeout: Daemon did not respond within timeout
+            ConnectionError: MCP handshake failed
         """
 
     def close(self) -> None:
@@ -307,34 +319,13 @@ class DaemonClient:
             "workflow_id": workflow_id,
         })
 
-    def workflow_set_state(self, workflow_id: str, state: dict) -> dict:
-        """Replace full workflow state.
+    # NOTE: workflow_set_state (full replacement) is NOT exposed to clients.
+    # Only the daemon internally does full state replacement. Agents use
+    # workflow_set_value for individual keys, with protected key enforcement.
 
-        Args:
-            state: New state dict. Completely replaces existing state.
-
-        Returns:
-            {"status": "updated", "workflow_id": workflow_id}
-        """
-        return self._call("workflow/set_state", {
-            "workflow_id": workflow_id,
-            "state": state,
-        })
-
-    def workflow_update(self, workflow_id: str, updates: dict) -> dict:
-        """Merge partial updates into workflow state.
-
-        Args:
-            updates: Dict of keys to merge. Existing keys are overwritten,
-                    new keys are added, keys not in updates are preserved.
-
-        Returns:
-            {"status": "updated", "workflow_id": workflow_id}
-        """
-        return self._call("workflow/update", {
-            "workflow_id": workflow_id,
-            "updates": updates,
-        })
+    # NOTE: workflow_update (partial merge) is removed. Use workflow_set_value
+    # for individual key updates. This keeps the API surface small and avoids
+    # ambiguity about merge semantics for nested dicts.
 
     def workflow_get_value(self, workflow_id: str, key: str) -> Any:
         """Get a single value from workflow state.
@@ -350,8 +341,24 @@ class DaemonClient:
     def workflow_set_value(self, workflow_id: str, key: str, value: Any) -> dict:
         """Set a single value in workflow state.
 
+        The daemon enforces protected keys — the following keys cannot be
+        written by clients and will raise DaemonError (-32004) if attempted:
+
+        Protected keys (daemon-managed):
+        - ``phase`` — use workflow_advance_phase() instead
+        - ``*_checkpoint_passed`` — use workflow_pass_checkpoint() instead
+        - ``active_agents`` — managed by agent/register and connection lifecycle
+        - ``started_at``, ``completed_at`` — daemon-set timestamps
+        - ``agent_id``, ``agent_type``, ``session_id``, ``workflow_id`` — identity
+
+        All other keys are free-form agent coordination data. Agents use this
+        to track their own progress, share results, and coordinate with each other.
+
         Returns:
             {"status": "updated", "workflow_id": workflow_id}
+
+        Raises:
+            DaemonError: If key is protected (-32004) or workflow not active
         """
         return self._call("workflow/set_value", {
             "workflow_id": workflow_id,
@@ -402,6 +409,22 @@ class DaemonClient:
         return self._call("workflow/advance_phase", {
             "workflow_id": workflow_id,
             "target_phase": target_phase,
+        })
+
+    def workflow_pass_checkpoint(self, workflow_id: str) -> dict:
+        """Mark the current phase's checkpoint as passed.
+
+        The daemon sets the ``{current_phase}_checkpoint_passed`` key to True
+        in workflow state. Only valid when the current phase has checkpoint: true.
+
+        Returns:
+            {"status": "checkpoint_passed", "phase": current_phase}
+
+        Raises:
+            DaemonError: If current phase has no checkpoint, or workflow not active
+        """
+        return self._call("workflow/pass_checkpoint", {
+            "workflow_id": workflow_id,
         })
 
     def agent_get_state(self, agent_id: str) -> Optional[dict]:
@@ -1359,7 +1382,7 @@ This hook is **best-effort**, not airtight:
 |---|---|---|
 | `hooks/` | Delete all except `native-tool-redirect.py` (if needed) | Daemon handles interception, enforcement, telemetry |
 | `.state/` | Delete directory | State in daemon's state machine + DuckDB. Logs move to daemon log file. |
-| `lib/stores/` | Retained for daemon | DuckDB store used by daemon's DataStore (see companion spec §1 File Layout) |
+| `lib/stores/` | Delete directory | Daemon uses SQLite (lib/datastore.py), not DuckDB. DuckDB only needed by dashboard import script. |
 
 ### Files Deleted from `hooks/`
 
@@ -1667,7 +1690,7 @@ Then: Success, phase is now "implement"
 Given: Workflow "iterate" in phase "test", checkpoint: true
 When: workflow_advance_phase("iterate", "review")
 Then: DaemonError raised (checkpoint not passed)
-When: workflow_set_value("iterate", "test_checkpoint_passed", true)
+When: workflow_pass_checkpoint("iterate")
 Then: workflow_advance_phase("iterate", "review") succeeds
 ```
 

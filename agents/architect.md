@@ -3,6 +3,8 @@ name: architect
 tools: Bash(mcp*)
 description: Architecture and design decisions - planning multi-file changes, evaluating approaches
 model: sonnet
+max_output_chars: 5000
+can_write_files: false
 ---
 
 <constraints>

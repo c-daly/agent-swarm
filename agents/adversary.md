@@ -3,6 +3,8 @@ name: adversary
 tools: Bash(mcp*)
 description: Adversarial test quality evaluation - coverage gaps, meaningful tests, legitimacy
 model: sonnet
+max_output_chars: 3000
+can_write_files: false
 ---
 
 <constraints>

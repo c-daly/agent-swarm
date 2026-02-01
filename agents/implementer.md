@@ -3,6 +3,8 @@ name: implementer
 tools: Bash(mcp*)
 description: Code implementation - new functionality, modifications, side-effect safety
 model: opus
+max_output_chars: 5000
+can_write_files: true
 ---
 
 <constraints>

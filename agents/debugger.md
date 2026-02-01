@@ -3,6 +3,8 @@ name: debugger
 tools: Bash(mcp*)
 description: Debug and fix issues - reproduce first, trace root cause, minimal fix
 model: sonnet
+max_output_chars: 3000
+can_write_files: true
 ---
 
 <constraints>
