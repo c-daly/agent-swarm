@@ -446,7 +446,7 @@ def parse_jsonl_file(filepath: Path, agent_type_map: dict[str, str] | None = Non
             result_content, result_ts = tool_results.get(tool_use_id, ("", ""))
             is_error, error_type = detect_error(result_content)
             original_size = len(str(result_content))
-            was_summarized = 1 if (original_size > 2000 and "get_full" not in tool_name.lower()) else 0
+            was_summarized = 1 if (original_size > 2000 and tool_name != "router__get_full") else 0
             summary_size = min(original_size, 2000) if was_summarized else None
 
             # Duration

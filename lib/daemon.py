@@ -161,6 +161,8 @@ if __name__ == "__main__":
                     "method": "initialize", "params": {},
                 }).encode() + b"\n")
                 sock.recv(8192)  # consume init response
+                # Send initialized notification (required by MCP protocol)
+                sock.sendall(_json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}).encode() + b"\n")
                 # Call import
                 sock.sendall(_json.dumps({
                     "jsonrpc": "2.0", "id": 2,
