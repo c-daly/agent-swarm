@@ -30,7 +30,8 @@
       "Grep",
       "WebFetch",
       "WebSearch",
-      "NotebookEdit"
+      "NotebookEdit",
+      "Task"
     ]
   },
   "enabledMcpjsonServers": [
