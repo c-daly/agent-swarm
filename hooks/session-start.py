@@ -8,9 +8,11 @@ Responsibilities:
 4. Inject workflow permission context
 5. Discover and inject recent handoff context
 6. List available Serena memories
+7. Inject agent protocol briefing (via router)
 """
 
 import json
+import socket
 import sys
 import time
 from datetime import datetime
@@ -48,8 +50,12 @@ except ImportError:
 
 
 STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
+DAEMON_PORT = int(os.environ.get("DAEMON_PORT", "7523")) if "os" in dir() else 7523
 
-# Flags that persist across compaction (same conversation)
+import os
+DAEMON_PORT = int(os.environ.get("DAEMON_PORT", "7523"))
+
+# Flags that persist across compaction
 PERSISTENT_FLAGS = [
     "user_approved_commit",
     "tests_executed",
@@ -59,12 +65,71 @@ PERSISTENT_FLAGS = [
 ]
 
 
+def call_router(tool_name: str, args: dict = None, timeout: float = 10.0, retries: int = 3) -> dict | None:
+    """Call router tool, with retries for startup delay."""
+    args = args or {}
+    
+    for attempt in range(retries):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(timeout)
+                s.connect(("127.0.0.1", DAEMON_PORT))
+                
+                request = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {
+                        "name": f"router__{tool_name}",
+                        "arguments": args,
+                    },
+                }
+                s.sendall(json.dumps(request).encode() + b"\n")
+                
+                data = b""
+                while b"\n" not in data:
+                    chunk = s.recv(4096)
+                    if not chunk:
+                        break
+                    data += chunk
+                
+                if not data:
+                    if attempt < retries - 1:
+                        time.sleep(1)
+                        continue
+                    return None
+                
+                response = json.loads(data.decode().strip())
+                if "error" in response:
+                    return None
+                
+                result = response.get("result", {})
+                if isinstance(result, dict) and "content" in result:
+                    content = result["content"]
+                    if content and isinstance(content[0], dict):
+                        text = content[0].get("text", "")
+                        try:
+                            return json.loads(text)
+                        except json.JSONDecodeError:
+                            return {"text": text}
+                return result
+                
+        except (socket.timeout, socket.error, ConnectionRefusedError):
+            if attempt < retries - 1:
+                time.sleep(1)
+                continue
+            return None
+        except Exception:
+            return None
+    
+    return None
+
+
 def reset_enforcement_counters(agent_id: str | None = None):
     """Reset enforcement counters, preserving compaction state."""
     compaction_state_file = STATE_DIR / "compaction_state.json"
 
     try:
-        # Restore flags preserved from compaction
         compaction_flags = {}
         if compaction_state_file.exists():
             try:
@@ -78,129 +143,132 @@ def reset_enforcement_counters(agent_id: str | None = None):
             "last_phase": None,
             "last_tool_time": None,
             "files_read": [],
-            "read_count": 0,
-            "files_edited_this_session": [],
-            "phase": None,
-            "search_count": 0,
-            "edits_this_response": 0,
-            "mcp_counts": {},
-            "classification_given": False,
-            "classification_type": None,
-            "workflow_invoked": False,
+            "searches_done": [],
+            "tool_call_count": 0,
+            "started_at": datetime.now().isoformat(),
         }
 
-        # Restore compaction flags
-        state.update(compaction_flags)
+        for flag in PERSISTENT_FLAGS:
+            if flag in compaction_flags:
+                state[flag] = compaction_flags[flag]
 
-        # Set project_root for router auto-activation
-        if find_project_root is not None:
+        state_file = STATE_DIR / "enforcement_state.json"
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        state_file.write_text(json.dumps(state, indent=2))
+
+        if agent_id:
             try:
-                state["project_root"] = str(find_project_root(Path.cwd()))
+                phase = compaction_flags.get("phase")
+                if phase:
+                    agent_set_state(agent_id, {"phase": phase})
             except Exception:
                 pass
 
-        # Subagent: inherit phase from orchestrator
-        if agent_id:
-            iterate_state = workflow_get_state("iterate")
-            if iterate_state and iterate_state.get("phase"):
-                state["phase"] = iterate_state["phase"]
-            agent_set_state(agent_id, state)
-
-        workflow_set_state("session", state)
-        return True
     except Exception as e:
-        log_warning(f"Counter reset failed: {e}")
-        return False
+        log_warning(f"Failed to reset enforcement counters: {e}")
 
 
 def auto_start_workflow():
-    """Start implementer workflow if none active."""
-    for attempt in range(2):
-        try:
-            active_wf = get_active_workflow_id()
-            if active_wf is None:
-                from implementer_workflow import ImplementerWorkflow
-                wf = ImplementerWorkflow()
-                wf.start("Default session workflow")
-            break
-        except Exception:
-            if attempt == 0:
-                time.sleep(0.5)
+    """Auto-start implementer workflow if none active."""
+    try:
+        from implementer_workflow import ImplementerWorkflow
+        wf = ImplementerWorkflow()
+        if not wf.is_active():
+            wf.start("Auto-started implementer workflow")
+    except Exception as e:
+        log_debug(f"Auto-start workflow failed: {e}")
 
 
 def cleanup_stale_outputs() -> str | None:
-    """Clean up stale output files, return message if any cleaned."""
+    """Clean up output files older than 48 hours."""
     try:
-        from output_cleanup import cleanup_stale_outputs as _cleanup
-        result = _cleanup(max_age_hours=48, dry_run=False)
-        if result["files_deleted"] > 0:
-            space_mb = result["space_reclaimed"] / (1024 * 1024)
-            return f"Cleaned {result['files_deleted']} stale output files ({space_mb:.1f} MB)"
+        output_dir = STATE_DIR / "outputs"
+        if not output_dir.exists():
+            return None
+
+        cutoff = time.time() - (48 * 3600)
+        deleted = 0
+        bytes_freed = 0
+
+        for f in output_dir.glob("*"):
+            if f.is_file() and f.stat().st_mtime < cutoff:
+                bytes_freed += f.stat().st_size
+                f.unlink()
+                deleted += 1
+
+        if deleted:
+            mb = bytes_freed / (1024 * 1024)
+            return f"Cleaned up {deleted} stale files ({mb:.1f}MB)"
+        return None
     except Exception:
-        pass
-    return None
+        return None
 
 
-def format_permissions(perms) -> str:
-    """Format PermissionStore as human-readable prompt context."""
+def format_permissions(perms):
+    """Format permission info for display."""
     if not perms:
-        return "No active workflow - standard permissions apply."
+        return None
 
-    lines = [
-        f"Active workflow: {perms.workflow_type} ({perms.workflow_id})",
-        f"Current phase: {perms.phase}",
-    ]
+    lines = []
+    if "phase_permissions" in perms:
+        pp = perms["phase_permissions"]
+        if pp.get("blocked_tools"):
+            lines.append(f"Blocked: {', '.join(pp['blocked_tools'])}")
+        if pp.get("allowed_categories"):
+            lines.append(f"Allowed categories: {', '.join(pp['allowed_categories'])}")
 
-    if perms.phase_permissions:
-        pp = perms.phase_permissions
-        if pp.blocked_tools:
-            tools = list(pp.blocked_tools)[:10]
-            if len(pp.blocked_tools) > 10:
-                tools.append(f"...and {len(pp.blocked_tools) - 10} more")
-            lines.append(f"Blocked tools: {', '.join(tools)}")
-        if pp.allowed_categories:
-            lines.append(f"Allowed categories: {', '.join(pp.allowed_categories)}")
+    if perms.get("is_subagent"):
+        lines.append("Running as subagent")
 
-    if perms.is_subagent:
-        lines.append("Running as subagent - restricted permissions apply")
-
-    return "\n".join(lines)
+    return "\n".join(lines) if lines else None
 
 
 def discover_handoffs() -> str:
     """Find and format recent handoff files."""
-    if find_project_root is None or find_recent_handoffs is None:
-        return ""
-
     try:
-        project_root = find_project_root(Path.cwd())
-        handoffs = find_recent_handoffs(project_root, max_count=3, max_age_hours=48)
+        if not find_project_root or not find_recent_handoffs:
+            return ""
+
+        project_root = find_project_root()
+        if not project_root:
+            return ""
+
+        handoffs = find_recent_handoffs(project_root, max_count=3)
         if not handoffs:
             return ""
 
-        content = handoffs[0].read_text()
+        # Read the most recent handoff
+        recent = handoffs[0]
+        content = recent.read_text()
         if len(content) > 1500:
-            content = content[:1500] + "\n\n[truncated...]"
+            content = content[:1500] + "\n... (truncated)"
 
-        result = f"**Previous Session Handoff** ({handoffs[0].name}):\n\n{content}"
-        if len(handoffs) > 1:
-            other = [h.name for h in handoffs[1:3]]
-            result += f"\n\n_Other recent handoffs: {', '.join(other)}_"
-        return result
+        return f"Recent Handoff ({recent.name}):\n{content}"
     except Exception as e:
-        log_debug(f"Handoff discovery failed: {e}")
+        log_warning(f"Handoff discovery failed: {e}")
         return ""
 
 
 def list_serena_memories() -> list[str]:
     """List available Serena memories."""
-    try:
-        memories_dir = plugin_dir / ".serena" / "memories"
-        if not memories_dir.exists():
-            return []
-        return [f.stem for f in memories_dir.glob("*.md")]
-    except Exception:
+    memories_dir = plugin_dir / ".serena" / "memories"
+    if not memories_dir.exists():
         return []
+    return [f.stem for f in memories_dir.glob("*.md")]
+
+
+def get_agent_briefing() -> str:
+    """Get agent protocol briefing from router."""
+    result = call_router("get_agent_briefing")
+    if result and "briefing" in result:
+        return result["briefing"]
+    
+    # Fallback: try direct import if router unavailable
+    try:
+        from protocol_assembly import UNIVERSAL_PROTOCOL, AGENT_PROTOCOL
+        return f"{UNIVERSAL_PROTOCOL}\n{AGENT_PROTOCOL}"
+    except ImportError:
+        return ""
 
 
 def main():
@@ -209,13 +277,14 @@ def main():
     except json.JSONDecodeError:
         input_data = {}
 
-    agent_id = input_data.get("agentId")
+    agent_id = input_data.get("agent_id")
 
-    # 1. Reset enforcement counters
+    # 1. Reset counters
     reset_enforcement_counters(agent_id)
 
-    # Main agent only: workflow, cleanup, context
     if not agent_id:
+        # Main agent flow
+        
         # 2. Auto-start workflow
         auto_start_workflow()
 
@@ -237,8 +306,14 @@ def main():
         # 6. List memories
         memories = list_serena_memories()
 
+        # 7. Agent briefing (from router)
+        briefing = get_agent_briefing()
+
         # Build output
         messages = []
+        
+        if briefing:
+            messages.append(f"# AGENT PROTOCOL\n\n{briefing}")
         if cleanup_msg:
             messages.append(cleanup_msg)
         if permission_context:

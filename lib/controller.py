@@ -23,6 +23,7 @@ from typing import Any
 from lib.backends import BackendManager
 from lib.cache import Cache
 from lib.datastore import DataStore
+from lib.protocol_assembly import assemble_agent_briefing, assemble_subagent_briefing
 from lib.errors import (
     BackendNotFoundError,
     PermissionDeniedError,
@@ -342,6 +343,7 @@ class Controller:
             "glob": self._native_glob,
             "grep": self._native_grep,
             "bash": self._native_bash,
+            "task": self._native_task,
         }
         handler = dispatch.get(tool_name)
         if handler is None:
@@ -535,6 +537,103 @@ class Controller:
                 "timed_out": True,
             }
 
+    def _native_task(self, args: dict) -> dict:
+        """Spawn a subagent to execute a task.
+
+        Owns the full subagent lifecycle:
+        1. Enforcement - check spawn permissions
+        2. Context injection - assemble briefing
+        3. Execution - run via claude_agent_sdk
+        4. Result processing - extract output
+        """
+        import asyncio
+        from claude_agent_sdk import query, AssistantMessage, TextBlock, ResultMessage
+
+        prompt = args.get("prompt", "")
+        subagent_type = args.get("subagent_type", "")
+        model = args.get("model")
+        description = args.get("description", "")
+
+        if not prompt or not subagent_type:
+            return {"error": "prompt and subagent_type are required", "isError": True}
+
+        # 1. Enforcement - check if spawning is allowed
+        # During iterate/orchestrate, only implementer agents allowed
+        with self._state_lock:
+            iterate_state = self._workflow_state.get("iterate")
+        if iterate_state and iterate_state.get("phase") == "orchestrate":
+            if subagent_type != "implementer" and "implementer" not in subagent_type:
+                return {
+                    "error": (
+                        f"[ITERATE/ORCHESTRATE] Only implementer agents allowed "
+                        f"during orchestrate phase. Attempted: {subagent_type}"
+                    ),
+                    "isError": True,
+                }
+
+        # 2. Generate agent_id and register
+        agent_id = f"sub-{uuid.uuid4().hex[:8]}"
+        with self._state_lock:
+            self._agent_state[agent_id] = {
+                "type": subagent_type,
+                "status": "running",
+                "started_at": datetime.now(timezone.utc).isoformat(),
+                "description": description,
+            }
+
+        # 3. Assemble briefing context
+        # Extract role from subagent_type (e.g., "agent-swarm:implementer" -> "implementer")
+        role = subagent_type.split(":")[-1] if ":" in subagent_type else subagent_type
+        briefing = assemble_subagent_briefing(role)
+        enriched_prompt = f"# SUBAGENT OPERATING PROTOCOL\n\n{briefing}\n\n# TASK\n\n{prompt}"
+
+        # 4. Execute via SDK
+        from claude_agent_sdk.types import ClaudeAgentOptions
+        options = ClaudeAgentOptions(
+            permission_mode="bypassPermissions",
+        )
+        if model:
+            options.model = model
+
+        async def run_query():
+            messages = []
+            async for message in query(prompt=enriched_prompt, options=options):
+                messages.append(message)
+            return messages
+
+        try:
+            messages = asyncio.run(run_query())
+        except Exception as e:
+            # Mark agent as failed
+            with self._state_lock:
+                if agent_id in self._agent_state:
+                    self._agent_state[agent_id]["status"] = "failed"
+                    self._agent_state[agent_id]["error"] = str(e)
+            return {"error": f"SDK execution failed: {e}", "isError": True}
+
+        # 5. Process result
+        output_text = []
+        num_turns = 0
+        for message in messages:
+            if isinstance(message, AssistantMessage):
+                for block in message.content:
+                    if isinstance(block, TextBlock):
+                        output_text.append(block.text)
+            elif isinstance(message, ResultMessage):
+                num_turns = message.num_turns
+
+        # Mark agent as completed
+        with self._state_lock:
+            if agent_id in self._agent_state:
+                self._agent_state[agent_id]["status"] = "completed"
+                self._agent_state[agent_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
+
+        return {
+            "agent_id": agent_id,
+            "output": "\n".join(output_text),
+            "num_turns": num_turns,
+        }
+
     # --- Router operations ---
 
     def _handle_router(self, tool_name: str, args: dict) -> Any:
@@ -575,71 +674,10 @@ class Controller:
         if tool_name == "import_dashboard":
             return self.run_dashboard_import()
 
-        if tool_name == "check_task_enforcement":
-            return self._check_task_enforcement(args)
+        if tool_name == "get_agent_briefing":
+            return {"briefing": assemble_agent_briefing()}
 
         raise RouterError(f"Unknown router tool: {tool_name}")
-
-    def _check_task_enforcement(self, args: dict) -> dict:
-        """Enforce rules on Task tool calls.
-
-        Checks (fail-fast, cheapest first):
-        1. run_in_background=true required
-        2. Prompt must contain SUBAGENT OPERATING PROTOCOL
-        3. During iterate/orchestrate, only implementer agents allowed
-        """
-        tool_input = args.get("tool_input", {})
-
-        # Check 1: Background enforcement
-        if not tool_input.get("run_in_background", False):
-            return {
-                "decision": "deny",
-                "reason": (
-                    "[BACKGROUND_REQUIRED] Task tool must use run_in_background=true "
-                    "for parallel execution. Add run_in_background=true to your Task call."
-                ),
-            }
-
-        # Check 2: Briefing enforcement
-        prompt = tool_input.get("prompt", "")
-        if prompt and "SUBAGENT OPERATING PROTOCOL" not in prompt:
-            return {
-                "decision": "deny",
-                "reason": (
-                    "[BRIEFING_REQUIRED] Task prompt must include subagent briefing.\n\n"
-                    "Assemble the prompt:\n"
-                    "1. Read: cat ~/.claude/plugins/agent-swarm/hooks/subagent-briefing.md\n"
-                    "2. Prepend to your task with header: # SUBAGENT OPERATING PROTOCOL\n"
-                    "3. Add phase restrictions if in iterate workflow\n"
-                    "4. Re-call Task with assembled prompt\n\n"
-                    "Subagent Tools (allowed_tools to include):\n"
-                    "- Shell: mcp-call pytest, mcp-call ruff, mcp-call git, etc.\n"
-                    "- Files: mcp-call native__read_file, mcp-call native__write_file\n"
-                    "- Search: mcp-call native__glob, mcp-call native__grep\n"
-                    "- Serena: mcp-call serena__find_symbol, etc.\n\n"
-                    "See 'Subagent Prompt Assembly' in iterate skill for details."
-                ),
-            }
-
-        # Check 3: Implementer-only during iterate/orchestrate
-        with self._state_lock:
-            iterate_state = self._workflow_state.get("iterate")
-        if iterate_state and iterate_state.get("phase") == "orchestrate":
-            subagent_type = tool_input.get("subagent_type", "")
-            if subagent_type and subagent_type != "agent-swarm:implementer":
-                return {
-                    "decision": "deny",
-                    "reason": (
-                        f"[ITERATE/ORCHESTRATE] Only agent-swarm:implementer agents allowed "
-                        f"during orchestrate phase of iterate workflow (TDD enforcement). "
-                        f"Attempted to spawn: {subagent_type}. "
-                        f"Implementers go through full TDD loop "
-                        f"(test_writing → implement → test → review). "
-                        f"Spawning other agent types bypasses TDD discipline."
-                    ),
-                }
-
-        return {"decision": "allow"}
 
     # --- Workflow state operations ---
 

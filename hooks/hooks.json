@@ -16,16 +16,6 @@
             "timeout": 2
           }
         ]
-      },
-      {
-        "matcher": "Task",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/task-enforcement.py",
-            "timeout": 5
-          }
-        ]
       }
     ],
     "PostToolUse": [
@@ -48,30 +38,6 @@
             "type": "command",
             "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/pre-compacting.py",
             "timeout": 5
-          }
-        ]
-      }
-    ],
-    "SubagentStart": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/subagent-enforcement.py",
-            "timeout": 3
-          }
-        ]
-      }
-    ],
-    "SubagentStop": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/subagent-complete.py",
-            "timeout": 3
           }
         ]
       }
