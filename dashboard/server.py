@@ -9,10 +9,14 @@ import argparse
 import json
 import mimetypes
 import re
+import sys
 import traceback
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
+
+# Allow running as script from any directory
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 class DashboardHandler(SimpleHTTPRequestHandler):
