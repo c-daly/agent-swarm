@@ -17,6 +17,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+import os
 
 # Add lib to path
 plugin_dir = Path(__file__).parent.parent
