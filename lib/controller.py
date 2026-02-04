@@ -585,12 +585,16 @@ class Controller:
         # Extract role from subagent_type (e.g., "agent-swarm:implementer" -> "implementer")
         role = subagent_type.split(":")[-1] if ":" in subagent_type else subagent_type
         briefing = assemble_subagent_briefing(role)
-        enriched_prompt = f"# SUBAGENT OPERATING PROTOCOL\n\n{briefing}\n\n# TASK\n\n{prompt}"
+        # Only add protocol header if not already present
+        if "SUBAGENT OPERATING PROTOCOL" not in prompt:
+            enriched_prompt = f"# SUBAGENT OPERATING PROTOCOL\n\n{briefing}\n\n# TASK\n\n{prompt}"
+        else:
+            enriched_prompt = prompt
 
         # 4. Execute via SDK
         from claude_agent_sdk.types import ClaudeAgentOptions
         options = ClaudeAgentOptions(
-            permission_mode="bypassPermissions",
+            permission_mode="requirePermissions"  # Hooks still run for sandboxing,
         )
         if model:
             options.model = model

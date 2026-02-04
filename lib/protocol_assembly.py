@@ -309,7 +309,7 @@ def assemble_subagent_briefing(role: str, max_tokens: int = 1500) -> str:
     
     # Truncate if over budget
     if estimate_tokens(briefing) > max_tokens:
-        briefing = briefing[:max_tokens * 4]
+        briefing = briefing[:int(max_tokens * 3.5)]  # 3.5 for safety margin
     
     return briefing
 

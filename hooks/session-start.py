@@ -50,9 +50,7 @@ except ImportError:
 
 
 STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
-DAEMON_PORT = int(os.environ.get("DAEMON_PORT", "7523")) if "os" in dir() else 7523
 
-import os
 DAEMON_PORT = int(os.environ.get("DAEMON_PORT", "7523"))
 
 # Flags that persist across compaction

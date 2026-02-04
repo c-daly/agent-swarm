@@ -4,18 +4,20 @@
 Native tool blocking (Read, Write, Edit, Glob, Grep, etc.) is handled
 by permissions.deny in .claude/settings.json. This hook only handles:
 
-1. Bash filtering: allow mcp-call commands, block raw file I/O
+1. Bash filtering for subagents: only mcp-call commands allowed
 2. Subagent sandboxing: force subagents through Bash(mcp-call) only
 
-Main agents use mcp__router__* directly (allowed by settings).
-Subagents use Bash(mcp-call ...) which routes through the router.
+Main agents can use Bash freely (for git, pytest, etc.).
+Subagents must use Bash(mcp-call ...) which routes through the router.
 Both paths enforce permissions via the router's permissions.yaml.
 """
 import json
 import sys
+from pathlib import Path
 
-
-MCP_CALL_PATH = "/home/fearsidhe/.claude/plugins/agent-swarm/bin/mcp-call"
+# Dynamically resolve mcp-call path relative to this script
+PLUGIN_ROOT = Path(__file__).parent.parent
+MCP_CALL_PATH = str(PLUGIN_ROOT / "bin" / "mcp-call")
 
 # Claude Code system/meta tools — infrastructure, not file/code operations.
 SYSTEM_TOOLS = {
@@ -60,30 +62,36 @@ def main():
     agent_id = input_data.get("agentId") or input_data.get("agent_id")
     is_subagent = bool(agent_id)
 
-    # --- Bash filtering (both main agent and subagents) ---
-    if tool_name == "Bash":
-        cmd = tool_input.get("command", "").strip()
-        if cmd.startswith("mcp") or cmd.startswith(MCP_CALL_PATH):
-            print(json.dumps(allow("mcp-call")))
-            return
-        block(
-            f"[BLOCKED] Bash blocked — only mcp-call commands allowed. "
-            f"Use mcp__router__native__bash (main agent) or mcp-call via Bash (subagent)."
-        )
-        return
-
-    # --- Subagent sandboxing ---
+    # --- Subagent handling ---
     if is_subagent:
+        # Subagents can only use system tools or Bash(mcp-call)
         if tool_name in SYSTEM_TOOLS:
             print(json.dumps(allow("Subagent system tool")))
             return
+        
+        if tool_name == "Bash":
+            cmd = tool_input.get("command", "").strip()
+            # Allow mcp-call commands (check both short and full path)
+            if cmd.startswith("mcp-call") or cmd.startswith(MCP_CALL_PATH):
+                print(json.dumps(allow("Subagent mcp-call")))
+                return
+            # Block all other Bash commands for subagents
+            block(
+                f"[SUBAGENT BLOCKED] Bash command not allowed. "
+                f"Use mcp-call: mcp-call <tool> '<json_args>'"
+            )
+            return
+        
+        # Block all other tools for subagents
         block(
             f"[SUBAGENT BLOCKED] '{tool_name}' not allowed for subagents. "
             f"Use mcp-call via Bash: mcp-call <tool> '<json_args>'"
         )
         return
 
-    # --- Main agent: everything else allowed (config deny handles native tools) ---
+    # --- Main agent: allow everything ---
+    # Native tool blocking is handled by settings.json deny list
+    # Bash commands are allowed (git, pytest, etc.)
     print(json.dumps(allow()))
 
 
