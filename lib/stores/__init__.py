@@ -14,7 +14,6 @@ from .validation import (
     validate_day_summary,
     validate_tool_call,
 )
-from .duckdb_store import DuckDBStore
 
 __all__ = [
     "AnalyticsStore",
@@ -28,5 +27,4 @@ __all__ = [
     "ValidationResult",
     "validate_day_summary",
     "validate_tool_call",
-    "DuckDBStore",
 ]

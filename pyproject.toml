@@ -9,6 +9,7 @@ package-mode = false
 python = "^3.10"
 requests = "^2.31.0"
 duckdb = "^1.4.3"
+pyyaml = "^6.0.3"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"

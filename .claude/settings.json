@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(claude mcp:*)",
+      "mcp__plugin_serena_serena__activate_project",
+      "mcp__filesystem__directory_tree",
+      "mcp__filesystem__read_text_file",
+      "mcp__router__*",
+      "mcp__router__native__glob",
+      "mcp__router__native__grep",
+      "mcp__router__native__bash",
+      "mcp__router__native__read_file",
+      "mcp__router__native__write_file",
+      "mcp__router__native__edit_file",
+      "mcp__router__serena__*",
+      "mcp__plugin_agent-swarm_router__native__glob",
+      "mcp__plugin_agent-swarm_router__native__grep",
+      "mcp__plugin_agent-swarm_router__native__bash",
+      "mcp__plugin_agent-swarm_router__native__read_file",
+      "mcp__plugin_agent-swarm_router__native__write_file",
+      "mcp__plugin_agent-swarm_router__native__edit_file",
+      "mcp__plugin_agent-swarm_router__router__ping",
+      "mcp__plugin_agent-swarm_router__router__telemetry"
+    ],
+    "deny": [
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch",
+      "NotebookEdit",
+      "Task"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "router"
+  ]
+}

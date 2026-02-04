@@ -15,7 +15,8 @@ __pycache__/
 
 # Session artifacts
 HANDOFF.md
-.claude/
+.claude/*
+!.claude/settings.json
 .logs/
 .worktrees/
 
