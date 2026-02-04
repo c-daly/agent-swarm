@@ -15,8 +15,9 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
-# Allow running as script from any directory
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Ensure the repo root is on sys.path so "from dashboard.providers..." works
+# regardless of how the server is launched.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 class DashboardHandler(SimpleHTTPRequestHandler):
