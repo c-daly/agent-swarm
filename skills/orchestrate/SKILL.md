@@ -1,65 +1,96 @@
 ---
 name: orchestrate
-description: Main workflow orchestrator for complex tasks. Coordinates phase transitions, enforces checkpoints based on config, manages subagent delegation. Invoke for [COMPLEX] tasks.
+description: Workflow orchestrator. Builds task queue from input, dispatches subagents, manages completion.
 user_invocable: false
 ---
 
-# Workflow Orchestrator
+# Orchestrate
 
-**State CLI:** `python3 scripts/state.py <command>`
-- `transition <phase>` - change phase
-- `checkpoint <phase> <on|off>` - configure checkpoint
-- `autopilot <on|off|toggle>` - bypass checkpoints
-
-## Phase Machine
+## Phases
 
 ```
-INTAKE -> [RESEARCH] -> [EXPLORE] -> DESIGN -> IMPLEMENT -> REVIEW -> [DEBUG] -> GIT -> DONE
+[intake] → [design] → orchestrate
 ```
 
-Bracketed phases optional. Checkpoints per `config/workflow.json`.
-At checkpoint: present summary, use AskUserQuestion, record approval in `.state/session.json`.
+- `intake` (optional): gather missing info. Skip if input sufficient.
+- `design` (optional): plan doc. Only from intake.
+- `orchestrate`: default entry. Build queue → dispatch → PRs. Can → intake if needed.
 
-## Phase -> Skill Mapping
+## Task Queue
 
-When entering a phase, invoke the corresponding skill for detailed instructions:
+Single ordered list in workflow state. Orchestrator owns exclusively.
 
-| Phase | Skill to invoke | Agent | Model |
-|-------|----------------|-------|-------|
-| INTAKE | `/ctx` | - | - |
-| RESEARCH | `/spawn` researcher | researcher | haiku |
-| EXPLORE | `/spawn` explorer | explorer | haiku |
-| DESIGN | `/spawn` architect | architect | sonnet |
-| IMPLEMENT | `/iterate` or `/implement` | implementer | opus |
-| REVIEW | `/spawn` reviewer | reviewer | sonnet |
-| DEBUG | `/debug` | debugger | sonnet |
-| GIT | `/spawn` git-agent | git-agent | haiku |
+### Building
 
-Do NOT load all phase skills upfront. Invoke only when entering that phase.
+Read all input (specs, requirements, code) → produce complete work orders.
 
-## Subagent Spawning
+Principle: **orchestrator decides, subagents execute.**
 
-Token budgets (prevent runaways):
+Bar: can subagent execute with ONLY this description? No arch decisions, no discovery. Must choose between approaches → task needs more detail.
 
-| Agent | Budget |
-|-------|--------|
-| explorer | 50K |
-| researcher | 150K |
-| architect | 120K |
-| implementer | 100K |
-| reviewer | 80K |
-| debugger | 150K |
-| git-agent | 30K |
+Requirements:
+- **Actionable**: exact interfaces, behavior, edge cases
+- **Scoped**: one testable increment per task
+- **Opinionated**: orchestrator makes arch calls (data structures, APIs, layout)
+- **Self-contained**: no external reference needed
 
-Always include `token_budget` in Task tool calls.
+Also:
+- shared code → extract as shared tasks (don't let N agents reinvent)
+- one spec → multiple focused tasks (not 1:1)
+- cross-task contracts: "task B imports X from task A's module"
 
-## Tool Priority
-1. Serena -> code analysis
-2. Context7 -> docs
-3. Batch scripts -> >=3 ops
-4. MCP tools -> single ops
-5. Read/Bash -> last resort
+### Schema
 
-## Enforcement
-Hook `combined-enforcement.py` enforces phase restrictions, token limits, subagent requirements, git safety.
-Violations blocked with guidance.
+`workflow__set_value(wf_id, "task_queue", queue)`
+
+```json
+[
+  {"id": "00a", "group": "shared", "depends_on": [], "title": "...", "description": "...", "status": "pending"},
+  {"id": "01a", "group": "01-feature", "depends_on": ["00a"], "title": "...", "description": "...", "status": "pending"}
+]
+```
+
+| Field | Purpose |
+|-------|---------|
+| id | unique identifier |
+| group | PR boundary (all tasks in group → one PR) |
+| depends_on | task IDs that must complete first |
+| title | short label |
+| description | complete work order |
+| status | pending \| in_progress \| complete \| failed |
+
+Pre-sorted: deps before dependents, parallel tasks adjacent. Dequeue from front.
+
+## Dispatch
+
+```
+while ¬stop_condition:
+  task ← next pending where ∀(depends_on) == complete
+  task found → launch subagent(iterate, task)
+  on return → mark complete, check unblocked
+  group_complete → create PR
+```
+
+### Supervision
+- dead/stuck agent → mark failed → reset pending → reassign next slot
+- no special retry; queue is the mechanism
+
+### PR Review Feedback
+- monitor PRs for comments
+- each comment → new task (same group, depends on original)
+- append to queue → dispatch when slot opens
+
+## Stop Condition
+
+ALL true simultaneously:
+1. queue empty (all complete)
+2. no agents in flight
+3. no unaddressed PR review comments
+4. working tree clean
+5. every group has PR
+
+## Subagent Model
+
+Each task runs iterate: `test_writing → implement → test → review(commit+push)`
+
+Review gate inside subagent. Result returned = verified + committed + pushed. No re-review.
