@@ -16,10 +16,11 @@ from pathlib import Path
 
 DAEMON_PORT = int(os.environ.get("DAEMON_PORT", "7523"))
 ROOT = Path(__file__).resolve().parent.parent
+CALLER_ID = os.environ.get("AGENT_SWARM_CALLER_ID")
 
 MAX_RECONNECT_ATTEMPTS = 5
 RECONNECT_DELAY = 0.5
-RECV_TIMEOUT = 90.0
+RECV_TIMEOUT = 600.0
 
 _inflight_lock = threading.Lock()
 _inflight: dict[int | str, bool] = {}
@@ -208,6 +209,16 @@ def main():
 
   try:
       for line in sys.stdin:
+          # Inject _caller into tools/call arguments so the daemon knows
+          # which SDK agent is making the request.
+          if CALLER_ID:
+              try:
+                  msg = json.loads(line)
+                  if msg.get("method") == "tools/call":
+                      msg.setdefault("params", {}).setdefault("arguments", {})["_caller"] = CALLER_ID
+                      line = json.dumps(msg) + "\n"
+              except (json.JSONDecodeError, KeyError, TypeError):
+                  pass
           _track_request(line)
           if not connected.is_set():
               connected.wait(timeout=5.0)
