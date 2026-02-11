@@ -23,7 +23,8 @@ log = logging.getLogger(__name__)
 
 MAX_CONNECTIONS = 64
 MAX_MESSAGE_SIZE = 10 * 1024 * 1024  # 10 MB
-CONNECTION_TIMEOUT = 60.0
+KEEPALIVE_INTERVAL = 60.0   # recv timeout / keepalive check interval
+MAX_IDLE_TIME = 1800.0      # Drop connection after 30 min with no data
 
 _MCP_VERSION = "2024-11-05"
 _SERVER_INFO = {"name": "agent-swarm", "version": "2.0.0"}
@@ -93,17 +94,30 @@ class Router:
 
     def _handle_connection(self, client: socket.socket) -> None:
         """Handle a single client connection."""
-        client.settimeout(CONNECTION_TIMEOUT)
+        client.settimeout(KEEPALIVE_INTERVAL)
+        # Enable TCP keepalive to detect dead peers
+        client.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        try:
+            client.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
+            client.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+            client.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 5)
+        except (AttributeError, OSError):
+            pass  # Not all platforms support these
         buf = b""
+        last_activity = time.monotonic()
         try:
             while self._running:
                 try:
                     data = client.recv(4096)
                 except socket.timeout:
-                    break
+                    if time.monotonic() - last_activity > MAX_IDLE_TIME:
+                        log.info("Client idle for %ds, disconnecting", int(MAX_IDLE_TIME))
+                        break
+                    continue  # Keepalive - just loop back
                 if not data:
                     break
 
+                last_activity = time.monotonic()
                 buf += data
                 if len(buf) > MAX_MESSAGE_SIZE:
                     self._send_error(client, None, -32600, "Message too large")
