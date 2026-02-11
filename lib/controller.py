@@ -591,15 +591,9 @@ class Controller:
         # 3. Assemble briefing context
         # Extract role from subagent_type (e.g., "agent-swarm:implementer" -> "implementer")
         role = subagent_type.split(":")[-1] if ":" in subagent_type else subagent_type
-        # When dispatching from orchestrate, subagents run iterate workflow
-        with self._state_lock:
-            current_phase = self._workflow_state.get("iterate", {}).get("phase")
-            if not current_phase:
-                for ws in self._workflow_state.values():
-                    if ws.get("phase") == "orchestrate":
-                        current_phase = "orchestrate"
-                        break
-        wf_override = "iterate" if current_phase == "orchestrate" else None
+        # Implementer subagents always get the iterate workflow protocol
+        # (includes review phase with commit instructions)
+        wf_override = "iterate" if role == "implementer" else None
         briefing = assemble_subagent_briefing(role, workflow_override=wf_override)
         # Only add protocol header if not already present
         if "SUBAGENT OPERATING PROTOCOL" not in prompt:
