@@ -1,0 +1,51 @@
+name: cs-assignments
+base_branch: main
+max_agents: 3
+max_retries: 2
+tasks:
+  - name: skiplist
+    module_path: src/skiplist.py
+    test_path: tests/test_skiplist.py
+    description: >
+      Probabilistic skip list with O(log n) search/insert/delete.
+      Methods: insert, delete, search, range_query, __len__, __contains__, __iter__.
+      Keys are integers, values are any type. Level generation uses geometric
+      distribution with parameter p. See assignments/01-skiplist/README.md for full spec.
+    min_tests: 12
+
+  - name: autograd
+    module_path: src/autograd.py
+    test_path: tests/test_autograd.py
+    description: >
+      Scalar-valued reverse-mode autodiff engine. Value class with __add__, __mul__,
+      __pow__, __neg__, __sub__, __truediv__, relu, backward. Build Neuron, Layer,
+      MLP on top. See assignments/02-autograd/README.md for full spec.
+    min_tests: 15
+
+  - name: compiler
+    module_path: src/compiler.py
+    test_path: tests/test_compiler.py
+    description: >
+      Bytecode compiler and stack VM for a simple imperative language.
+      Lexer, parser, compiler, and VM components. Supports let, if/else, while,
+      print, fn, return. See assignments/03-compiler/README.md for full spec.
+    min_tests: 15
+
+  - name: allocator
+    module_path: src/allocator.py
+    test_path: tests/test_allocator.py
+    description: >
+      Buddy allocator and first-fit allocator on simulated memory pool.
+      Abstract Allocator base, BuddyAllocator, FirstFitAllocator, AllocatorStats.
+      See assignments/04-allocator/README.md for full spec.
+    min_tests: 12
+
+  - name: vector_clock
+    module_path: src/vector_clock.py
+    test_path: tests/test_vector_clock.py
+    description: >
+      Vector clocks for causal ordering in distributed system simulation.
+      VectorClock with increment, merge, happens_before, is_concurrent.
+      DistributedSystem with send, receive, local_event, get_causal_order.
+      See assignments/05-vector-clocks/README.md for full spec.
+    min_tests: 12

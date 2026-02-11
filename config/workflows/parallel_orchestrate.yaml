@@ -1,0 +1,86 @@
+name: parallel_orchestrate
+description: "Spawn N independent subagents from a YAML manifest with TDD discipline and git branch isolation"
+initial_phase: load_manifest
+terminal_phase: done
+max_agents: 3
+
+phases:
+  - name: load_manifest
+    allowed_tool_categories:
+      - FILE_READ
+      - FILE_SEARCH
+    blocked_tools: []
+    eligible_agents: []
+    checkpoint: false
+
+  - name: spawn_agents
+    allowed_tool_categories:
+      - FILE_READ
+      - FILE_SEARCH
+      - SUBAGENT
+      - SHELL_SAFE
+    blocked_tools: []
+    eligible_agents:
+      - implementer
+    checkpoint: false
+
+  - name: monitor
+    allowed_tool_categories:
+      - FILE_READ
+      - FILE_SEARCH
+      - SUBAGENT
+      - SHELL_SAFE
+      - USER_INTERACTION
+    blocked_tools:
+      - native__write_file
+      - serena__create_text_file
+    eligible_agents: []
+    checkpoint: true
+
+  - name: merge
+    allowed_tool_categories:
+      - FILE_READ
+      - SHELL_SAFE
+    blocked_tools:
+      - native__write_file
+      - serena__create_text_file
+    eligible_agents: []
+    checkpoint: true
+    gateway_conditions:
+      - all_branches_merged
+
+  - name: verify
+    allowed_tool_categories:
+      - FILE_READ
+      - SHELL_SAFE
+    blocked_tools:
+      - native__write_file
+      - serena__create_text_file
+    eligible_agents: []
+    checkpoint: true
+    gateway_conditions:
+      - full_suite_passes
+
+  - name: done
+    allowed_tool_categories: []
+    blocked_tools: []
+    eligible_agents: []
+    checkpoint: false
+
+transitions:
+  load_manifest:
+    - spawn_agents
+  spawn_agents:
+    - monitor
+  monitor:
+    - merge
+    - spawn_agents  # retry: re-spawn failed agents
+  merge:
+    - verify
+    - monitor      # kickback: merge conflict requires re-work
+  verify:
+    - done
+    - merge        # kickback: suite fails after merge
+
+# Subagent internal phases (for reference, not enforced by orchestrator)
+# branch_create -> test_writing -> implement -> test -> commit -> done
