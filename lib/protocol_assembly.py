@@ -78,16 +78,24 @@ Tools via MCP router: `mcp__router__<server>__<tool>`
 SUBAGENT_PROTOCOL = """## Subagent Protocol
 
 ### Tool Access
-Tools via mcp-call (independent process):
+Use `mcp-call` via Bash. Two forms:
 
-| Operation | Command |
-|-----------|---------|
-| Read file | `mcp-call native__read_file path=/path` |
-| Search | `mcp-call native__grep pattern="..." path=/dir` |
-| Find files | `mcp-call native__glob pattern="**/*.py"` |
-| Run command | `mcp-call native__bash command="..."` |
-| Find symbols | `mcp-call serena__find_symbol name=X` |
-| Edit code | `mcp-call serena__replace_content ...` |
+**Shell aliases** (raw args, routed to bash): pytest, ruff, mypy, black, git, gh, python, python3, poetry
+```
+mcp-call pytest -v tests/
+mcp-call git status
+```
+
+**MCP tools** (JSON args):
+```
+mcp-call native__read_file '{"file_path": "/path"}'
+mcp-call native__write_file '{"file_path": "/path", "content": "..."}'
+mcp-call native__edit_file '{"file_path": "/path", "old_string": "...", "new_string": "..."}'
+mcp-call native__grep '{"pattern": "...", "path": "/dir"}'
+mcp-call native__glob '{"pattern": "**/*.py", "path": "/dir"}'
+mcp-call native__bash '{"command": "..."}'
+mcp-call serena__find_symbol '{"name_path_pattern": "X"}'
+```
 
 ### Long-Running Commands
 MCP calls timeout at ~30s. For longer commands:
@@ -160,14 +168,24 @@ DEFAULT_ROLE = """## Agent Role
 
 WORKFLOW_PROTOCOLS = {
     "iterate": """## Iterate Workflow
-- TDD discipline: tests FIRST, then implementation
-- Phases: test_writing → implement → test → review
-- Kick-back on failures
+Phases: implement → test → review
+
+1. **implement**: Write code to make tests pass
+2. **test**: Run all tests via `mcp-call pytest -v <test_file>`
+3. **review**: If all tests pass, commit:
+   ```
+   mcp-call git add <files you created or modified>
+   mcp-call git commit -m "<group>: <descriptive message>"
+   ```
+   Do NOT push — orchestrator handles that.
+   If tests fail, go back to implement.
 """,
-    "orchestrate": """## Orchestrate Workflow
-- Spawn subagents for all work
+    "orchestrate": """## Orchestrate
+Phases: [intake] → [design] → orchestrate
+- Build task queue from input, dispatch subagents, manage completion
+- Orchestrator decides, subagents execute
 - No direct implementation
-- Coordinate and monitor
+- Task queue in workflow state, orchestrator owns exclusively
 """,
 }
 
@@ -177,30 +195,43 @@ WORKFLOW_PROTOCOLS = {
 # =============================================================================
 
 PHASE_PROTOCOLS = {
+    "intake": """## Phase: Intake
+- Gather missing info, clarify requirements
+- → design when sufficient
+""",
+    "design": """## Phase: Design
+- Create plan doc from intake findings
+- → orchestrate when complete
+""",
     "orchestrate": """## Phase: Orchestrate
-- Spawn subagents for all work
-- No direct implementation
-- Use TaskOutput(block=false) for monitoring
+- Read input → build task queue → dispatch loop
+- Dequeue pending tasks, launch subagents (iterate)
+- On return: mark complete, check unblocked, group complete → PR
+- Monitor: dead agents → reset task; PR comments → new tasks
+- Stop: queue empty ∧ no agents ∧ no PR comments ∧ clean tree ∧ all groups have PR
 """,
     "test_writing": """## Phase: Test Writing
 - Write tests FIRST (TDD)
 - Cover edge cases
 - No implementation yet
+- → implement
 """,
     "implement": """## Phase: Implement
 - Make tests pass
 - Follow existing patterns
 - Minimal changes only
+- → test
 """,
     "test": """## Phase: Test
 - Run pytest, ruff, coverage
-- No editing allowed
-- Report results only
+- Call adversary_gate tool (autonomous: analyzes, writes adversarial tests, runs them)
+- No manual editing — adversary writes directly
+- pass + confident → review | adversary fail → implement | pass + weak → test_writing
 """,
     "review": """## Phase: Review
-- Check for issues
-- Commit if clean
-- Report problems
+- Check quality, conventions, correctness
+- clean → commit + push → done
+- issues → implement
 """,
 }
 
@@ -282,22 +313,31 @@ def assemble_agent_briefing() -> str:
     return "\n".join(parts)
 
 
-def assemble_subagent_briefing(role: str, max_tokens: int = 1500) -> str:
+def assemble_subagent_briefing(
+    role: str,
+    max_tokens: int = 1500,
+    workflow_override: Optional[str] = None,
+    phase_override: Optional[str] = None,
+) -> str:
     """Assemble complete briefing for subagent.
-    
+
     Queries controller for workflow/phase state and builds
     appropriate briefing including role-specific rules.
-    
+
     Args:
         role: Subagent role (implementer, explorer, etc.)
         max_tokens: Maximum token budget for briefing.
-    
+        workflow_override: Override global workflow (e.g. "iterate" for orchestrate-dispatched tasks).
+        phase_override: Override global phase.
+
     Returns:
         Complete briefing for subagent within token budget.
     """
     parts = [UNIVERSAL_PROTOCOL, SUBAGENT_PROTOCOL, get_role_protocol(role)]
-    
+
     workflow, phase = get_workflow_state()
+    workflow = workflow_override or workflow
+    phase = phase_override or phase
     
     if workflow:
         parts.append(get_workflow_protocol(workflow))

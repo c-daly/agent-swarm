@@ -35,13 +35,13 @@ ALLOWED_BACKENDS = {
     "context7__",
     "playwright__",
     "workflow__",
+    "native__",
 }
 
 # Explicitly blocked tools even within allowed backends
 BLOCKED_TOOLS = {
     "serena__execute_shell_command",  # Shell execution
     "playwright__browser_run_code",   # Code execution in browser
-    "native__bash",                   # Direct bash
 }
 
 # Shell command aliases - route these to native__bash
