@@ -96,16 +96,6 @@ def is_tool_blocked(tool_name: str) -> bool:
     """Check if tool is explicitly blocked (shell execution vectors)."""
     return tool_name in BLOCKED_TOOLS
 
-    if ALLOWED_BACKENDS is None:
-        return True
-
-    for prefix in ALLOWED_BACKENDS:
-        if tool_name.startswith(prefix):
-            return True
-
-    return False
-
-
 def main():
     # Parse flags (--cwd, --caller-id)
     cwd = None
