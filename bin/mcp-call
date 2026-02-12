@@ -48,11 +48,12 @@ ALLOWED_BACKENDS = {
     "playwright__",
     "workflow__",
     "native__",
+    "router__",
 }
 
 # Explicitly blocked tools (shell execution, code injection vectors)
 BLOCKED_TOOLS = {
-    "serena__execute_shell_command",  # Shell execution
+    "serena__execute_shell_command",  # Shell execution - bypasses bash permissions
     "playwright__browser_run_code",   # Code execution in browser
 }
 
@@ -94,6 +95,15 @@ def parse_args(arg_string: str) -> dict:
 def is_tool_blocked(tool_name: str) -> bool:
     """Check if tool is explicitly blocked (shell execution vectors)."""
     return tool_name in BLOCKED_TOOLS
+
+    if ALLOWED_BACKENDS is None:
+        return True
+
+    for prefix in ALLOWED_BACKENDS:
+        if tool_name.startswith(prefix):
+            return True
+
+    return False
 
 
 def main():
