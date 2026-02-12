@@ -428,18 +428,21 @@ class TestToolBlockingEndToEnd:
         engine.advance()
         assert engine.is_tool_allowed("Edit")[0] is True
 
-    def test_no_workflow_blocks_file_writes(self, mock_workflow_client):
-        """Without active workflow, file write tools should be blocked."""
+    def test_no_workflow_allows_file_writes(self, mock_workflow_client):
+        """Without active workflow, file writes should still be allowed.
+
+        Agents can operate outside workflows based on their registration
+        and role permissions, not solely on workflow presence.
+        """
         store = PermissionStore(
             workflow_active=False,
         )
 
         allowed, reason = store.is_tool_allowed("Edit")
-        assert allowed is False
-        assert "no active workflow" in reason.lower()
+        assert allowed is True
 
         allowed, reason = store.is_tool_allowed("Write")
-        assert allowed is False
+        assert allowed is True
 
     def test_protected_paths_always_blocked(
         self, simple_workflow_definition, mock_workflow_client
