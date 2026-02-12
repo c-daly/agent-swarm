@@ -197,7 +197,9 @@ class TestFullStack:
                 "arguments": {"workflow_id": "test-wf", "initial_state": {"phase": "init"}},
             }, msg_id=2)
             result = json.loads(resp["result"]["content"][0]["text"])
-            assert result["phase"] == "init"
+            # Phase is controller-managed from workflow config, not initial_state.
+            # "test-wf" has no config, so phase is empty.
+            assert result["phase"] == ""
 
             # Set value
             resp = _send_rpc(sock, "tools/call", {
