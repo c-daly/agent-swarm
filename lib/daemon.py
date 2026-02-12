@@ -13,7 +13,10 @@ import logging
 import signal
 import socket
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
+
+import yaml
 
 DEFAULT_PORT = 7523
 _BASE_DIR = Path(__file__).parent.parent
@@ -22,6 +25,51 @@ LOG_FILE = LOG_DIR / "daemon.log"
 LOCK_FILE = _BASE_DIR / ".daemon.lock"
 CONFIG_DIR = _BASE_DIR / "config"
 DATA_DIR = _BASE_DIR / "data"
+
+
+@dataclass(frozen=True)
+class PhaseConfig:
+    """Per-phase configuration loaded from YAML."""
+    checkpoint: bool = False
+
+
+@dataclass(frozen=True)
+class WorkflowConfig:
+    """Workflow configuration loaded from YAML."""
+    initial_phase: str
+    terminal_phase: str
+    phases: dict[str, PhaseConfig] = field(default_factory=dict)
+    transitions: dict[str, set[str]] = field(default_factory=dict)
+
+
+def load_workflow_configs(config_dir: Path) -> dict[str, WorkflowConfig]:
+    """Load workflow configs from config/workflows/*.yaml.
+
+    Returns dict keyed by workflow name -> WorkflowConfig.
+    """
+    workflows_dir = config_dir / "workflows"
+    if not workflows_dir.is_dir():
+        return {}
+    configs: dict[str, WorkflowConfig] = {}
+    for path in sorted(workflows_dir.glob("*.yaml")):
+        with open(path) as f:
+            data = yaml.safe_load(f)
+        if not isinstance(data, dict) or "name" not in data:
+            continue
+        name = data["name"]
+        phases = {}
+        for p in data.get("phases", []):
+            phases[p["name"]] = PhaseConfig(checkpoint=p.get("checkpoint", False))
+        transitions = {}
+        for src, targets in data.get("transitions", {}).items():
+            transitions[src] = set(targets) if isinstance(targets, list) else {targets}
+        configs[name] = WorkflowConfig(
+            initial_phase=data.get("initial_phase", ""),
+            terminal_phase=data.get("terminal_phase", ""),
+            phases=phases,
+            transitions=transitions,
+        )
+    return configs
 
 
 def main(port: int = DEFAULT_PORT) -> None:
@@ -54,7 +102,10 @@ def main(port: int = DEFAULT_PORT) -> None:
     from lib.controller import Controller
     from lib.router import Router
 
-    controller = Controller(config_dir=CONFIG_DIR, data_dir=DATA_DIR)
+    workflow_configs = load_workflow_configs(CONFIG_DIR)
+    log.info("Loaded workflow configs: %s", list(workflow_configs.keys()))
+    controller = Controller(config_dir=CONFIG_DIR, data_dir=DATA_DIR,
+                            workflow_configs=workflow_configs)
     router = Router(port=port, controller=controller)
 
     def handle_signal(signum: int, frame: object) -> None:

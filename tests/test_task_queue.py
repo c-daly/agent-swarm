@@ -546,7 +546,6 @@ class TestSaveQueue:
 
     def test_save_queue_creates_queue_key(self, tmp_path, monkeypatch):
         """save_queue creates 'queue' key in session state."""
-        from decomposer import TaskPriority  # noqa: E402
         from iterate_state import save_queue, TaskQueue, Task, TaskStatus, TaskSource  # noqa: E402
 
         state_dir = tmp_path / ".state"
@@ -561,7 +560,7 @@ class TestSaveQueue:
             id="task-001",
             description="Test task",
             status=TaskStatus.PENDING,
-            priority=TaskPriority.ORIGINAL,
+            priority=PRIORITY_ORIGINAL,
             source=TaskSource.ORIGINAL,
             pr_id="pr-001",
             phase="test_writing",
@@ -598,7 +597,6 @@ class TestSaveQueue:
 
     def test_save_queue_serializes_prs(self, tmp_path, monkeypatch):
         """save_queue includes PR state."""
-        from decomposer import TaskPriority  # noqa: E402
         from iterate_state import save_queue, TaskQueue, Task, TaskStatus, TaskSource  # noqa: E402
 
         state_dir = tmp_path / ".state"
@@ -613,7 +611,7 @@ class TestSaveQueue:
             id="task-001",
             description="Test",
             status=TaskStatus.PENDING,
-            priority=TaskPriority.ORIGINAL,
+            priority=PRIORITY_ORIGINAL,
             source=TaskSource.ORIGINAL,
             pr_id="pr-001",
             phase="test_writing",
@@ -808,7 +806,6 @@ class TestLoadQueue:
 
     def test_save_load_roundtrip(self, tmp_path, monkeypatch):
         """save then load preserves queue state."""
-        from decomposer import TaskPriority  # noqa: E402
         from iterate_state import save_queue, load_queue, TaskQueue, Task, TaskStatus, TaskSource  # noqa: E402
 
         state_dir = tmp_path / ".state"
@@ -824,7 +821,7 @@ class TestLoadQueue:
             id="task-001",
             description="First task",
             status=TaskStatus.PENDING,
-            priority=TaskPriority.ORIGINAL,
+            priority=PRIORITY_ORIGINAL,
             source=TaskSource.ORIGINAL,
             pr_id="pr-001",
             phase="test_writing",
@@ -945,7 +942,6 @@ class TestQueueListCLI:
     def test_queue_list_shows_tasks(self, tmp_path, monkeypatch, capsys):
         """queue list displays tasks."""
         from iterate_state import main, save_queue, TaskQueue, Task, TaskStatus, TaskSource  # noqa: E402
-        from decomposer import TaskPriority  # noqa: E402
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()
@@ -961,7 +957,7 @@ class TestQueueListCLI:
             id="task-001",
             description="First task",
             status=TaskStatus.PENDING,
-            priority=TaskPriority.ORIGINAL,
+            priority=PRIORITY_ORIGINAL,
             source=TaskSource.ORIGINAL,
             pr_id="pr-001",
             phase="test_writing",
@@ -981,7 +977,6 @@ class TestQueueListCLI:
     def test_queue_list_filters_by_status(self, tmp_path, monkeypatch, capsys):
         """queue list --status filters tasks."""
         from iterate_state import main, save_queue, TaskQueue, Task, TaskStatus, TaskSource  # noqa: E402
-        from decomposer import TaskPriority  # noqa: E402
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()
@@ -996,7 +991,7 @@ class TestQueueListCLI:
             id="task-pending",
             description="Pending task",
             status=TaskStatus.PENDING,
-            priority=TaskPriority.ORIGINAL,
+            priority=PRIORITY_ORIGINAL,
             source=TaskSource.ORIGINAL,
             pr_id="pr-001",
             phase="test_writing",
@@ -1008,7 +1003,7 @@ class TestQueueListCLI:
             id="task-running",
             description="Running task",
             status=TaskStatus.RUNNING,
-            priority=TaskPriority.ORIGINAL,
+            priority=PRIORITY_ORIGINAL,
             source=TaskSource.ORIGINAL,
             pr_id="pr-001",
             phase="implement",
@@ -1032,7 +1027,6 @@ class TestQueueShowCLI:
     def test_queue_show_displays_task(self, tmp_path, monkeypatch, capsys):
         """queue show displays task details."""
         from iterate_state import main, save_queue, TaskQueue, Task, TaskStatus, TaskSource  # noqa: E402
-        from decomposer import TaskPriority  # noqa: E402
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()
@@ -1047,7 +1041,7 @@ class TestQueueShowCLI:
             id="task-001",
             description="Detailed task",
             status=TaskStatus.PENDING,
-            priority=TaskPriority.ORIGINAL,
+            priority=PRIORITY_ORIGINAL,
             source=TaskSource.ORIGINAL,
             pr_id="pr-001",
             phase="test_writing",
@@ -1072,7 +1066,6 @@ class TestQueueRemoveCLI:
     def test_queue_remove_removes_pending_task(self, tmp_path, monkeypatch):
         """queue remove removes a pending task."""
         from iterate_state import main, save_queue, load_queue, TaskQueue, Task, TaskStatus, TaskSource  # noqa: E402
-        from decomposer import TaskPriority  # noqa: E402
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()
@@ -1087,7 +1080,7 @@ class TestQueueRemoveCLI:
             id="task-001",
             description="To remove",
             status=TaskStatus.PENDING,
-            priority=TaskPriority.ORIGINAL,
+            priority=PRIORITY_ORIGINAL,
             source=TaskSource.ORIGINAL,
             pr_id="default",
             phase="test_writing",
@@ -1110,7 +1103,6 @@ class TestQueueEligibleCLI:
     def test_queue_eligible_shows_eligible_tasks(self, tmp_path, monkeypatch, capsys):
         """queue eligible shows tasks ready for work."""
         from iterate_state import main, save_queue, TaskQueue, Task, TaskStatus, TaskSource  # noqa: E402
-        from decomposer import TaskPriority  # noqa: E402
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()
@@ -1125,7 +1117,7 @@ class TestQueueEligibleCLI:
             id="task-eligible",
             description="Eligible",
             status=TaskStatus.PENDING,
-            priority=TaskPriority.ORIGINAL,
+            priority=PRIORITY_ORIGINAL,
             source=TaskSource.ORIGINAL,
             pr_id="pr-001",
             phase="test_writing",
@@ -1148,7 +1140,6 @@ class TestPRListCLI:
     def test_pr_list_shows_prs(self, tmp_path, monkeypatch, capsys):
         """pr list shows all PRs."""
         from iterate_state import main, save_queue, TaskQueue, Task, TaskStatus, TaskSource  # noqa: E402
-        from decomposer import TaskPriority  # noqa: E402
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()
@@ -1163,7 +1154,7 @@ class TestPRListCLI:
             id="task-001",
             description="Task",
             status=TaskStatus.PENDING,
-            priority=TaskPriority.ORIGINAL,
+            priority=PRIORITY_ORIGINAL,
             source=TaskSource.ORIGINAL,
             pr_id="pr-001",
             phase="test_writing",
@@ -1186,7 +1177,6 @@ class TestPRShowCLI:
     def test_pr_show_displays_pr(self, tmp_path, monkeypatch, capsys):
         """pr show displays PR details."""
         from iterate_state import main, save_queue, TaskQueue, Task, TaskStatus, TaskSource  # noqa: E402
-        from decomposer import TaskPriority  # noqa: E402
 
         state_dir = tmp_path / ".state"
         state_dir.mkdir()
@@ -1201,7 +1191,7 @@ class TestPRShowCLI:
             id="task-001",
             description="Task",
             status=TaskStatus.PENDING,
-            priority=TaskPriority.ORIGINAL,
+            priority=PRIORITY_ORIGINAL,
             source=TaskSource.ORIGINAL,
             pr_id="pr-001",
             phase="test_writing",

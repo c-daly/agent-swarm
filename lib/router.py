@@ -399,6 +399,31 @@ class Router:
                 },
             },
             {
+                "name": "native__web_fetch",
+                "description": "Fetch content from a URL and return it.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string", "description": "The URL to fetch"},
+                        "timeout": {"type": "integer", "description": "Timeout in seconds (default: 30, max: 120)"},
+                        "headers": {"type": "object", "description": "Optional HTTP headers"},
+                    },
+                    "required": ["url"],
+                },
+            },
+            {
+                "name": "native__web_search",
+                "description": "Search the web and return results.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "The search query"},
+                        "max_results": {"type": "integer", "description": "Maximum results to return (default: 10, max: 20)"},
+                    },
+                    "required": ["query"],
+                },
+            },
+            {
                 "name": "native__task",
                 "description": "Spawn a subagent to execute a task. The router owns the full lifecycle: context injection, execution, and result processing.",
                 "inputSchema": {

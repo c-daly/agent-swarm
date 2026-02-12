@@ -52,82 +52,7 @@ def _is_protected_key(key: str) -> bool:
 
 
 # --- Bash file-I/O lockdown ---------------------------------------------------
-# These commands read file *contents* — agents must use native__read_file so
-# the output flows through the summarization pipeline.
-_BASH_READ_CMDS = frozenset({
-    "cat", "head", "tail", "less", "more", "bat", "tac", "nl",
-    "strings", "xxd", "hexdump", "od",
-})
-# File-content search — agents must use native__grep / native__glob.
-_BASH_SEARCH_CMDS = frozenset({
-    "grep", "egrep", "fgrep", "rg", "ag", "ack",
-})
-# Read-and-transform — agents must use native__read_file + native__edit_file.
-_BASH_PROCESS_CMDS = frozenset({"sed", "awk"})
-# Write via pipe — agents must use native__write_file.
-_BASH_WRITE_CMDS = frozenset({"tee"})
-_BASH_BLOCKED_CMDS = (
-    _BASH_READ_CMDS | _BASH_SEARCH_CMDS | _BASH_PROCESS_CMDS | _BASH_WRITE_CMDS
-)
 
-
-def _check_bash_file_io(command: str) -> str | None:
-    """Return an error message if *command* attempts file I/O, else ``None``.
-
-    Splits on shell operators to inspect the first word of each segment,
-    then checks for output/input redirections and inline-script patterns.
-    """
-    cmd = command.strip()
-
-    # 1. Blocked commands in any segment
-    for segment in re.split(r"[;|&]+|\$\(|`|\(", cmd):
-        words = segment.strip().split()
-        if not words:
-            continue
-        # Skip sudo / env prefixes
-        idx = 0
-        while idx < len(words) and words[idx] in ("sudo", "env"):
-            idx += 1
-        if idx >= len(words):
-            continue
-        first_cmd = words[idx].rsplit("/", 1)[-1]  # /usr/bin/cat -> cat
-
-        if first_cmd in _BASH_READ_CMDS:
-            return f"'{first_cmd}' blocked — use native__read_file to read files"
-        if first_cmd in _BASH_SEARCH_CMDS:
-            return f"'{first_cmd}' blocked — use native__grep or native__glob to search"
-        if first_cmd in _BASH_PROCESS_CMDS:
-            return (
-                f"'{first_cmd}' blocked — use native__read_file + native__edit_file"
-            )
-        if first_cmd in _BASH_WRITE_CMDS:
-            return f"'{first_cmd}' blocked — use native__write_file to write files"
-
-    # Strip quoted strings before checking redirections so that '>' inside
-    # e.g. git commit -m "feat: x > y" does not false-positive.
-    unquoted = re.sub(r"""('[^'\\]*(?:\\.[^'\\]*)*'|"[^"\\]*(?:\\.[^"\\]*)*")""", "", cmd)
-
-    # 2. Output redirection to a real file  (allow /dev/* and fd dup >&N)
-    if re.search(r"(?<![&])>{1,2}(?!&)\s*(?!/dev/)\S", unquoted):
-        return "Output redirection blocked — use native__write_file to write files"
-
-    # 3. Input redirection from a real file  (allow heredocs << and /dev/*)
-    if re.search(r"(?<!<)<(?!<)\s*(?!/dev/)\S", unquoted):
-        return "Input redirection blocked — use native__read_file to read files"
-
-    # 4. Inline-script file I/O  (python/ruby/perl/node -c '…open(…')
-    if re.search(
-        r"(?:python|python3|ruby|perl|node)\s+-[ce]\s+.*\bopen\s*\(",
-        cmd,
-        re.DOTALL,
-    ):
-        return "Inline script file I/O blocked — use native__read_file / native__write_file"
-
-    # 5. dd with file operands
-    if re.search(r"\bdd\b.*\b(?:if|of)=(?!/dev/)", cmd):
-        return "dd file I/O blocked — use native__read_file / native__write_file"
-
-    return None
 
 
 class Controller:
@@ -350,6 +275,8 @@ class Controller:
             "glob": self._native_glob,
             "grep": self._native_grep,
             "bash": self._native_bash,
+            "web_fetch": self._native_web_fetch,
+            "web_search": self._native_web_search,
             "task": self._native_task,
         }
         handler = dispatch.get(tool_name)
@@ -512,10 +439,6 @@ class Controller:
         """
         command = args.get("command", "")
 
-        # Block file I/O — force agents through native tools / summarization
-        violation = _check_bash_file_io(command)
-        if violation:
-            return {"error": violation, "isError": True}
 
         timeout = min(args.get("timeout", 120), 600)
         cwd = args.get("cwd")
@@ -544,6 +467,69 @@ class Controller:
                 "timed_out": True,
             }
 
+    def _native_web_fetch(self, args: dict) -> dict:
+        """Fetch content from a URL."""
+        import urllib.request
+        import urllib.error
+
+        url = args.get("url", "")
+        if not url:
+            return {"error": "url is required", "isError": True}
+
+        timeout = min(args.get("timeout", 30), 120)
+        headers = args.get("headers", {})
+
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            req.add_header("User-Agent", "Mozilla/5.0 (compatible; agent-swarm)")
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                content = resp.read().decode("utf-8", errors="replace")
+                return {
+                    "url": url,
+                    "status": resp.status,
+                    "content": content,
+                    "content_type": resp.headers.get("Content-Type", ""),
+                    "content_length": len(content),
+                }
+        except urllib.error.HTTPError as e:
+            return {
+                "url": url,
+                "status": e.code,
+                "error": str(e.reason),
+                "isError": True,
+            }
+        except Exception as e:
+            return {"url": url, "error": str(e), "isError": True}
+
+    def _native_web_search(self, args: dict) -> dict:
+        """Search the web and return results."""
+        from ddgs import DDGS
+
+        query = args.get("query", "")
+        if not query:
+            return {"error": "query is required", "isError": True}
+
+        max_results = min(args.get("max_results", 10), 20)
+
+        try:
+            with DDGS() as ddgs:
+                raw = list(ddgs.text(query, max_results=max_results))
+            results = [
+                {
+                    "title": r.get("title", ""),
+                    "url": r.get("href", ""),
+                    "snippet": r.get("body", ""),
+                }
+                for r in raw
+            ]
+            return {
+                "query": query,
+                "results": results,
+                "result_count": len(results),
+            }
+        except Exception as e:
+            return {"query": query, "error": str(e), "isError": True}
+
     def _native_task(self, args: dict) -> dict:
         """Spawn a subagent to execute a task.
 
@@ -552,20 +538,25 @@ class Controller:
         2. Context injection - assemble briefing
         3. Execution - run via claude_agent_sdk
         4. Result processing - extract output
+
+        Controller reads: prompt, subagent_type, description, run_in_background.
+        All other args passed through to ClaudeAgentOptions.
         """
         import asyncio
+        import threading
         from claude_agent_sdk import query, AssistantMessage, TextBlock, ResultMessage
+        from claude_agent_sdk.types import ClaudeAgentOptions
+        import shutil
 
         prompt = args.get("prompt", "")
         subagent_type = args.get("subagent_type", "")
-        model = args.get("model")
         description = args.get("description", "")
+        run_in_background = args.get("run_in_background", False)
 
         if not prompt or not subagent_type:
             return {"error": "prompt and subagent_type are required", "isError": True}
 
         # 1. Enforcement - check if spawning is allowed
-        # During iterate/orchestrate, only implementer agents allowed
         with self._state_lock:
             iterate_state = self._workflow_state.get("iterate")
         if iterate_state and iterate_state.get("phase") == "orchestrate":
@@ -589,66 +580,79 @@ class Controller:
             }
 
         # 3. Assemble briefing context
-        # Extract role from subagent_type (e.g., "agent-swarm:implementer" -> "implementer")
         role = subagent_type.split(":")[-1] if ":" in subagent_type else subagent_type
-        # Implementer subagents always get the iterate workflow protocol
-        # (includes review phase with commit instructions)
         wf_override = "iterate" if role == "implementer" else None
         briefing = assemble_subagent_briefing(role, workflow_override=wf_override)
-        # Only add protocol header if not already present
         if "SUBAGENT OPERATING PROTOCOL" not in prompt:
             enriched_prompt = f"# SUBAGENT OPERATING PROTOCOL\n\n{briefing}\n\n# TASK\n\n{prompt}"
         else:
             enriched_prompt = prompt
 
-        # 4. Execute via SDK
-        import shutil
-        from claude_agent_sdk.types import ClaudeAgentOptions
+        # 4. Build SDK options - pass through all args to ClaudeAgentOptions
         system_cli = shutil.which("claude")
         options = ClaudeAgentOptions(
             permission_mode="bypassPermissions",
             **({"cli_path": system_cli} if system_cli else {}),
         )
-        if model:
-            options.model = model
+        for key, value in args.items():
+            if hasattr(options, key):
+                setattr(options, key, value)
 
+        # 5. Define execution helpers
         async def run_query():
             messages = []
             async for message in query(prompt=enriched_prompt, options=options):
                 messages.append(message)
             return messages
 
-        try:
-            messages = asyncio.run(run_query())
-        except Exception as e:
-            # Mark agent as failed
-            with self._state_lock:
-                if agent_id in self._agent_state:
-                    self._agent_state[agent_id]["status"] = "failed"
-                    self._agent_state[agent_id]["error"] = str(e)
-            return {"error": f"SDK execution failed: {e}", "isError": True}
+        def process_messages(messages):
+            output_text = []
+            num_turns = 0
+            for message in messages:
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            output_text.append(block.text)
+                elif isinstance(message, ResultMessage):
+                    num_turns = message.num_turns
+            return output_text, num_turns
 
-        # 5. Process result
-        output_text = []
-        num_turns = 0
-        for message in messages:
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        output_text.append(block.text)
-            elif isinstance(message, ResultMessage):
-                num_turns = message.num_turns
+        def run_and_update():
+            try:
+                messages = asyncio.run(run_query())
+                output_text, num_turns = process_messages(messages)
+                with self._state_lock:
+                    if agent_id in self._agent_state:
+                        self._agent_state[agent_id]["status"] = "completed"
+                        self._agent_state[agent_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
+                        self._agent_state[agent_id]["output"] = "\n".join(output_text)
+                        self._agent_state[agent_id]["num_turns"] = num_turns
+            except Exception as e:
+                with self._state_lock:
+                    if agent_id in self._agent_state:
+                        self._agent_state[agent_id]["status"] = "failed"
+                        self._agent_state[agent_id]["error"] = str(e)
 
-        # Mark agent as completed
+        # 6. Execute - background or foreground
+        if run_in_background:
+            thread = threading.Thread(target=run_and_update, daemon=True)
+            thread.start()
+            return {
+                "agent_id": agent_id,
+                "status": "running",
+                "message": "Agent spawned in background. Check status via workflow__agent_get_state.",
+            }
+
+        # Foreground - block and return results
+        run_and_update()
         with self._state_lock:
-            if agent_id in self._agent_state:
-                self._agent_state[agent_id]["status"] = "completed"
-                self._agent_state[agent_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
-
+            state = self._agent_state.get(agent_id, {})
+        if state.get("status") == "failed":
+            return {"error": state.get("error", "Unknown error"), "isError": True}
         return {
             "agent_id": agent_id,
-            "output": "\n".join(output_text),
-            "num_turns": num_turns,
+            "output": state.get("output", ""),
+            "num_turns": state.get("num_turns", 0),
         }
 
     # --- Router operations ---

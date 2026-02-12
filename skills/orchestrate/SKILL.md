@@ -39,6 +39,13 @@ Also:
 - one spec → multiple focused tasks (not 1:1)
 - cross-task contracts: "task B imports X from task A's module"
 
+### Anti-patterns
+- **Spec forwarding**: creating one task whose description is just the spec.
+  A spec is input to the orchestrator, not output. Every spec should decompose
+  into multiple focused tasks with explicit dependencies.
+- **Vague descriptions**: "implement the skip list" is not a work order.
+  A work order specifies exact interfaces, data structures, behavior, and edge cases.
+
 ### Schema
 
 `workflow__set_value(wf_id, "task_queue", queue)`
@@ -61,24 +68,82 @@ Also:
 
 Pre-sorted: deps before dependents, parallel tasks adjacent. Dequeue from front.
 
+## Setup
+
+Before entering the dispatch loop:
+
+1. **Worktrees**: create one per group, each on its own branch
+   ```
+   git worktree add ../worktree-<group> -b <group-branch>
+   ```
+2. Pass worktree path as working directory in subagent prompts
+3. Orchestrator owns worktree lifecycle — create before dispatch, clean up after PR merge
+
 ## Dispatch
 
 ```
 while ¬stop_condition:
-  task ← next pending where ∀(depends_on) == complete
-  task found → launch subagent(iterate, task)
-  on return → mark complete, check unblocked
-  group_complete → create PR
+  unblocked ← all pending where ∀(depends_on) == complete
+  for each task in unblocked:            ← batch launch all, preferred
+    launch subagent(iterate, task)       ← non-blocking, do NOT wait
+  check completed agents → mark tasks done
+  check newly unblocked → next iteration
+  group_complete → push branch + create PR
 ```
 
-### Supervision
-- dead/stuck agent → mark failed → reset pending → reassign next slot
-- no special retry; queue is the mechanism
+All dispatch is **non-blocking**. Launch and continue — never wait for a subagent.
+Launching all unblocked tasks at once is preferred over one-at-a-time.
 
-### PR Review Feedback
-- monitor PRs for comments
-- each comment → new task (same group, depends on original)
-- append to queue → dispatch when slot opens
+### Dispatch Methods
+
+Preferred → fallback:
+
+1. **Task with team** (preferred)
+   ```
+   Task(
+     team_name="<team>",
+     name="<task-id>",
+     prompt="<task description + working dir>",
+     subagent_type="implementer"
+   )
+   ```
+
+2. **Task without team**
+   ```
+   Task(
+     prompt="<task description + working dir>",
+     subagent_type="implementer"
+   )
+   ```
+
+3. **native__task via router** (fallback)
+   ```
+   mcp__router__native__task(
+     prompt="<task description + working dir>",
+     subagent_type="implementer",
+     description="<short label for logging>"
+   )
+   ```
+
+### Monitoring
+
+- **With teams**: agents report via messages / idle notifications
+- **Without teams**: `TaskOutput(block=false)` to poll
+- Verify: check for new commits on group branch, run tests
+- Never block-wait on a subagent
+
+### Supervision
+- dead/stuck agent → mark task failed → reset to pending
+- dependents remain blocked (their depends_on is unsatisfied)
+- next dispatch naturally picks up the reset task (earliest unblocked pending)
+- no special reinsertion or retry logic; queue ordering + dependency checks are the mechanism
+
+### PR Lifecycle
+- Group complete → push branch: `git push origin <branch>`
+- Open PR: `gh pr create --base main --head <branch>`
+- Poll comments: `gh api repos/<owner>/<repo>/pulls/<n>/comments`
+- Each comment → new task (same group, depends on original)
+- Append to queue → dispatch when unblocked
 
 ## Stop Condition
 
