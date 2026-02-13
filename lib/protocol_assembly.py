@@ -27,6 +27,14 @@ UNIVERSAL_PROTOCOL = """## Universal Protocol
 - No duplicate reads
 - Track what you've already read
 
+### File Reading
+- Full file reads are rarely the right tool — prefer targeted approaches
+- `find_symbol` with `include_body=true`: get exactly the function/class you need
+- `search_for_pattern` with `context_lines_after`: find code + surrounding context
+- `get_symbols_overview`: understand file structure without reading content
+- `read_file` with `start_line`/`end_line`: read a known range, not the whole file
+- Only read full files for small config/data files or when you truly need everything
+
 ### Parallel Execution
 - Independent tool calls in ONE message
 - Don't: call → wait → call again

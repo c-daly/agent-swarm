@@ -97,7 +97,7 @@ def _call_tool(tool_name: str, arguments: dict) -> Any:
         _log(tool_name, f"Creating socket connection to 127.0.0.1:{port}")
 
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(5.0)  # 5 second timeout
+            s.settimeout(600.0)  # 10 min timeout for long-running commands (pytest etc.)
 
             _log(tool_name, "Connecting...")
             s.connect(("127.0.0.1", port))
