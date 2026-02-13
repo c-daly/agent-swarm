@@ -245,6 +245,58 @@ class TestRouterOps:
         assert result["agent_id"] == "a1"
         assert result["agent_type"] == "explorer"
 
+    def test_register_agent_creates_state(self, ctrl):
+        """register_agent should create agent state entry."""
+        result = ctrl.handle_call(
+            "router__register_agent",
+            {"agent_id": "sub-test1", "agent_type": "implementer"},
+        )
+        assert result["agent_id"] == "sub-test1"
+        # Agent state should be recorded
+        state = ctrl.handle_call(
+            "workflow__agent_get_state", {"agent_id": "sub-test1"}
+        )
+        assert state is not None
+        assert state["agent_type"] == "implementer"
+        assert state["status"] == "registered"
+        assert "registered_at" in state
+
+    def test_register_agent_without_workflow_has_no_phase(self, ctrl):
+        """register_agent without workflow_id should have no phase."""
+        result = ctrl.handle_call(
+            "router__register_agent",
+            {"agent_id": "sub-expl1", "agent_type": "explorer"},
+        )
+        assert result["phase"] is None
+        assert result.get("workflow_id") is None
+
+    def test_register_agent_with_workflow_sets_phase(self, ctrl_with_config):
+        """register_agent with workflow_id should set initial phase."""
+        # Start the iterate workflow first
+        ctrl_with_config.handle_call(
+            "workflow__workflow_start",
+            {"workflow_id": "iterate", "initial_state": {}},
+        )
+        result = ctrl_with_config.handle_call(
+            "router__register_agent",
+            {"agent_id": "sub-impl1", "agent_type": "implementer", "workflow_id": "iterate"},
+        )
+        assert result["workflow_id"] == "iterate"
+        assert result["phase"] == "test_writing"  # initial_phase from config
+
+    def test_register_agent_returns_briefing(self, ctrl):
+        """register_agent should return an assembled briefing."""
+        result = ctrl.handle_call(
+            "router__register_agent",
+            {"agent_id": "sub-b1", "agent_type": "implementer"},
+        )
+        assert "briefing" in result
+        briefing = result["briefing"]
+        # Must contain the tool table (critical for agents to function)
+        assert "mcp-call" in briefing
+        # Must contain some role-specific content
+        assert "implementer" in briefing.lower() or "implement" in briefing.lower()
+
     def test_unknown_router_tool(self, ctrl):
         with pytest.raises(RouterError, match="Unknown router tool"):
             ctrl.handle_call("router__nonexistent", {})

@@ -651,15 +651,47 @@ class Controller:
             return self.get_full_content(args.get("content_id", ""))
 
         if tool_name == "register_agent":
+            agent_id = args.get("agent_id", "")
+            agent_type = args.get("agent_type", "")
+            workflow_id = args.get("workflow_id")
+
+            # 1. Register in permissions system
             info = self.permissions.register_agent(
-                agent_id=args.get("agent_id", ""),
-                agent_type=args.get("agent_type", ""),
+                agent_id=agent_id,
+                agent_type=agent_type,
                 roles=args.get("roles"),
             )
+
+            # 2. Determine phase from workflow config (if applicable)
+            phase = None
+            if workflow_id:
+                config = self._workflow_configs.get(workflow_id)
+                if config:
+                    phase = config.initial_phase
+                    info.workflow = workflow_id
+                    info.phase = phase
+
+            # 3. Record agent state
+            agent_state = {
+                "agent_id": agent_id,
+                "agent_type": agent_type,
+                "workflow_id": workflow_id,
+                "phase": phase,
+                "status": "registered",
+                "registered_at": datetime.now(timezone.utc).isoformat(),
+            }
+            self._agent_set_state({"agent_id": agent_id, "state": agent_state})
+
+            # 4. Assemble briefing
+            briefing = assemble_subagent_briefing(agent_type)
+
             return {
                 "agent_id": info.agent_id,
                 "agent_type": info.agent_type,
                 "roles": info.roles,
+                "workflow_id": workflow_id,
+                "phase": phase,
+                "briefing": briefing,
             }
 
         if tool_name == "update_agent_phase":
