@@ -14,7 +14,7 @@ user_invocable: false
 
 - `intake` (optional): gather missing info. Skip if input sufficient.
 - `design` (optional): plan doc. Only from intake.
-- `orchestrate`: default entry. Build queue → dispatch → PRs. Can → intake if needed.
+- `orchestrate`: Entry point. Build queue → dispatch → push/Create PRs. Go to intake if more info is needed to create reasonable prompts for subagents.
 
 ## Task Queue
 
@@ -94,36 +94,57 @@ while ¬stop_condition:
 All dispatch is **non-blocking**. Launch and continue — never wait for a subagent.
 Launching all unblocked tasks at once is preferred over one-at-a-time.
 
+### Agent Registration
+
+Before launching any subagent, register it with the router:
+
+```
+mcp__router__router__register_agent(
+  agent_id="<task-id>",
+  agent_type="implementer",
+  workflow_id="iterate"
+)
+→ returns { agent_id, agent_type, roles, workflow_id, phase, briefing }
+```
+
+Registration does four things:
+1. Grants the agent permissions to use router tools
+2. Sets initial workflow phase from config
+3. Records agent state (for monitoring/cleanup)
+4. Returns a role-specific briefing to include in the agent's prompt
+
+**The returned `briefing` must be prepended to the task prompt.** Without it,
+the agent won't know how to use `mcp-call` or router tools.
+
 ### Dispatch Methods
 
 Preferred → fallback:
 
 1. **Task with team** (preferred)
    ```
+   reg = register_agent(agent_id=<task-id>, agent_type="implementer", workflow_id="iterate")
    Task(
      team_name="<team>",
      name="<task-id>",
-     prompt="<task description + working dir>",
+     prompt=reg.briefing + "\n\n" + <task description + working dir>,
      subagent_type="implementer"
    )
    ```
 
 2. **Task without team**
    ```
+   reg = register_agent(agent_id=<task-id>, agent_type="implementer", workflow_id="iterate")
    Task(
-     prompt="<task description + working dir>",
+     prompt=reg.briefing + "\n\n" + <task description + working dir>,
      subagent_type="implementer"
    )
    ```
-
-3. **native__task via router** (fallback)
-   ```
-   mcp__router__native__task(
-     prompt="<task description + working dir>",
-     subagent_type="implementer",
-     description="<short label for logging>"
-   )
-   ```
+### Task Queue
+- There is almost never a one-to-one relationship between the entire spec and a task
+- Tasks are logical units of work, easily tested, and small enough to be convenient
+- Tasks may sometimes span concerns if a library or shared code is necessary
+- The queue must support dependence ordering with a focus on parallelism
+- Once complete all that needs doing is pulling tasks off the queue - the thinking is done
 
 ### Monitoring
 
@@ -134,6 +155,9 @@ Preferred → fallback:
 
 ### Supervision
 - dead/stuck agent → mark task failed → reset to pending
+- **unregistered agents cannot use router tools** — if an agent fails immediately
+  after spawn, check registration. Clean up unregistered agents and re-dispatch
+  with proper registration.
 - dependents remain blocked (their depends_on is unsatisfied)
 - next dispatch naturally picks up the reset task (earliest unblocked pending)
 - no special reinsertion or retry logic; queue ordering + dependency checks are the mechanism
