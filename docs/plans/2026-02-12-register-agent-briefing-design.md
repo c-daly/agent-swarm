@@ -1,12 +1,18 @@
 # Agent Registration Briefing — Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+**Status:** Implemented (2026-02-12)
 
 **Goal:** Make `register_agent` the single entry point for subagent lifecycle — returning assembled briefings so orchestrators include them in Task prompts.
 
-**Architecture:** Enhance `_handle_router("register_agent")` in controller.py to register the agent, set initial phase (if workflow), record agent state, and assemble a signal-dense briefing. Remove the blanket workflow requirement for file writes in permission_store.py so agents can operate outside workflows.
+**Architecture:** Enhanced `_handle_router("register_agent")` in controller.py to register the agent, set initial phase (if workflow), record agent state, and assemble a signal-dense briefing. Removed the blanket workflow requirement for file writes in permission_store.py so agents can operate outside workflows.
 
 **Tech Stack:** Python, existing controller/permissions/protocol_assembly infrastructure
+
+**Implementation notes:**
+- Removed ALLOWED_BACKENDS from mcp-call — router handles all permissions
+- Fixed SUBAGENT_PROTOCOL tool table: was using native__ (blocked by mcp-call), now uses serena__ + shell aliases
+- Deleted stale test_session_start.py (tested removed functions)
+- Fixed stale daemon integration test (phase now controller-managed from config)
 
 ---
 
