@@ -77,29 +77,24 @@ Tools via MCP router: `mcp__router__<server>__<tool>`
 
 SUBAGENT_PROTOCOL = """## Subagent Protocol
 
-### Tool Access
-Tools via mcp-call (independent process):
+### Tool Access — mcp-call
+All tools via `mcp-call <tool> '<json_args>'` in Bash.
 
 | Operation | Command |
 |-----------|---------|
-| Read file | `mcp-call native__read_file path=/path` |
-| Search | `mcp-call native__grep pattern="..." path=/dir` |
-| Find files | `mcp-call native__glob pattern="**/*.py"` |
-| Run command | `mcp-call native__bash command="..."` |
-| Find symbols | `mcp-call serena__find_symbol name=X` |
-| Edit code | `mcp-call serena__replace_content ...` |
+| Read file | `mcp-call serena__read_file '{"relative_path": "src/main.py"}'` |
+| Search | `mcp-call serena__search_for_pattern '{"substring_pattern": "TODO"}'` |
+| Find files | `mcp-call serena__find_file '{"file_mask": "*.py", "relative_path": "."}'` |
+| Find symbols | `mcp-call serena__find_symbol '{"name_path_pattern": "MyClass"}'` |
+| Edit code | `mcp-call serena__replace_content '{"relative_path": "f.py", "needle": "old", "repl": "new", "mode": "literal"}'` |
+| Write file | `mcp-call serena__create_text_file '{"relative_path": "f.py", "content": "..."}'` |
 
-### Long-Running Commands
-MCP calls timeout at ~30s. For longer commands:
-```bash
-nohup <command> > /tmp/output.txt 2>&1 &
-# then later:
-cat /tmp/output.txt
-```
+### Shell Commands — aliases
+Run directly: `mcp-call pytest tests/`, `mcp-call git status`, `mcp-call ruff check .`
+Available: pytest, ruff, mypy, black, git, gh, python3
 
-### Process Constraints
-- No direct workflow state access
-- No access to main conversation context
+### Constraints
+- Router enforces all permissions — blocked tools will return errors
 - Must complete task independently
 """
 

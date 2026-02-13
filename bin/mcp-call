@@ -29,19 +29,10 @@ sys.path.insert(0, os.path.join(script_dir, '..', 'lib'))
 
 from workflow_client import call_tool, list_tools
 
-# Allowed backend prefixes - only tools from these backends can be called
-ALLOWED_BACKENDS = {
-    "serena__",
-    "context7__",
-    "playwright__",
-    "workflow__",
-}
-
-# Explicitly blocked tools even within allowed backends
+# Explicitly blocked tools (shell execution, code injection vectors)
 BLOCKED_TOOLS = {
     "serena__execute_shell_command",  # Shell execution
     "playwright__browser_run_code",   # Code execution in browser
-    "native__bash",                   # Direct bash
 }
 
 # Shell command aliases - route these to native__bash
@@ -79,18 +70,9 @@ def parse_args(arg_string: str) -> dict:
     raise ValueError(msg)
 
 
-def is_tool_allowed(tool_name: str) -> bool:
-    """Check if tool is allowed to be called."""
-    # Check blocked list first
-    if tool_name in BLOCKED_TOOLS:
-        return False
-
-    # Must match an allowed backend
-    for prefix in ALLOWED_BACKENDS:
-        if tool_name.startswith(prefix):
-            return True
-
-    return False
+def is_tool_blocked(tool_name: str) -> bool:
+    """Check if tool is explicitly blocked (shell execution vectors)."""
+    return tool_name in BLOCKED_TOOLS
 
 
 def main():
@@ -103,9 +85,6 @@ def main():
 
     if len(args) < 1:
         print("Usage: mcp-call [--cwd=<path>] <tool_name> [json_args]", file=sys.stderr)
-        print("\nAllowed backends:", file=sys.stderr)
-        for backend in sorted(ALLOWED_BACKENDS):
-            print(f"  - {backend}*", file=sys.stderr)
         print("\nShell aliases (routed to bash):", file=sys.stderr)
         print(f"  {', '.join(sorted(SHELL_ALIASES))}", file=sys.stderr)
         print("\nExamples:", file=sys.stderr)
@@ -133,10 +112,9 @@ def main():
             sys.exit(1)
         sys.exit(0)
 
-    # Security: validate tool is allowed
-    if not is_tool_allowed(tool_name):
-        print(f"Error: Tool '{tool_name}' is not in the allowed list", file=sys.stderr)
-        print(f"Allowed backends: {', '.join(sorted(ALLOWED_BACKENDS))}", file=sys.stderr)
+    # Security: check blocked tools (router handles all other permissions)
+    if is_tool_blocked(tool_name):
+        print(f"Error: Tool '{tool_name}' is blocked", file=sys.stderr)
         sys.exit(1)
 
     # Parse arguments (JSON or Python dict syntax)
