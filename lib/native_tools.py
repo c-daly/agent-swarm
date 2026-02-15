@@ -192,6 +192,38 @@ def bash(
     return _get_router().route("native", "bash", args)
 
 
+def task(
+    prompt: str,
+    subagent_type: str = "implementer",
+    system_prompt: Optional[str] = None,
+    max_turns: int = 50,
+    cwd: Optional[str] = None
+) -> RouterResponse:
+    """Spawn an SDK subprocess agent with router-mediated tool access.
+
+    Args:
+        prompt: The task for the agent to perform
+        subagent_type: Type of subagent (e.g. 'implementer', 'explorer')
+        system_prompt: Optional override system prompt
+        max_turns: Maximum number of agent turns (default: 50)
+        cwd: Working directory for the agent
+
+    Returns:
+        RouterResponse with agent result
+    """
+    args: dict[str, Any] = {"prompt": prompt}
+    if subagent_type != "implementer":
+        args["subagent_type"] = subagent_type
+    if system_prompt is not None:
+        args["system_prompt"] = system_prompt
+    if max_turns != 50:
+        args["max_turns"] = max_turns
+    if cwd is not None:
+        args["cwd"] = cwd
+
+    return _get_router().route("native", "task", args)
+
+
 # === Convenience Functions ===
 
 
@@ -410,6 +442,37 @@ TOOLS: dict[str, dict[str, Any]] = {
                 }
             },
             "required": ["command"]
+        }
+    },
+    "task": {
+        "name": "task",
+        "description": "Spawn an SDK subprocess agent with router-mediated tool access.",
+        "function": task,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "The task for the agent to perform"
+                },
+                "subagent_type": {
+                    "type": "string",
+                    "description": "Type of subagent (e.g. 'implementer', 'explorer', 'researcher')"
+                },
+                "system_prompt": {
+                    "type": "string",
+                    "description": "Optional override system prompt"
+                },
+                "max_turns": {
+                    "type": "integer",
+                    "description": "Maximum number of agent turns (default: 50)"
+                },
+                "cwd": {
+                    "type": "string",
+                    "description": "Working directory for the agent"
+                }
+            },
+            "required": ["prompt"]
         }
     }
 }
