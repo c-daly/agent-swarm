@@ -456,7 +456,7 @@ class Controller:
         if output_mode == "files":
             cmd.append("-l")
         else:
-            cmd.extend(["-n", "--no-heading"])
+            cmd.extend(["-n", "--no-heading", "--with-filename"])
         if file_glob:
             cmd.extend(["--glob", file_glob])
         cmd.extend([pattern, path])
