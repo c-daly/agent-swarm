@@ -1,0 +1,138 @@
+"""Phase gate validators. Never raise — always return (bool, str)."""
+
+import subprocess
+from typing import Any
+
+
+def _last_line(output: str, fallback: str = "unknown") -> str:
+    """Extract the last line from output, or return fallback."""
+    stripped = output.strip()
+    if stripped:
+        return stripped.splitlines()[-1]
+    return fallback
+
+
+def branch_exists(*, branch: str, cwd: str, **kwargs: Any) -> tuple[bool, str]:
+    """Check if a git branch exists."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", branch],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return True, f"Branch '{branch}' exists"
+        return False, f"Branch '{branch}' does not exist"
+    except Exception as e:
+        return False, f"Error checking branch: {e}"
+
+
+def tests_written(
+    *, test_dir: str, min_tests: int, cwd: str, **kwargs: Any
+) -> tuple[bool, str]:
+    """Check if enough test functions have been written."""
+    try:
+        result = subprocess.run(
+            ["grep", "-r", "-c", "def test_", test_dir],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+        )
+        # Count lines of output (each line is file:count)
+        lines = [line for line in result.stdout.strip().split("\n") if line]
+        total = 0
+        for line in lines:
+            # grep -c output: filename:count or just count
+            parts = line.rsplit(":", 1)
+            try:
+                total += int(parts[-1])
+            except ValueError:
+                # Line itself is a test function name (non -c mode fallback)
+                total += 1
+
+        if total >= min_tests:
+            return True, f"Found {total} tests (minimum: {min_tests})"
+        return False, f"Found {total} tests, need at least {min_tests}"
+    except Exception as e:
+        return False, f"Error counting tests: {e}"
+
+
+def all_tests_pass(*, test_dir: str, cwd: str, **kwargs: Any) -> tuple[bool, str]:
+    """Run pytest on a test directory and check all pass."""
+    try:
+        result = subprocess.run(
+            ["python3", "-m", "pytest", test_dir, "-v", "--tb=short"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+        )
+        last = _last_line(result.stdout, "ok")
+        if result.returncode == 0:
+            return True, f"All tests passed: {last}"
+        return False, f"Tests failed: {last}"
+    except Exception as e:
+        return False, f"Error running tests: {e}"
+
+
+def all_branches_merged(
+    *, branches: list[str], cwd: str, **kwargs: Any
+) -> tuple[bool, str]:
+    """Check if all specified branches have been merged into current branch."""
+    try:
+        result = subprocess.run(
+            ["git", "branch", "--merged"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+        )
+        merged = {b.strip().lstrip("* ") for b in result.stdout.strip().split("\n")}
+        unmerged = [b for b in branches if b not in merged]
+        if not unmerged:
+            return True, "All branches merged"
+        return False, f"Unmerged branches: {', '.join(unmerged)}"
+    except Exception as e:
+        return False, f"Error checking merged branches: {e}"
+
+
+def full_suite_passes(*, cwd: str, **kwargs: Any) -> tuple[bool, str]:
+    """Run the full test suite and check all pass."""
+    try:
+        result = subprocess.run(
+            ["python3", "-m", "pytest", "-v", "--tb=short"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+        )
+        last = _last_line(result.stdout, "ok")
+        if result.returncode == 0:
+            return True, f"Full suite passed: {last}"
+        return False, f"Full suite failed: {last}"
+    except Exception as e:
+        return False, f"Error running full suite: {e}"
+
+
+def commit_exists(*, branch: str, cwd: str, **kwargs: Any) -> tuple[bool, str]:
+    """Check if a branch has commits beyond the base."""
+    try:
+        result = subprocess.run(
+            ["git", "log", branch, "-1", "--format=%h"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return True, f"Commit found on '{branch}': {result.stdout.strip()}"
+        return False, f"No commits found on '{branch}'"
+    except Exception as e:
+        return False, f"Error checking commits: {e}"
+
+
+GATEWAY_CONDITIONS: dict[str, callable] = {
+    "branch_exists": branch_exists,
+    "tests_written": tests_written,
+    "all_tests_pass": all_tests_pass,
+    "all_branches_merged": all_branches_merged,
+    "full_suite_passes": full_suite_passes,
+    "commit_exists": commit_exists,
+}

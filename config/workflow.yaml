@@ -1,0 +1,98 @@
+# Parallel Orchestration Workflow Definition
+# Declarative phase definitions, transitions, and gateway conditions
+
+phases:
+  init:
+    description: "Load manifest and validate configuration"
+    transitions:
+      - target: spawning
+        gateway: manifest_loaded
+    tools:
+      - file_read
+      - manifest_parse
+
+  spawning:
+    description: "Create branches and spawn TDD subagents"
+    transitions:
+      - target: monitoring
+        gateway: all_spawned
+    tools:
+      - git_branch
+      - task_spawn
+
+  monitoring:
+    description: "Monitor subagent progress, handle completions"
+    transitions:
+      - target: spawning
+        gateway: has_retries
+        description: "Re-enter spawning if tasks need retry"
+      - target: merging
+        gateway: all_done
+    tools:
+      - task_status
+      - task_complete
+
+  merging:
+    description: "Merge completed task branches into base"
+    transitions:
+      - target: verifying
+        gateway: all_branches_merged
+    tools:
+      - git_merge
+      - git_checkout
+
+  verifying:
+    description: "Run full test suite to confirm integration"
+    transitions:
+      - target: done
+        gateway: full_suite_passes
+      - target: failed
+        gateway: suite_failed
+    tools:
+      - test_run
+
+  done:
+    description: "All tasks completed and verified"
+    terminal: true
+
+  failed:
+    description: "Orchestration failed — manual intervention needed"
+    terminal: true
+
+  stopped:
+    description: "Orchestration stopped by user"
+    terminal: true
+
+gateway_conditions:
+  manifest_loaded:
+    description: "Manifest file parsed and validated"
+    type: internal
+
+  all_spawned:
+    description: "All pending tasks have been spawned"
+    type: internal
+
+  has_retries:
+    description: "One or more tasks are pending retry"
+    type: internal
+
+  all_done:
+    description: "All tasks are completed or failed (no pending/spawned)"
+    type: internal
+    validator: check_all_done
+
+  all_branches_merged:
+    description: "All completed task branches merged into base"
+    type: subprocess
+    validator: all_branches_merged
+
+  full_suite_passes:
+    description: "Full pytest suite passes after merge"
+    type: subprocess
+    validator: full_suite_passes
+
+  suite_failed:
+    description: "Full pytest suite has failures"
+    type: subprocess
+    validator: full_suite_passes
+    invert: true

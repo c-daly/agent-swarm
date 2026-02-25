@@ -1,0 +1,433 @@
+"""Tests for the ParallelOrchestrator."""
+
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from lib.orchestrator import ParallelOrchestrator, SpawnRequest
+
+
+@pytest.fixture
+def manifest_path(tmp_path):
+    """Create a manifest file and return its path."""
+    content = """\
+project: test-project
+base_branch: main
+max_retries: 2
+tasks:
+  - name: stack
+    description: "Implement a stack"
+    target_dir: src/stack
+    test_dir: tests/test_stack
+    min_tests: 10
+  - name: queue
+    description: "Implement a queue"
+    target_dir: src/queue
+    test_dir: tests/test_queue
+    min_tests: 10
+  - name: linked_list
+    description: "Implement a linked list"
+    target_dir: src/linked_list
+    test_dir: tests/test_linked_list
+    min_tests: 10
+"""
+    path = tmp_path / "manifest.yaml"
+    path.write_text(content)
+    return str(path)
+
+
+@pytest.fixture
+def orchestrator(tmp_state_dir, manifest_path):
+    """Create and load an orchestrator."""
+    orch = ParallelOrchestrator()
+    orch.load_manifest(manifest_path)
+    return orch
+
+
+class TestLifecycle:
+    def test_load_manifest(self, orchestrator):
+        assert orchestrator._manifest is not None
+        assert orchestrator._manifest.project == "test-project"
+        assert len(orchestrator._manifest.tasks) == 3
+
+    def test_start_initializes_state(self, orchestrator):
+        orchestrator.start()
+        assert orchestrator.is_active()
+        assert orchestrator.get_phase() == "spawning"
+
+    def test_start_sets_all_tasks_pending(self, orchestrator):
+        orchestrator.start()
+        status = orchestrator.get_status()
+        for task in orchestrator._manifest.tasks:
+            assert status["tasks"][task.name]["status"] == "pending"
+
+    def test_stop_deactivates(self, orchestrator):
+        orchestrator.start()
+        orchestrator.stop()
+        assert not orchestrator.is_active()
+
+    def test_double_start_raises(self, orchestrator):
+        orchestrator.start()
+        with pytest.raises(RuntimeError, match="already active"):
+            orchestrator.start()
+
+
+class TestSpawn:
+    def test_get_pending_tasks(self, orchestrator):
+        orchestrator.start()
+        pending = orchestrator.get_pending_tasks()
+        assert len(pending) == 3
+        assert all(isinstance(p, SpawnRequest) for p in pending)
+
+    def test_pending_tasks_have_prompts(self, orchestrator):
+        orchestrator.start()
+        pending = orchestrator.get_pending_tasks()
+        for req in pending:
+            assert len(req.prompt) > 0
+            assert req.task_name in req.prompt
+
+    def test_record_spawn(self, orchestrator):
+        orchestrator.start()
+        orchestrator.record_spawn("stack", "worker-1")
+        status = orchestrator.get_status()
+        assert status["tasks"]["stack"]["status"] == "spawned"
+        assert status["tasks"]["stack"]["worker_id"] == "worker-1"
+
+    def test_pending_excludes_spawned(self, orchestrator):
+        orchestrator.start()
+        orchestrator.record_spawn("stack", "worker-1")
+        pending = orchestrator.get_pending_tasks()
+        assert len(pending) == 2
+        assert all(p.task_name != "stack" for p in pending)
+
+
+class TestMonitor:
+    def test_record_completion_success(self, orchestrator):
+        orchestrator.start()
+        orchestrator.record_spawn("stack", "w1")
+        result = orchestrator.record_completion("stack", success=True)
+        assert result == "completed"
+        status = orchestrator.get_status()
+        assert status["tasks"]["stack"]["status"] == "completed"
+
+    def test_record_completion_failure_retries(self, orchestrator):
+        orchestrator.start()
+        orchestrator.record_spawn("stack", "w1")
+        result = orchestrator.record_completion("stack", success=False, error="test failed")
+        assert result == "retrying"
+        status = orchestrator.get_status()
+        assert status["tasks"]["stack"]["status"] == "pending"
+        assert status["tasks"]["stack"]["retries"] == 1
+
+    def test_record_completion_exhausted_retries(self, orchestrator):
+        orchestrator.start()
+        # Exhaust retries (max_retries=2)
+        orchestrator.record_spawn("stack", "w1")
+        orchestrator.record_completion("stack", success=False, error="fail 1")
+        orchestrator.record_spawn("stack", "w2")
+        orchestrator.record_completion("stack", success=False, error="fail 2")
+        orchestrator.record_spawn("stack", "w3")
+        result = orchestrator.record_completion("stack", success=False, error="fail 3")
+        assert result == "failed"
+        status = orchestrator.get_status()
+        assert status["tasks"]["stack"]["status"] == "failed"
+
+    def test_check_all_done_false(self, orchestrator):
+        orchestrator.start()
+        assert not orchestrator.check_all_done()
+
+    def test_check_all_done_true(self, orchestrator):
+        orchestrator.start()
+        for task in orchestrator._manifest.tasks:
+            orchestrator.record_spawn(task.name, f"w-{task.name}")
+            orchestrator.record_completion(task.name, success=True)
+        assert orchestrator.check_all_done()
+
+    def test_check_all_done_with_failures(self, orchestrator):
+        orchestrator.start()
+        # Complete 2, fail 1 (exhausted retries)
+        orchestrator.record_spawn("stack", "w1")
+        orchestrator.record_completion("stack", success=True)
+        orchestrator.record_spawn("queue", "w2")
+        orchestrator.record_completion("queue", success=True)
+        # Exhaust linked_list retries
+        for i in range(3):
+            orchestrator.record_spawn("linked_list", f"w{i}")
+            orchestrator.record_completion("linked_list", success=False, error=f"fail {i}")
+        assert orchestrator.check_all_done()
+
+
+class TestPhaseTransitions:
+    def test_phase_advances_to_monitoring(self, orchestrator):
+        orchestrator.start()
+        # Spawn all
+        for task in orchestrator._manifest.tasks:
+            orchestrator.record_spawn(task.name, f"w-{task.name}")
+        assert orchestrator.get_phase() == "monitoring"
+
+    def test_phase_advances_to_merging(self, orchestrator):
+        orchestrator.start()
+        for task in orchestrator._manifest.tasks:
+            orchestrator.record_spawn(task.name, f"w-{task.name}")
+            orchestrator.record_completion(task.name, success=True)
+        assert orchestrator.get_phase() == "merging"
+
+
+class TestMerge:
+    @patch("lib.orchestrator.subprocess.run")
+    def test_merge_all_success(self, mock_run, orchestrator):
+        orchestrator.start()
+        for task in orchestrator._manifest.tasks:
+            orchestrator.record_spawn(task.name, f"w-{task.name}")
+            orchestrator.record_completion(task.name, success=True)
+
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        results = orchestrator.merge_all(cwd="/repo")
+        assert len(results) == 3
+        assert all(r.success for r in results)
+
+    @patch("lib.orchestrator.subprocess.run")
+    def test_merge_conflict(self, mock_run, orchestrator):
+        orchestrator.start()
+        for task in orchestrator._manifest.tasks:
+            orchestrator.record_spawn(task.name, f"w-{task.name}")
+            orchestrator.record_completion(task.name, success=True)
+
+        # First merge succeeds, second has conflict
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout="", stderr=""),  # checkout main
+            MagicMock(returncode=0, stdout="", stderr=""),  # merge stack
+            MagicMock(returncode=1, stdout="", stderr="CONFLICT"),  # merge queue
+            MagicMock(returncode=0, stdout="", stderr=""),  # abort merge
+            MagicMock(returncode=0, stdout="", stderr=""),  # merge linked_list
+        ]
+        results = orchestrator.merge_all(cwd="/repo")
+        failed = [r for r in results if not r.success]
+        assert len(failed) == 1
+        assert failed[0].branch == "task/queue"
+
+    @patch("lib.orchestrator.subprocess.run")
+    def test_merge_skips_failed_tasks(self, mock_run, orchestrator):
+        orchestrator.start()
+        # stack: completed, queue: failed
+        orchestrator.record_spawn("stack", "w1")
+        orchestrator.record_completion("stack", success=True)
+        for i in range(3):
+            orchestrator.record_spawn("queue", f"w{i}")
+            orchestrator.record_completion("queue", success=False, error="fail")
+        orchestrator.record_spawn("linked_list", "w3")
+        orchestrator.record_completion("linked_list", success=True)
+
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        results = orchestrator.merge_all(cwd="/repo")
+        # Should only merge stack and linked_list
+        merged_branches = [r.branch for r in results]
+        assert "task/queue" not in merged_branches
+        assert "task/stack" in merged_branches
+        assert "task/linked_list" in merged_branches
+
+
+class TestVerify:
+    @patch("lib.orchestrator.subprocess.run")
+    def test_verify_pass(self, mock_run, orchestrator):
+        mock_run.return_value = MagicMock(returncode=0, stdout="50 passed")
+        ok, msg = orchestrator.verify(cwd="/repo")
+        assert ok is True
+
+    @patch("lib.orchestrator.subprocess.run")
+    def test_verify_fail(self, mock_run, orchestrator):
+        mock_run.return_value = MagicMock(returncode=1, stdout="3 failed")
+        ok, msg = orchestrator.verify(cwd="/repo")
+        assert ok is False
+
+
+class TestGateway:
+    @patch("lib.orchestrator.subprocess.run")
+    def test_check_gateway(self, mock_run, orchestrator):
+        mock_run.return_value = MagicMock(returncode=0, stdout="")
+        ok, msg = orchestrator.check_gateway(
+            "branch_exists", {"branch": "task/stack", "cwd": "/repo"}
+        )
+        assert ok is True
+
+    def test_check_unknown_gateway(self, orchestrator):
+        ok, msg = orchestrator.check_gateway("nonexistent", {})
+        assert ok is False
+        assert "unknown" in msg.lower()
+
+
+@pytest.fixture
+def manifest_with_deps_path(tmp_path):
+    """Create a manifest with dependencies."""
+    content = """\
+project: test-deps
+base_branch: main
+max_retries: 2
+tasks:
+  - name: setup
+    description: "Project setup"
+    target_dir: src
+    test_dir: tests
+  - name: feature-a
+    description: "Feature A"
+    target_dir: src/a
+    test_dir: tests/a
+    depends_on:
+      - setup
+  - name: feature-b
+    description: "Feature B"
+    target_dir: src/b
+    test_dir: tests/b
+    depends_on:
+      - setup
+  - name: integration
+    description: "Integration"
+    target_dir: src/int
+    test_dir: tests/int
+    depends_on:
+      - feature-a
+      - feature-b
+"""
+    path = tmp_path / "manifest-deps.yaml"
+    path.write_text(content)
+    return str(path)
+
+
+@pytest.fixture
+def orch_with_deps(tmp_state_dir, manifest_with_deps_path):
+    """Create orchestrator with dependency manifest."""
+    orch = ParallelOrchestrator()
+    orch.load_manifest(manifest_with_deps_path)
+    return orch
+
+
+class TestDependencies:
+    def test_only_root_tasks_initially_pending(self, orch_with_deps):
+        orch_with_deps.start()
+        pending = orch_with_deps.get_pending_tasks()
+        names = [p.task_name for p in pending]
+        assert names == ["setup"]
+
+    def test_dependents_unlocked_after_dependency_completes(self, orch_with_deps):
+        orch_with_deps.start()
+        orch_with_deps.record_spawn("setup", "w1")
+        orch_with_deps.record_completion("setup", success=True)
+        pending = orch_with_deps.get_pending_tasks()
+        names = sorted(p.task_name for p in pending)
+        assert names == ["feature-a", "feature-b"]
+
+    def test_multi_dependency_waits_for_all(self, orch_with_deps):
+        orch_with_deps.start()
+        orch_with_deps.record_spawn("setup", "w1")
+        orch_with_deps.record_completion("setup", success=True)
+        orch_with_deps.record_spawn("feature-a", "w2")
+        orch_with_deps.record_completion("feature-a", success=True)
+        pending = orch_with_deps.get_pending_tasks()
+        names = [p.task_name for p in pending]
+        assert "feature-b" in names
+        assert "integration" not in names
+
+    def test_multi_dependency_unlocks_when_all_complete(self, orch_with_deps):
+        orch_with_deps.start()
+        orch_with_deps.record_spawn("setup", "w1")
+        orch_with_deps.record_completion("setup", success=True)
+        orch_with_deps.record_spawn("feature-a", "w2")
+        orch_with_deps.record_completion("feature-a", success=True)
+        orch_with_deps.record_spawn("feature-b", "w3")
+        orch_with_deps.record_completion("feature-b", success=True)
+        pending = orch_with_deps.get_pending_tasks()
+        names = [p.task_name for p in pending]
+        assert names == ["integration"]
+
+    def test_no_deps_still_works(self, orchestrator):
+        """Tasks without depends_on behave as before."""
+        orchestrator.start()
+        pending = orchestrator.get_pending_tasks()
+        assert len(pending) == 3
+
+    def test_failure_propagates_to_direct_dependents(self, orch_with_deps):
+        orch_with_deps.start()
+        # Exhaust setup retries (max_retries=2, so 3 attempts total)
+        for i in range(3):
+            orch_with_deps.record_spawn("setup", f"w{i}")
+            orch_with_deps.record_completion("setup", success=False, error="fail")
+        status = orch_with_deps.get_status()
+        assert status["tasks"]["setup"]["status"] == "failed"
+        assert status["tasks"]["feature-a"]["status"] == "failed"
+        assert status["tasks"]["feature-b"]["status"] == "failed"
+        assert status["tasks"]["integration"]["status"] == "failed"
+
+    def test_failure_propagation_message(self, orch_with_deps):
+        orch_with_deps.start()
+        for i in range(3):
+            orch_with_deps.record_spawn("setup", f"w{i}")
+            orch_with_deps.record_completion("setup", success=False, error="fail")
+        status = orch_with_deps.get_status()
+        assert "setup" in status["tasks"]["feature-a"].get("last_error", "")
+
+    def test_partial_failure_only_affects_dependents(self, orch_with_deps):
+        orch_with_deps.start()
+        orch_with_deps.record_spawn("setup", "w1")
+        orch_with_deps.record_completion("setup", success=True)
+        # Fail feature-a (exhaust retries)
+        for i in range(3):
+            orch_with_deps.record_spawn("feature-a", f"w{i}")
+            orch_with_deps.record_completion("feature-a", success=False, error="fail")
+        status = orch_with_deps.get_status()
+        assert status["tasks"]["setup"]["status"] == "completed"
+        assert status["tasks"]["feature-a"]["status"] == "failed"
+        assert status["tasks"]["feature-b"]["status"] == "pending"  # unaffected
+        assert status["tasks"]["integration"]["status"] == "failed"  # depends on feature-a
+
+    def test_check_all_done_after_propagation(self, orch_with_deps):
+        orch_with_deps.start()
+        for i in range(3):
+            orch_with_deps.record_spawn("setup", f"w{i}")
+            orch_with_deps.record_completion("setup", success=False, error="fail")
+        assert orch_with_deps.check_all_done()
+
+
+class TestMergeOrder:
+    @patch("lib.orchestrator.subprocess.run")
+    def test_merge_respects_dependency_order(self, mock_run, orch_with_deps):
+        orch_with_deps.start()
+        # Complete all tasks
+        for name in ["setup", "feature-a", "feature-b", "integration"]:
+            orch_with_deps.record_spawn(name, f"w-{name}")
+            orch_with_deps.record_completion(name, success=True)
+
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        results = orch_with_deps.merge_all(cwd="/repo")
+        merged = [r.branch for r in results]
+        # setup must come before feature-a and feature-b
+        # feature-a and feature-b must come before integration
+        setup_idx = merged.index("task/setup")
+        fa_idx = merged.index("task/feature-a")
+        fb_idx = merged.index("task/feature-b")
+        int_idx = merged.index("task/integration")
+        assert setup_idx < fa_idx
+        assert setup_idx < fb_idx
+        assert fa_idx < int_idx
+        assert fb_idx < int_idx
+
+
+class TestSummary:
+    def test_generate_summary(self, orchestrator):
+        orchestrator.start()
+        orchestrator.record_spawn("stack", "w1")
+        orchestrator.record_completion("stack", success=True)
+        summary = orchestrator.generate_summary()
+        assert "stack" in summary
+        assert "pending" in summary.lower() or "completed" in summary.lower()
+
+    def test_summary_includes_all_tasks(self, orchestrator):
+        orchestrator.start()
+        summary = orchestrator.generate_summary()
+        for task in orchestrator._manifest.tasks:
+            assert task.name in summary
+
+    def test_summary_shows_blocked_by(self, orch_with_deps):
+        orch_with_deps.start()
+        summary = orch_with_deps.generate_summary()
+        # integration depends on feature-a and feature-b
+        assert "Blocked" in summary or "blocked" in summary
