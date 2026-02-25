@@ -29,7 +29,7 @@ except ImportError:
     class StateError(Exception):
         pass
 
-STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
+STATE_DIR = Path(__file__).resolve().parent.parent / ".state"
 
 
 def detect_handoff_scope(cwd: Path) -> Path:

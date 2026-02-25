@@ -13,7 +13,7 @@ import json
 import sys
 from pathlib import Path
 
-STATE_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/session.json"
+STATE_FILE = Path(__file__).resolve().parent.parent / ".state" / "session.json"
 
 # Token budgets per phase (approximate)
 PHASE_BUDGETS = {

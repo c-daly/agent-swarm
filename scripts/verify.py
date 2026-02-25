@@ -16,7 +16,7 @@ import shutil
 from pathlib import Path
 from typing import NamedTuple
 
-STATE_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/session.json"
+STATE_FILE = Path(__file__).resolve().parent.parent / ".state" / "session.json"
 
 
 class CheckResult(NamedTuple):

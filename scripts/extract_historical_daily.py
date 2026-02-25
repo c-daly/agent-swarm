@@ -8,8 +8,8 @@ import json
 from pathlib import Path
 from collections import defaultdict
 
-METRICS_HISTORY = Path.home() / ".claude/plugins/agent-swarm/.state/metrics_history.json"
-TELEMETRY_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/telemetry.json"
+METRICS_HISTORY = Path(__file__).resolve().parent.parent / ".state" / "metrics_history.json"
+TELEMETRY_FILE = Path(__file__).resolve().parent.parent / ".state" / "telemetry.json"
 
 # Token estimates by tool type
 TOKEN_ESTIMATES = {
