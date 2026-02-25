@@ -60,18 +60,6 @@ phases:
       - adversary
     checkpoint: true
 
-  - name: coverage
-    allowed_tool_categories:
-      - FILE_READ
-      - FILE_WRITE
-      - SHELL_SAFE
-      - WEB_RESEARCH
-    blocked_tools: []
-    eligible_agents:
-      - reviewer
-      - implementer
-    checkpoint: false
-
 transitions:
   test_writing:
     - implement
@@ -79,11 +67,8 @@ transitions:
     - test
   test:
     - implement
-    - coverage
     - review
-  coverage:
-    - test
-    - review
+    - test_writing
   review:
     - implement
     - complete

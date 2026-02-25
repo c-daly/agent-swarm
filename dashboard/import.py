@@ -562,7 +562,11 @@ def import_claude_transcripts(
 
     # Pass 1: main sessions — parse extracts agent_type mappings into agent_type_map
     for filepath in main_files:
-        ins, skip = _import_file(filepath)
+        try:
+            ins, skip = _import_file(filepath)
+        except (FileNotFoundError, OSError) as e:
+            print(f"  WARNING: skipping {filepath}: {e}", file=sys.stderr)
+            continue
         total_inserted += ins
         total_skipped += skip
         files_processed += 1
@@ -578,7 +582,11 @@ def import_claude_transcripts(
 
     # Pass 2: subagent files — agent_type_map now populated for lookups
     for filepath in sub_files:
-        ins, skip = _import_file(filepath)
+        try:
+            ins, skip = _import_file(filepath)
+        except (FileNotFoundError, OSError) as e:
+            print(f"  WARNING: skipping {filepath}: {e}", file=sys.stderr)
+            continue
         total_inserted += ins
         total_skipped += skip
         files_processed += 1

@@ -12,14 +12,14 @@ from protocol_assembly import assemble_subagent_briefing  # noqa: E402
 
 class TestBriefingContent:
     def test_briefing_contains_correct_tool_patterns(self):
-        """Briefing must contain mcp-call with correct backend tools."""
+        """Briefing must contain mcp-call with both native and serena tools."""
         briefing = assemble_subagent_briefing("implementer")
         assert "mcp-call" in briefing
-        # Must use serena tools (not native - native is blocked in mcp-call)
-        assert "serena__read_file" in briefing
+        # Must document native tools (read, write, edit, grep, glob, bash)
+        assert "native__read_file" in briefing
+        assert "native__bash" in briefing
+        # Must document serena symbolic tools
         assert "serena__find_symbol" in briefing
-        # Must NOT tell agents to use native__ via mcp-call
-        assert "mcp-call native__" not in briefing
 
     def test_briefing_contains_shell_aliases(self):
         """Briefing must document shell alias pattern for commands."""
@@ -47,7 +47,7 @@ class TestBriefingContent:
         briefing = assemble_subagent_briefing("implementer")
         assert len(briefing) < 8000
 
-    def test_briefing_no_wrong_timeout(self):
-        """Briefing should not mention wrong timeout value."""
+    def test_briefing_documents_timeout(self):
+        """Briefing should mention MCP call timeout for long-running commands."""
         briefing = assemble_subagent_briefing("implementer")
-        assert "30s" not in briefing
+        assert "timeout" in briefing.lower()

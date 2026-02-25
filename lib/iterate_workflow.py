@@ -165,7 +165,7 @@ PHASE_TOOLS = {
         "blocked": {"Edit", "Write", "Bash"},
     },
     Phase.DESIGN: {
-        # Design phase: write spec, run decomposer
+        # Design phase: write spec, plan document
         "allowed": {"Read", "Glob", "Grep", "Write", "native__bash", "Task"},
         "blocked": {"Bash"},
     },
@@ -416,15 +416,7 @@ def _get_workflow() -> IterateWorkflow:
 
 
 
-def _load_config() -> dict:
-    """Load workflow config."""
-    config_path = Path(__file__).parent.parent / "config" / "workflow.json"
-    if config_path.exists():
-        try:
-            return json.loads(config_path.read_text())
-        except json.JSONDecodeError:
-            pass
-    return {}
+
 
 
 def _is_spec(text: str) -> bool:
@@ -508,13 +500,8 @@ def start(
     if queue:
         content, _ = _resolve_input(queue, ".queue")
         _load_queue_content(content)
-    elif spec:
-        content, _ = _resolve_input(spec, ".spec")
-        _decompose_spec_content(content)
-    elif _is_spec(task):
-        _decompose_spec_content(task)
     # Determine starting phase based on input type
-    if queue or spec or _is_spec(task):
+    if queue:
         # Structured input: ready for orchestration
         starting_phase = Phase.ORCHESTRATE.value
         needs_intake = False
@@ -563,12 +550,6 @@ def _load_queue_content(content: str) -> list:
     tasks = queue_data.get("tasks", [])
     _log("info", "Queue loaded", task_count=len(tasks))
     return tasks
-
-
-def _decompose_spec_content(content: str) -> None:
-    """Decompose spec content into task queue."""
-    # TODO: integrate with decomposer to create queue
-    _log("info", "Spec decomposed", length=len(content))
 
 
 def get_phase() -> Optional[Phase]:
@@ -1247,45 +1228,6 @@ def set_spec_file(path: str) -> None:
     state["spec_file"] = path
     _set_state(state)
     _log("info", "Spec file set", path=path)
-
-
-def decompose_spec_to_queue() -> list[dict]:
-    """Decompose the spec file into task queue items.
-
-    Uses the decomposer to parse the spec and create implementation tasks.
-
-    Returns:
-        List of task dictionaries created.
-
-    Raises:
-        ValueError: If not in design phase or no spec file set.
-    """
-    phase = get_phase()
-    if phase != Phase.DESIGN:
-        raise ValueError("decompose_spec_to_queue only allowed in design phase")
-
-    state = _get_state()
-    spec_file = state.get("spec_file")
-    if not spec_file:
-        raise ValueError("No spec file set. Call set_spec_file() first.")
-
-    # Import decomposer (in scripts directory)
-    import sys
-    scripts_dir = Path(__file__).parent.parent / "scripts"
-    sys.path.insert(0, str(scripts_dir))
-    from decomposer import decompose_spec  # noqa: E402
-
-    # Generate a PR ID for task grouping
-    pr_id = state.get("pr_id", "workflow-" + state.get("task", "default")[:20])
-
-    tasks = decompose_spec(spec_file, pr_id, group_enums=True)
-
-    # Store task count in state
-    state["decomposed_task_count"] = len(tasks)
-    _set_state(state)
-
-    _log("info", "Spec decomposed", task_count=len(tasks), spec_file=spec_file)
-    return tasks
 
 
 # ============================================================================

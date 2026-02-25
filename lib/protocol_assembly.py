@@ -11,7 +11,6 @@ from typing import Optional, Tuple
 import sys
 import os
 
-# Add context module to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
@@ -22,32 +21,24 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 UNIVERSAL_PROTOCOL = """## Universal Protocol
 
 ### Efficiency
-- 3+ reads/searches → batch script
+- 3+ reads/searches -> batch script
 - Return summaries, not raw content
 - No duplicate reads
-- Track what you've already read
-
-### File Reading
-- Full file reads are rarely the right tool — prefer targeted approaches
-- `find_symbol` with `include_body=true`: get exactly the function/class you need
-- `search_for_pattern` with `context_lines_after`: find code + surrounding context
-- `get_symbols_overview`: understand file structure without reading content
-- `read_file` with `start_line`/`end_line`: read a known range, not the whole file
-- Only read full files for small config/data files or when you truly need everything
+- Track what you have already read
 
 ### Parallel Execution
 - Independent tool calls in ONE message
-- Don't: call → wait → call again
+- Do not: call -> wait -> call again
 - Do: single message with multiple calls
 
 ### Output
 - Bullets, not prose
-- File refs: `path:line`
+- File refs: path:line
 - Max 100 chars for summaries
 
 ### Failure
-- Fail fast, don't guess or hallucinate
-- 3 failed attempts → escalate to user
+- Fail fast, do not guess or hallucinate
+- 3 failed attempts -> escalate to user
 - Check permissions before operations
 """
 
@@ -59,17 +50,19 @@ UNIVERSAL_PROTOCOL = """## Universal Protocol
 AGENT_PROTOCOL = """## Main Agent Protocol
 
 ### Tool Access
-Tools via MCP router: `mcp__router__<server>__<tool>`
+Tools via MCP router: mcp__router__<server>__<tool>
 
 | Operation | Tool |
 |-----------|------|
-| Read file | `serena__read_file`, `native__read_file` |
-| Search | `native__grep`, `serena__search_for_pattern` |
-| Find files | `native__glob`, `serena__find_file` |
-| Find symbols | `serena__find_symbol`, `serena__get_symbols_overview` |
-| Edit code | `serena__replace_content`, `serena__replace_symbol_body` |
-| Run command | `native__bash` |
-| Write file | `serena__create_text_file` |
+| Read file | serena__read_file, native__read_file |
+| Search | native__grep, serena__search_for_pattern |
+| Find files | native__glob, serena__find_file |
+| Find symbols | serena__find_symbol, serena__get_symbols_overview |
+| Edit code | serena__replace_content, serena__replace_symbol_body |
+| Run command | native__bash |
+| Write file | serena__create_text_file |
+| Web fetch | native__web_fetch |
+| Web search | native__web_search |
 
 ### Tool Priority
 1. Serena symbolic tools (code understanding)
@@ -85,68 +78,117 @@ Tools via MCP router: `mcp__router__<server>__<tool>`
 
 SUBAGENT_PROTOCOL = """## Subagent Protocol
 
-### Tool Access — mcp-call
-All tools via `mcp-call <tool> '<json_args>'` in Bash.
+### Tool Access
+All tools via `mcp-call` in Bash. Two forms:
 
-| Operation | Command |
-|-----------|---------|
-| Read file | `mcp-call serena__read_file '{"relative_path": "src/main.py"}'` |
-| Search | `mcp-call serena__search_for_pattern '{"substring_pattern": "TODO"}'` |
-| Find files | `mcp-call serena__find_file '{"file_mask": "*.py", "relative_path": "."}'` |
-| Find symbols | `mcp-call serena__find_symbol '{"name_path_pattern": "MyClass"}'` |
-| Edit code | `mcp-call serena__replace_content '{"relative_path": "f.py", "needle": "old", "repl": "new", "mode": "literal"}'` |
-| Write file | `mcp-call serena__create_text_file '{"relative_path": "f.py", "content": "..."}'` |
+**Shell aliases** (raw args -> routed to native__bash):
+```
+mcp-call pytest -v tests/
+mcp-call git status
+mcp-call ruff check src/
+```
 
-### Shell Commands — aliases
-Run directly: `mcp-call pytest tests/`, `mcp-call git status`, `mcp-call ruff check .`
-Available: pytest, ruff, mypy, black, git, gh, python3
+**MCP tools** (JSON args):
+```
+mcp-call native__read_file '{"file_path": "/path"}'
+mcp-call native__write_file '{"file_path": "/path", "content": "..."}'
+mcp-call native__grep '{"pattern": "...", "path": "/dir"}'
+mcp-call native__glob '{"pattern": "**/*.py", "path": "/dir"}'
+mcp-call native__bash '{"command": "..."}'
+mcp-call native__web_fetch '{"url": "https://..."}'
+mcp-call native__web_search '{"query": "..."}'
+mcp-call serena__find_symbol '{"name_path_pattern": "ClassName"}'
+mcp-call serena__read_file '{"relative_path": "src/foo.py"}'
+```
+
+### Editing Files
+Prefer `serena__replace_content` over `native__edit_file` -- regex mode avoids
+JSON escaping issues with multi-line code:
+```
+mcp-call serena__replace_content '{"relative_path": "src/foo.py", "needle": "def old_fn.*?return None", "repl": "def new_fn():\\n    return 42", "mode": "regex"}'
+```
+For exact string replacement, use `"mode": "literal"`.
+
+### Expanding Summarized Output
+Large outputs are summarized with a `content_id`. To get the full content:
+```
+mcp-call router__get_full '{"content_id": "c1234abcdef56"}'
+```
+
+### How To Work
+1. Understand the task -- read the prompt carefully
+2. Find relevant code: `mcp-call native__grep` / `mcp-call serena__find_symbol`
+3. Read before editing: `mcp-call native__read_file`
+4. Make targeted changes: `mcp-call serena__replace_content`
+5. Verify: `mcp-call pytest -v <test_file>`
+6. If tests fail, read the output and fix -- don't guess
+
+### Long-Running Commands
+MCP calls timeout at ~30s. For longer commands:
+```
+mcp-call native__bash '{"command": "nohup pytest --tb=long > /tmp/out.txt 2>&1 &"}'
+# then later:
+mcp-call native__read_file '{"file_path": "/tmp/out.txt"}'
+```
+
+### When Things Go Wrong
+- JSON escaping failing? Use shell aliases: `mcp-call git status` not `mcp-call native__bash '{"command": "git status"}'`
+- Permission denied? You may not have access to that tool in your current role/phase.
+- Run `mcp-call` with no args to see available backends and examples.
 
 ### Constraints
-- Router enforces all permissions — blocked tools will return errors
+- No direct workflow state modification (orchestrator manages phases)
+- No access to main conversation context
 - Must complete task independently
 """
 
 
 # =============================================================================
-# ROLE PROTOCOLS - role-specific additions
+# ROLE PROTOCOLS - role constraints and permissions
 # =============================================================================
 
 ROLE_PROTOCOLS = {
     "implementer": """## Implementer Role
-- Write code to make tests pass
-- Follow existing conventions
-- No over-engineering
-- Commit frequently
+- Can read, write, edit files
+- Can run tests (pytest, ruff, mypy)
+- Can commit (git add, git commit) -- do NOT push
+- Minimal changes only -- no speculative features or refactoring beyond scope
+- Follow existing patterns in the codebase
 """,
     "explorer": """## Explorer Role
-- Search and understand codebase
-- Report findings clearly
-- No editing allowed
+- Read-only -- no file writes or edits
+- Search, read, and report findings
+- Return structured summaries, not raw dumps
 """,
     "reviewer": """## Reviewer Role
-- Check conventions and patterns
-- Note pitfalls
-- Suggest improvements
+- Read-only -- no file writes or edits
+- Check conventions, patterns, correctness
+- Flag issues with file:line references
+- Suggest improvements, don't implement them
 """,
     "architect": """## Architect Role
+- Read-only -- no file writes or edits
 - Design structure and interfaces
-- Consider dependencies
-- Document decisions
+- Consider dependencies and trade-offs
+- Document decisions clearly
 """,
     "debugger": """## Debugger Role
-- Trace execution paths
-- Identify root causes
-- Suggest minimal fixes
+- Can read files and run tests
+- Trace execution paths, identify root causes
+- Suggest minimal fixes with file:line references
+- Can write fixes if explicitly tasked
 """,
     "git-agent": """## Git Agent Role
+- Can run git and gh commands
 - Follow commit conventions
 - No force pushes
-- Clear commit messages
+- No pushing unless explicitly instructed
 """,
     "researcher": """## Researcher Role
-- Gather information
-- Summarize findings
-- No code changes
+- Read-only -- no file writes or edits
+- Can use web_fetch and web_search
+- Gather information, summarize findings
+- Return structured results
 """,
 }
 
@@ -163,14 +205,41 @@ DEFAULT_ROLE = """## Agent Role
 
 WORKFLOW_PROTOCOLS = {
     "iterate": """## Iterate Workflow
-- TDD discipline: tests FIRST, then implementation
-- Phases: test_writing → implement → test → review
-- Kick-back on failures
+Phases: implement -> test -> review
+
+### implement
+Write code to satisfy the task. When ready to test:
+```
+mcp-call workflow__workflow_advance_phase '{"workflow": "iterate", "phase": "test"}'
+```
+
+### test
+Run tests: `mcp-call pytest -v <test_file>`
+- All pass -> advance:
+  ```
+  mcp-call workflow__workflow_advance_phase '{"workflow": "iterate", "phase": "review"}'
+  ```
+- Failures -> back to implement:
+  ```
+  mcp-call workflow__workflow_advance_phase '{"workflow": "iterate", "phase": "implement"}'
+  ```
+
+### review
+Commit your work:
+```
+mcp-call git add <files>
+mcp-call git commit -m "<group>: <descriptive message>"
+```
+Do NOT push -- orchestrator handles that.
+If you spot issues, go back to implement.
 """,
     "orchestrate": """## Orchestrate Workflow
-- Spawn subagents for all work
-- No direct implementation
-- Coordinate and monitor
+Phases: intake -> design -> orchestrate
+
+- Orchestrator decides, subagents execute
+- No direct implementation -- delegate everything
+- Task queue in workflow state, orchestrator owns exclusively
+- Subagents run iterate workflow independently
 """,
 }
 
@@ -180,30 +249,51 @@ WORKFLOW_PROTOCOLS = {
 # =============================================================================
 
 PHASE_PROTOCOLS = {
+    "intake": """## Phase: Intake
+- Gather missing info, clarify requirements
+- Read relevant code to understand scope
+- -> design when requirements are clear
+""",
+    "design": """## Phase: Design
+- Create plan from intake findings
+- Break work into tasks with clear boundaries
+- -> orchestrate when plan is complete
+""",
     "orchestrate": """## Phase: Orchestrate
-- Spawn subagents for all work
-- No direct implementation
-- Use TaskOutput(block=false) for monitoring
+- Dequeue pending tasks, dispatch subagents with iterate workflow
+- On subagent return: mark complete, check for unblocked tasks
+- Group complete -> create PR
+- Monitor: dead agents -> reset task; PR comments -> new tasks
+- Done when: queue empty and no active agents and clean tree
 """,
     "test_writing": """## Phase: Test Writing
 - Write tests FIRST (TDD)
 - Cover edge cases
 - No implementation yet
+- -> implement when tests are written
 """,
     "implement": """## Phase: Implement
 - Make tests pass
 - Follow existing patterns
 - Minimal changes only
+- When tests pass -> advance to test phase
 """,
     "test": """## Phase: Test
-- Run pytest, ruff, coverage
-- No editing allowed
-- Report results only
+- Run: `mcp-call pytest -v <test_file>`
+- Run: `mcp-call ruff check <files>`
+- All pass -> advance to review
+- Failures -> back to implement
 """,
     "review": """## Phase: Review
-- Check for issues
-- Commit if clean
-- Report problems
+- Review your changes: `mcp-call git diff`
+- Check: conventions, correctness, no debug artifacts
+- Clean -> commit:
+  ```
+  mcp-call git add <files>
+  mcp-call git commit -m "<group>: <descriptive message>"
+  ```
+- Do NOT push
+- Issues found -> back to implement
 """,
 }
 
@@ -221,25 +311,17 @@ def _get_daemon_client():
         return None
 
 
-def get_workflow_state() -> Tuple[Optional[str], Optional[str]]:
-    """Query controller for current workflow and phase.
-    
-    Returns:
-        Tuple of (workflow_name, phase_name), either can be None.
-    """
+def get_workflow_state():
+    """Query controller for current workflow and phase."""
     try:
         client = _get_daemon_client()
         if not client:
             return None, None
-        
         with client:
             if not client.workflow_is_active():
                 return None, None
-            
             state = client.workflow_get_state()
-            workflow = state.get("workflow")
-            phase = state.get("phase")
-            return workflow, phase
+            return state.get("workflow"), state.get("phase")
     except Exception:
         return None, None
 
@@ -248,76 +330,53 @@ def get_workflow_state() -> Tuple[Optional[str], Optional[str]]:
 # ASSEMBLY FUNCTIONS
 # =============================================================================
 
-def get_role_protocol(role: str) -> str:
+def get_role_protocol(role):
     """Get role-specific protocol rules."""
     return ROLE_PROTOCOLS.get(role.lower(), DEFAULT_ROLE)
 
 
-def get_workflow_protocol(workflow: str) -> str:
+def get_workflow_protocol(workflow):
     """Get workflow-specific protocol rules."""
     return WORKFLOW_PROTOCOLS.get(workflow.lower(), "")
 
 
-def get_phase_protocol(phase: str) -> str:
+def get_phase_protocol(phase):
     """Get phase-specific protocol rules."""
     return PHASE_PROTOCOLS.get(phase.lower(), "")
 
 
-def assemble_agent_briefing() -> str:
-    """Assemble complete briefing for main agent.
-    
-    Queries controller for workflow/phase state and builds
-    appropriate briefing.
-    
-    Returns:
-        Complete briefing for main agent.
-    """
+def assemble_agent_briefing():
+    """Assemble complete briefing for main agent."""
     parts = [UNIVERSAL_PROTOCOL, AGENT_PROTOCOL]
-    
     workflow, phase = get_workflow_state()
-    
     if workflow:
         parts.append(get_workflow_protocol(workflow))
-    
     if phase:
         parts.append(get_phase_protocol(phase))
-    
     return "\n".join(parts)
 
 
-def assemble_subagent_briefing(role: str, max_tokens: int = 1500) -> str:
-    """Assemble complete briefing for subagent.
-    
-    Queries controller for workflow/phase state and builds
-    appropriate briefing including role-specific rules.
-    
-    Args:
-        role: Subagent role (implementer, explorer, etc.)
-        max_tokens: Maximum token budget for briefing.
-    
-    Returns:
-        Complete briefing for subagent within token budget.
-    """
+def assemble_subagent_briefing(
+    role,
+    workflow_override=None,
+    phase_override=None,
+):
+    """Assemble complete briefing for subagent."""
     parts = [UNIVERSAL_PROTOCOL, SUBAGENT_PROTOCOL, get_role_protocol(role)]
-    
+
     workflow, phase = get_workflow_state()
-    
+    workflow = workflow_override or workflow
+    phase = phase_override or phase
+
     if workflow:
         parts.append(get_workflow_protocol(workflow))
-    
     if phase:
         parts.append(get_phase_protocol(phase))
-    
-    briefing = "\n".join(parts)
-    
-    # Truncate if over budget
-    if estimate_tokens(briefing) > max_tokens:
-        briefing = briefing[:int(max_tokens * 3.5)]  # 3.5 for safety margin
-    
-    return briefing
+
+    return "\n".join(parts)
 
 
-def estimate_tokens(text: str) -> int:
+def estimate_tokens(text):
     """Estimate token count (rough: 4 chars per token)."""
     return len(text) // 4
 
@@ -329,17 +388,15 @@ def estimate_tokens(text: str) -> int:
 COMPRESSED_PROTOCOLS = ROLE_PROTOCOLS
 DEFAULT_PROTOCOL = DEFAULT_ROLE
 
-
-def get_compressed_protocol(agent_type: str) -> str:
+def get_compressed_protocol(agent_type):
     """Deprecated: use get_role_protocol instead."""
     return get_role_protocol(agent_type)
 
-
 def generate_agent_briefing(
-    agent_type: str,
-    phase: Optional[str] = None,
-    max_tokens: int = 1000,
-    include_context: bool = True,
-) -> str:
+    agent_type,
+    phase=None,
+    max_tokens=1000,
+    include_context=True,
+):
     """Deprecated: use assemble_subagent_briefing instead."""
-    return assemble_subagent_briefing(role=agent_type, max_tokens=max_tokens)
+    return assemble_subagent_briefing(role=agent_type)

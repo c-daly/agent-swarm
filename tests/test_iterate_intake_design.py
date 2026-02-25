@@ -118,7 +118,7 @@ class TestDesignPhaseEnum:
         assert "Glob" in PHASE_TOOLS[Phase.DESIGN]["allowed"]
 
     def test_design_allows_bash(self):
-        """Design phase should allow Bash (for decomposer)."""
+        """Design phase should allow Bash."""
         assert "native__bash" in PHASE_TOOLS[Phase.DESIGN]["allowed"]
 
 
