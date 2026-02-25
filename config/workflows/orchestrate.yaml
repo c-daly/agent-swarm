@@ -1,0 +1,57 @@
+name: orchestrate
+description: "Task coordination and agent spawning"
+initial_phase: orchestrate
+terminal_phase: done
+max_agents: 1
+
+phases:
+  - name: intake
+    allowed_tool_categories:
+      - FILE_READ
+      - FILE_SEARCH
+      - CODE_QUERY
+      - WEB_RESEARCH
+      - USER_INTERACTION
+    blocked_tools:
+      - native__bash
+      - native__write_file
+    eligible_agents:
+      - architect
+    checkpoint: false
+
+  - name: design
+    allowed_tool_categories:
+      - FILE_READ
+      - FILE_SEARCH
+      - CODE_QUERY
+      - WEB_RESEARCH
+      - USER_INTERACTION
+    blocked_tools:
+      - native__bash
+      - native__write_file
+    eligible_agents:
+      - architect
+    checkpoint: false
+
+  - name: orchestrate
+    allowed_tool_categories:
+      - FILE_READ
+      - FILE_SEARCH
+      - CODE_QUERY
+      - SUBAGENT
+      - USER_INTERACTION
+    blocked_tools:
+      - native__bash
+      - native__write_file
+    eligible_agents: []
+    checkpoint: false
+
+transitions:
+  orchestrate:
+    - intake
+    - done
+  intake:
+    - design
+    - orchestrate
+  design:
+    - orchestrate

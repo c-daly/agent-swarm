@@ -50,24 +50,12 @@ def _log(tool_name: str, message: str, level: str = "INFO") -> None:
         f.write(f"[{timestamp}] [{level}] [PID:{pid}] [{tool_name}] {message}\n")
 
 
+DAEMON_PORT = int(os.environ.get("DAEMON_PORT", "7523"))
+
+
 def _get_router_port() -> int:
-    """Get router port from port file."""
-    port_file = Path(__file__).parent.parent / ".state" / "router.port"
-    if not port_file.exists():
-        raise WorkflowClientError(
-            f"Router port file not found: {port_file}. "
-            "Is the router running?"
-        )
-    try:
-        content = port_file.read_text().strip()
-        # Handle both formats: "port:pid" (new) and "port" (legacy)
-        if ":" in content:
-            port_str = content.split(":")[0]
-        else:
-            port_str = content
-        return int(port_str)
-    except ValueError as e:
-        raise WorkflowClientError(f"Invalid port in {port_file}: {e}")
+    """Get router port."""
+    return DAEMON_PORT
 
 
 def _call_tool(tool_name: str, arguments: dict) -> Any:
@@ -97,7 +85,7 @@ def _call_tool(tool_name: str, arguments: dict) -> Any:
         _log(tool_name, f"Creating socket connection to 127.0.0.1:{port}")
 
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(5.0)  # 5 second timeout
+            s.settimeout(600.0)  # 10 min timeout for long-running commands (pytest etc.)
 
             _log(tool_name, "Connecting...")
             s.connect(("127.0.0.1", port))

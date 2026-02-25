@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
-Session End Hook - Auto-generate metrics dashboard & prompt memory capture
+Session End Hook - Learning capture and session cleanup
 
-Automatically generates the metrics dashboard at the end of each session
-and prompts the agent to write important learnings to memory.
+Captures learnings from conversation, compresses old sessions,
+and triggers memory distillation at session end.
 """
 
 import json
 import re
 import sys
-import subprocess
 import signal
 import glob
 from datetime import datetime
@@ -22,8 +21,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "context"))
 from lib.stores.compression import compress_old_sessions  # noqa: E402
 from memory import EpisodeStore, trigger_distillation  # noqa: E402
 
-SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
-CHARTS_SCRIPT = SCRIPTS_DIR / "charts.py"
 STATE_DIR = Path(__file__).parent.parent / ".state"
 SESSION_FILE = STATE_DIR / "session.json"
 
@@ -159,51 +156,6 @@ def capture_main_agent_learnings(session_id: str) -> int:
         return 0  # Don't fail hook on learning capture errors
 
 
-def generate_dashboard():
-    """Generate the metrics dashboard."""
-    try:
-        # First capture a snapshot of current metrics
-        snapshot_result = subprocess.run(
-            ["poetry", "run", "python", str(CHARTS_SCRIPT), "snapshot"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-
-        # Log snapshot result (don't fail if it errors)
-        if snapshot_result.returncode != 0:
-            print(
-                f"\u26a0\ufe0f Snapshot capture failed: {snapshot_result.stderr}", file=sys.stderr
-            )
-
-        # Then generate the full dashboard
-        result = subprocess.run(
-            ["poetry", "run", "python", str(CHARTS_SCRIPT), "all"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-
-        if result.returncode == 0:
-            # Extract dashboard path from output
-            for line in result.stdout.split("\n"):
-                if "dashboard.html" in line and "file://" in line:
-                    return {
-                        "success": True,
-                        "path": line.strip(),
-                        "message": "\u2705 Metrics dashboard generated automatically",
-                    }
-
-            return {"success": True, "message": "\u2705 Metrics dashboard generated"}
-        else:
-            return {"success": False, "error": result.stderr}
-
-    except subprocess.TimeoutExpired:
-        return {"success": False, "error": "Dashboard generation timed out"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
 def check_memory_write_needed(input_data):
     """Memory write is ALWAYS required at session end."""
 
@@ -321,47 +273,37 @@ def main():
     except json.JSONDecodeError:
         input_data = {}
 
-    # Generate dashboard
-    result = generate_dashboard()
-
     # Check if memory write is recommended
     memory_check = check_memory_write_needed(input_data)
 
     # Build output message
-    message = (
-        result.get("message", "")
-        or f"\u26a0\ufe0f Dashboard generation failed: {result.get('error', 'Unknown error')}"
-    )
-
-    if result.get("path"):
-        message += f"\n   {result['path']}"
+    messages = []
 
     # Capture LEARNING: tags from main agent conversation
     session_id = input_data.get("sessionId", "")
     if session_id:
         learnings_captured = capture_main_agent_learnings(session_id)
         if learnings_captured > 0:
-            message += f"\n\ud83d\udcdd Captured {learnings_captured} learning(s) from main agent"
+            messages.append(f"\ud83d\udcdd Captured {learnings_captured} learning(s) from main agent")
 
     # Compress old session files
     compression_result = compress_old_session_files()
     if compression_result.get("compressed", 0) > 0:
-        message += (
-            f"\n\ud83d\udce6 Compressed {compression_result['compressed']} old session file(s)"
-        )
+        messages.append(f"\ud83d\udce6 Compressed {compression_result['compressed']} old session file(s)")
 
     # Auto-distillation check
     distill_result = check_and_distill(Path.cwd())
     if distill_result.get("distilled"):
-        message += f"\n\ud83d\udcdd Distilled {distill_result['episode_count']} episodes into {distill_result['pattern_count']} patterns"
+        messages.append(f"\ud83d\udcdd Distilled {distill_result['episode_count']} episodes into {distill_result['pattern_count']} patterns")
     elif distill_result.get("error"):
-        message += f"\n\u26a0\ufe0f Auto-distillation failed: {distill_result['error']}"
+        messages.append(f"\u26a0\ufe0f Auto-distillation failed: {distill_result['error']}")
 
     # Append memory suggestion if needed
     if memory_check.get("needed"):
-        message += memory_check["message"]
+        messages.append(memory_check["message"])
 
     # Return result
+    message = "\n".join(messages) if messages else "Session ended"
     output = {"systemMessage": message}
 
     print(json.dumps(output))

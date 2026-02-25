@@ -8,7 +8,11 @@
   "skills": [
     "orchestrate",
     "spawn",
-    "iterate"
+    "iterate",
+    "parallel-orchestrate",
+    "agent-teams-workflow",
+    "pipeline",
+    "plan-to-manifest"
   ],
   "hooks": {
     "preToolUse": {

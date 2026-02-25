@@ -1,132 +1,253 @@
 #!/usr/bin/env python3
-"""MCP Router entry point.
+"""bin/mcp-router — stdio-to-TCP bridge with reconnect and keepalive.
 
-Starts the router as an MCP server on stdio.
-Reads backends from config/backends.json.
-
-Socket listener is SHARED across sessions:
-- First session starts the socket listener
-- Subsequent sessions reuse the existing socket
-- Each session has its own MCP stdio connection
+Claude Code spawns this as a subprocess. It bridges MCP JSON-RPC
+over stdio to the daemon's TCP port.
 """
 
 import json
 import os
-import signal
 import socket
+import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
-ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(ROOT / "lib"))
+DAEMON_PORT = int(os.environ.get("DAEMON_PORT", "7523"))
+ROOT = Path(__file__).resolve().parent.parent
+CALLER_ID = os.environ.get("AGENT_SWARM_CALLER_ID")
 
-from mcp_router import MCPRouter, start_stdio_server
+MAX_RECONNECT_ATTEMPTS = 5
+RECONNECT_DELAY = 0.5
+RECV_TIMEOUT = 600.0
 
-CONFIG_FILE = ROOT / "config" / "backends.json"
-STATE_DIR = ROOT / ".state"
-PID_FILE = STATE_DIR / "router.pid"
-PORT_FILE = STATE_DIR / "router.port"
-
-
-def check_existing_socket() -> int | None:
-    """Check if a healthy socket listener already exists.
-
-    Returns port number if healthy, None otherwise.
-    """
-    if not PID_FILE.exists() or not PORT_FILE.exists():
-        return None
-
-    try:
-        # Try new format (port:pid in single file) first
-        if PORT_FILE.exists():
-            port_content = PORT_FILE.read_text().strip()
-            if ":" in port_content:
-                port_str, pid_str = port_content.split(":", 1)
-                port, pid = int(port_str), int(pid_str)
-            else:
-                # Legacy: separate files
-                port = int(port_content)
-                pid = int(PID_FILE.read_text().strip()) if PID_FILE.exists() else None
-        else:
-            return None
-    except (ValueError, OSError):
-        return None
-    
-    if pid is None:
-        return None
-
-    # Check if process is running
-    try:
-        os.kill(pid, 0)  # Signal 0 = check existence
-    except OSError:
-        # Process dead, clean up stale files
-        _cleanup_stale_files()
-        return None
-
-    # Health check - try to connect
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(1.0)
-            s.connect(("127.0.0.1", port))
-            # Send a ping
-            s.sendall(b'{"jsonrpc":"2.0","method":"ping","id":0}\n')
-            response = s.recv(1024)
-            if b"pong" in response or b"result" in response:
-                return port
-    except (socket.error, socket.timeout):
-        pass
-
-    # Socket not responding, kill stale process
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except OSError:
-        pass
-    _cleanup_stale_files()
-    return None
+_inflight_lock = threading.Lock()
+_inflight: dict[int | str, bool] = {}
+_sock_lock = threading.Lock()
 
 
-def _cleanup_stale_files():
-    """Remove stale pid/port files."""
-    for f in [PID_FILE, PORT_FILE]:
-        try:
-            f.unlink()
-        except OSError:
-            pass
+def _set_keepalive(sock: socket.socket) -> None:
+  """Enable TCP keepalive with aggressive timings."""
+  sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+  try:
+      sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 10)
+      sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 5)
+      sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+  except (AttributeError, OSError):
+      pass
 
 
-def write_socket_info(port: int):
-    """Write current process info for socket sharing."""
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    # New format: port:pid in single file (PID_FILE kept for backwards compat)
-    PORT_FILE.write_text(f"{port}:{os.getpid()}")
-    PID_FILE.write_text(str(os.getpid()))  # Legacy compatibility
+def _try_start_daemon() -> bool:
+  start_script = ROOT / "bin" / "start-daemon"
+  if not start_script.exists():
+      return False
+  try:
+      subprocess.Popen(
+          [sys.executable, str(start_script)],
+          stdout=subprocess.DEVNULL,
+          stderr=subprocess.DEVNULL,
+      )
+      for _ in range(10):
+          s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+          try:
+              s.settimeout(1.0)
+              s.connect(("127.0.0.1", DAEMON_PORT))
+              return True
+          except (ConnectionRefusedError, socket.timeout):
+              time.sleep(0.3)
+          finally:
+              s.close()
+  except Exception:
+      pass
+  return False
+
+
+def _connect() -> socket.socket | None:
+  sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+  try:
+      sock.connect(("127.0.0.1", DAEMON_PORT))
+      _set_keepalive(sock)
+      sock.settimeout(RECV_TIMEOUT)
+      return sock
+  except ConnectionRefusedError:
+      sock.close()
+      if _try_start_daemon():
+          sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+          try:
+              sock.connect(("127.0.0.1", DAEMON_PORT))
+              _set_keepalive(sock)
+              sock.settimeout(RECV_TIMEOUT)
+              return sock
+          except (ConnectionRefusedError, OSError):
+              sock.close()
+  except OSError:
+      sock.close()
+  return None
+
+
+def _flush_inflight_errors() -> None:
+  with _inflight_lock:
+      if not _inflight:
+          return
+      ids = list(_inflight.keys())
+      _inflight.clear()
+  for req_id in ids:
+      error_resp = {
+          "jsonrpc": "2.0",
+          "id": req_id,
+          "error": {
+              "code": -32603,
+              "message": "Connection to daemon lost. Reconnecting...",
+          },
+      }
+      try:
+          sys.stdout.write(json.dumps(error_resp) + "\n")
+          sys.stdout.flush()
+      except (BrokenPipeError, OSError):
+          pass
+
+
+def _track_request(line: str) -> None:
+  try:
+      msg = json.loads(line)
+      req_id = msg.get("id")
+      if req_id is not None:
+          with _inflight_lock:
+              _inflight[req_id] = True
+  except (json.JSONDecodeError, TypeError):
+      pass
+
+
+def _untrack_response(line: str) -> None:
+  try:
+      msg = json.loads(line)
+      req_id = msg.get("id")
+      if req_id is not None:
+          with _inflight_lock:
+              _inflight.pop(req_id, None)
+  except (json.JSONDecodeError, TypeError):
+      pass
+
+
+def main():
+  sock = _connect()
+  if sock is None:
+      error = {
+          "jsonrpc": "2.0",
+          "id": None,
+          "error": {
+              "code": -32603,
+              "message": "Daemon not running. Run start-claude to start it.",
+          },
+      }
+      sys.stdout.write(json.dumps(error) + "\n")
+      sys.stdout.flush()
+      sys.exit(1)
+
+  connected = threading.Event()
+  connected.set()
+  shutdown = threading.Event()
+
+  def tcp_to_stdout():
+      nonlocal sock
+      buf = b""
+      while not shutdown.is_set():
+          if not connected.is_set():
+              connected.wait(timeout=1.0)
+              buf = b""
+              continue
+          try:
+              chunk = sock.recv(8192)
+              if not chunk:
+                  connected.clear()
+                  _flush_inflight_errors()
+                  continue
+              buf += chunk
+              while b"\n" in buf:
+                  line, buf = buf.split(b"\n", 1)
+                  decoded = line.decode()
+                  _untrack_response(decoded)
+                  sys.stdout.write(decoded + "\n")
+                  sys.stdout.flush()
+          except socket.timeout:
+              connected.clear()
+              _flush_inflight_errors()
+          except (BrokenPipeError, OSError):
+              connected.clear()
+              _flush_inflight_errors()
+              buf = b""
+
+  def reconnect_loop():
+      nonlocal sock
+      while not shutdown.is_set():
+          if connected.is_set():
+              shutdown.wait(timeout=1.0)
+              continue
+          for attempt in range(MAX_RECONNECT_ATTEMPTS):
+              if shutdown.is_set():
+                  return
+              time.sleep(RECONNECT_DELAY * (attempt + 1))
+              new_sock = _connect()
+              if new_sock is not None:
+                  with _sock_lock:
+                      try:
+                          sock.close()
+                      except OSError:
+                          pass
+                      sock = new_sock
+                  connected.set()
+                  break
+          else:
+              shutdown.set()
+              sys.exit(1)
+
+  reader = threading.Thread(target=tcp_to_stdout, daemon=True)
+  reconnector = threading.Thread(target=reconnect_loop, daemon=True)
+  reader.start()
+  reconnector.start()
+
+  try:
+      for line in sys.stdin:
+          # Inject _caller into tools/call arguments so the daemon knows
+          # which SDK agent is making the request.
+          if CALLER_ID:
+              try:
+                  msg = json.loads(line)
+                  if msg.get("method") == "tools/call":
+                      msg.setdefault("params", {}).setdefault("arguments", {})["_caller"] = CALLER_ID
+                      line = json.dumps(msg) + "\n"
+              except (json.JSONDecodeError, KeyError, TypeError):
+                  pass
+          _track_request(line)
+          if not connected.is_set():
+              connected.wait(timeout=5.0)
+              if not connected.is_set():
+                  _flush_inflight_errors()
+                  continue
+          try:
+              with _sock_lock:
+                  sock.sendall(line.encode())
+          except (BrokenPipeError, OSError):
+              connected.clear()
+              _flush_inflight_errors()
+              connected.wait(timeout=10.0)
+              if connected.is_set():
+                  try:
+                      with _sock_lock:
+                          sock.sendall(line.encode())
+                  except (BrokenPipeError, OSError):
+                      pass
+  except (BrokenPipeError, OSError):
+      pass
+  finally:
+      shutdown.set()
+      try:
+          sock.close()
+      except OSError:
+          pass
 
 
 if __name__ == "__main__":
-    router = MCPRouter()
+  main()
 
-    # Load and register backends
-    if CONFIG_FILE.exists():
-        backends = json.loads(CONFIG_FILE.read_text())
-        for name, config in backends.items():
-            router.register_server(
-                name=name,
-                command=config["command"],
-                tool_prefix=config.get("tool_prefix", ""),
-            )
-
-    # Check for existing shared socket
-    existing_port = check_existing_socket()
-
-    if existing_port:
-        # Reuse existing socket listener
-        sys.stderr.write(f"Reusing existing router socket on port {existing_port}\n")
-        port = existing_port
-    else:
-        # Start new socket listener (we're the first/master)
-        port = router.start_socket_listener()
-        write_socket_info(port)
-        sys.stderr.write(f"Started router socket listener on port {port}\n")
-
-    # Always start MCP stdio server (per-session)
-    start_stdio_server(router)

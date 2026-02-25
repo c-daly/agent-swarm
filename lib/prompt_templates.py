@@ -62,14 +62,15 @@ IMPLEMENTER_PROMPTS = {
 **Files to Modify:**
 {suggested_files}
 
-Follow the patterns shown above. Verify side effects before changes.""",
+Follow the patterns shown above. Use EditFile/WriteFile to make changes, then RunShell to run tests.""",
 
     "without_exploration": """Implement: {task_description}
 
 **Requirements:**
 {requirements}
 
-Explore the codebase first to understand existing patterns. Verify side effects before changes."""
+Use ReadFile and SearchContent to explore the codebase first. Verify side effects before changes.
+Use EditFile/WriteFile to make changes, then RunShell to run tests."""
 }
 
 

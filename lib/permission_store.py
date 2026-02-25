@@ -83,10 +83,6 @@ class PermissionStore:
         Returns:
             (allowed, reason) tuple
         """
-        # Check workflow requirement for write tools
-        if not self.workflow_active and tool_name in FILE_WRITE_TOOLS:
-            return False, "No active workflow - editing blocked"
-
         # Check phase permissions
         if self.phase_permissions:
             # Check blocked tools list

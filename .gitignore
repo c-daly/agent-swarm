@@ -15,6 +15,16 @@ __pycache__/
 
 # Session artifacts
 HANDOFF.md
-.claude/
+.claude/*
+!.claude/settings.json
 .logs/
 .worktrees/
+
+# Runtime data
+data/*.db
+data/*.db-shm
+data/*.db-wal
+*.db-shm
+*.db-wal
+logs/*.log
+.daemon.lock

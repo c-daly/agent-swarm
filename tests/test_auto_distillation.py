@@ -188,18 +188,17 @@ class TestSessionEndIntegration:
         episodes_file.write_text(episodes_content)
         
         # Mock other functions that might fail
-        with patch.object(session_end, 'generate_dashboard', return_value={"success": True, "message": "Dashboard generated"}):
-            with patch.object(session_end, 'compress_old_session_files', return_value={"compressed": 0}):
-                with patch.object(session_end, 'check_and_distill', return_value={"distilled": True, "pattern_count": 5, "episode_count": 12}):
-                    # Capture output
-                    import io
-                    captured_output = io.StringIO()
-                    monkeypatch.setattr(sys, 'stdout', captured_output)
-                    monkeypatch.setattr(sys, 'stdin', io.StringIO('{}'))
-                    
-                    session_end.main()
-                    
-                    output = captured_output.getvalue()
-                    result = json.loads(output)
-                    
-                    assert "Distilled 12 episodes into 5 patterns" in result["systemMessage"]
+        with patch.object(session_end, 'compress_old_session_files', return_value={"compressed": 0}):
+            with patch.object(session_end, 'check_and_distill', return_value={"distilled": True, "pattern_count": 5, "episode_count": 12}):
+                # Capture output
+                import io
+                captured_output = io.StringIO()
+                monkeypatch.setattr(sys, 'stdout', captured_output)
+                monkeypatch.setattr(sys, 'stdin', io.StringIO('{}'))
+                
+                session_end.main()
+                
+                output = captured_output.getvalue()
+                result = json.loads(output)
+                
+                assert "Distilled 12 episodes into 5 patterns" in result["systemMessage"]

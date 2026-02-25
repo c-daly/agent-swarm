@@ -1,67 +1,54 @@
-# Subagent Operating Protocol
+# SUBAGENT OPERATING PROTOCOL
 
-**You are a subagent spawned by the orchestrator.**
+## Tools — Calling Convention
 
-You are in the implementer workflow (WORK phase) by default. Advance to VERIFY when implementation is complete.
+All tools are called via Bash with `mcp-call` prefix. You only have `Bash` — use it like this:
 
-## Available Tools
-
-You access tools through the MCP router. Use the most appropriate tool for each operation:
-
-| Operation | Tool | When to Use |
-|-----------|------|-------------|
-| Search code | `serena__search_for_pattern` | Find text across files |
-| Read files | `serena__read_file`, `native__read_file` | Read file contents |
-| Find symbols | `serena__find_symbol` | Find class/function definitions |
-| Get file overview | `serena__get_symbols_overview` | See structure of a file |
-| List/find files | `native__glob`, `serena__find_file` | Find files by pattern |
-| Run commands | `native__bash` | git, pytest, ruff, gh, python3 |
-| Edit code | `serena__replace_content` | Replace text in files |
-| Replace symbol | `serena__replace_symbol_body` | Replace entire function/class |
-
-Use the purpose-built tool when one exists. Fall back to `native__bash` only for shell commands (git, pytest, ruff, gh) that have no dedicated tool.
-
-### Multi-Repo Operations
-
-Use `--cwd` flag with `native__bash` for commands in a specific repository:
-```
-native__bash 'git -C /path/to/repo status'
+```bash
+mcp-call <tool_name> '<json_args>'
 ```
 
-## CRITICAL: Token Efficiency Rules
+### Available Tools
 
-### File Reading Limits
-- **MAX 5 file reads** before you must write a batch script
-- Use write + bash to create and run scripts for multiple files
+| Op | Command |
+|----|---------|
+| Read files | `mcp-call native__read_file '{"file_path": "/absolute/path"}'` |
+| Write files | `mcp-call native__write_file '{"file_path": "/absolute/path", "content": "..."}'` |
+| Edit files | `mcp-call native__edit_file '{"file_path": "/absolute/path", "old_string": "...", "new_string": "..."}'` |
+| Find files | `mcp-call native__glob '{"pattern": "**/*.py", "path": "/dir"}'` |
+| Search code | `mcp-call native__grep '{"pattern": "regex", "path": "/dir"}'` |
+| Run commands | `mcp-call native__bash '{"command": "pytest tests/"}'` |
 
-### Search Limits
-- **MAX 5 searches** before you must batch
-- Use scripts with `from mcp_bridge import native_grep, native_glob`
-- Process results in script, return summary only
+### Examples
 
-### Duplicate Prevention
-- **Track what you've read** - don't read the same file twice
+```bash
+# Read a file
+mcp-call native__read_file '{"file_path": "/home/fearsidhe/projects/myproject/src/main.py"}'
 
-### Script Requirements
-When you need to:
-- Read 3+ files → Write a batch script
-- Search 3+ patterns → Write a batch script
-- Process large results → Write a script, output summary only
+# Write a file
+mcp-call native__write_file '{"file_path": "/home/fearsidhe/projects/myproject/src/new.py", "content": "class Foo:\n    pass\n"}'
 
-## Git (REVIEW Phase)
+# Run tests
+mcp-call native__bash '{"command": "cd /home/fearsidhe/projects/myproject && pytest tests/ -v"}'
 
-When your task enters REVIEW phase (tests pass):
+# Git operations
+mcp-call native__bash '{"command": "cd /home/fearsidhe/projects/myproject && git add -A && git commit -m \"feat: add feature\""}'
+```
 
-1. Verify branch: `native__bash 'git branch --show-current'`
-2. **NEVER** create branches (`git checkout -b`) — orchestrator's job
-3. Commit: `native__bash 'git commit -m "feat: <description>"'`
-4. Push: `native__bash 'git push -u origin <branch>'`
-5. Create PR: `native__bash 'gh pr create --title "..." --body "..."'`
+**IMPORTANT:** Do NOT use bare `Bash` commands like `cat`, `echo`, `python3`. Always use `mcp-call`.
 
-## Enforcement
+## Long-Running Commands (pytest, builds)
+MCP tool calls timeout at ~30s. For commands that take longer (e.g. full test suite):
+```bash
+mcp-call native__bash '{"command": "nohup pytest tests/ > /tmp/output.txt 2>&1 &"}'
+# then later:
+mcp-call native__bash '{"command": "cat /tmp/output.txt"}'
+```
 
-The orchestrator monitors your token usage. Inefficient subagents may be terminated early.
+## Efficiency
+- Track what you've read — no duplicate reads
+- Output summaries only, not raw data
 
-**Stay focused. Be efficient. Complete your task.**
-
-
+## Git (REVIEW phase only)
+1. Verify branch (never create branches — orchestrator's job)
+2. Commit -> push -> create PR via `gh`

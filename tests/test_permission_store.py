@@ -158,16 +158,18 @@ class TestPermissionStoreSerialization:
 class TestIsToolAllowed:
     """Test is_tool_allowed method."""
 
-    def test_no_workflow_blocks_writes(self):
-        """Should block write tools when no workflow active."""
+    def test_file_write_allowed_without_workflow(self):
+        """File writes should not be blocked solely because no workflow is active."""
         store = PermissionStore(workflow_active=False)
+        allowed, reason = store.is_tool_allowed("Edit")
+        assert allowed is True
+        assert "workflow" not in reason.lower()
 
+    def test_read_allowed_without_workflow(self):
+        """Read tools should always work without workflow."""
+        store = PermissionStore(workflow_active=False)
         allowed, reason = store.is_tool_allowed("Read")
         assert allowed is True
-
-        allowed, reason = store.is_tool_allowed("Edit")
-        assert allowed is False
-        assert "No active workflow" in reason
 
     def test_blocked_tools_in_phase(self):
         """Should block tools listed in phase permissions."""

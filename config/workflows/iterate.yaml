@@ -1,0 +1,74 @@
+name: iterate
+description: "TDD implementation loop with review gates"
+initial_phase: test_writing
+terminal_phase: complete
+max_agents: 3
+
+phases:
+  - name: test_writing
+    allowed_tool_categories:
+      - FILE_READ
+      - FILE_WRITE
+      - CODE_QUERY
+      - FILE_SEARCH
+      - SHELL_SAFE
+    blocked_tools: []
+    eligible_agents:
+      - implementer
+    checkpoint: false
+
+  - name: implement
+    allowed_tool_categories:
+      - FILE_READ
+      - FILE_WRITE
+      - CODE_QUERY
+      - CODE_EDIT
+      - FILE_SEARCH
+      - SHELL_SAFE
+    blocked_tools: []
+    eligible_agents:
+      - implementer
+    checkpoint: false
+
+  - name: test
+    allowed_tool_categories:
+      - FILE_READ
+      - SHELL_SAFE
+    blocked_tools:
+      - native__write_file
+      - serena__create_text_file
+      - serena__replace_content
+      - serena__replace_symbol_body
+    eligible_agents:
+      - debugger
+      - implementer
+    checkpoint: true
+
+  - name: review
+    allowed_tool_categories:
+      - FILE_READ
+      - CODE_QUERY
+      - WEB_RESEARCH
+    blocked_tools:
+      - native__bash
+      - native__write_file
+      - serena__create_text_file
+      - serena__replace_content
+      - serena__replace_symbol_body
+    eligible_agents:
+      - reviewer
+      - adversary
+    checkpoint: true
+
+transitions:
+  test_writing:
+    - implement
+  implement:
+    - test
+  test:
+    - implement
+    - review
+    - test_writing
+  review:
+    - implement
+    - complete
