@@ -86,7 +86,10 @@ class Controller:
     def _dashboard_import_loop(self) -> None:
         """Run dashboard import periodically."""
         while True:
-            self.run_dashboard_import()
+            try:
+                self.run_dashboard_import()
+            except Exception:
+                pass
             time.sleep(self._import_interval)
 
     def run_dashboard_import(self) -> dict:
@@ -503,7 +506,7 @@ class Controller:
 
     def _native_web_search(self, args: dict) -> dict:
         """Search the web and return results."""
-        from ddgs import DDGS
+        from duckduckgo_search import DDGS
 
         query = args.get("query", "")
         if not query:

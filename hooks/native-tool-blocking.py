@@ -11,10 +11,11 @@ This hook is the first gate. Tools that pass through still need
 permission from the controller (permissions.yaml).
 """
 import json
+import os
 import sys
 
 
-MCP_CALL_PATH = "/home/fearsidhe/.claude/plugins/agent-swarm/bin/mcp-call"
+MCP_CALL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bin", "mcp-call")
 
 # Native Claude Code tools → router equivalents.
 # Tools in this map are BLOCKED — use the router version instead.
@@ -67,7 +68,7 @@ def main():
     # Rule 2: Bash with mcp-call prefix → allow (router access path)
     if tool_name == "Bash":
         cmd = tool_input.get("command", "").strip()
-        if cmd.startswith("mcp") or cmd.startswith(MCP_CALL_PATH):
+        if cmd.startswith("mcp-call ") or cmd == "mcp-call" or cmd.startswith(MCP_CALL_PATH):
             print(json.dumps(allow("mcp-call")))
             return
 
