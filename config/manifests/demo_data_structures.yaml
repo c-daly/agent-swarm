@@ -1,0 +1,60 @@
+# Demo manifest: Data Structures
+# Three independent data structures, each with TDD (10+ tests)
+
+project: data-structures
+base_branch: main
+max_retries: 2
+
+tasks:
+  - name: stack
+    description: |
+      Implement a Stack class with the following operations:
+      - push(item): Add item to top of stack
+      - pop() -> item: Remove and return top item (raise IndexError if empty)
+      - peek() -> item: Return top item without removing (raise IndexError if empty)
+      - is_empty() -> bool: Check if stack is empty
+      - size() -> int: Return number of items
+      - clear(): Remove all items
+      - __contains__(item) -> bool: Support 'in' operator
+      - __iter__(): Support iteration (top to bottom)
+      - __repr__(): String representation
+      - from_iterable(cls, iterable) -> Stack: Class method constructor
+    target_dir: src/stack
+    test_dir: tests/test_stack
+    min_tests: 10
+
+  - name: queue
+    description: |
+      Implement a Queue class with the following operations:
+      - enqueue(item): Add item to back of queue
+      - dequeue() -> item: Remove and return front item (raise IndexError if empty)
+      - peek() -> item: Return front item without removing (raise IndexError if empty)
+      - is_empty() -> bool: Check if queue is empty
+      - size() -> int: Return number of items
+      - clear(): Remove all items
+      - __contains__(item) -> bool: Support 'in' operator
+      - __iter__(): Support iteration (front to back)
+      - __repr__(): String representation
+      - from_iterable(cls, iterable) -> Queue: Class method constructor
+    target_dir: src/queue
+    test_dir: tests/test_queue
+    min_tests: 10
+
+  - name: linked_list
+    description: |
+      Implement a LinkedList class (singly linked) with the following operations:
+      - append(item): Add item to end
+      - prepend(item): Add item to beginning
+      - insert(index, item): Insert at index (raise IndexError if out of range)
+      - remove(item): Remove first occurrence (raise ValueError if not found)
+      - pop(index=-1) -> item: Remove and return item at index
+      - __getitem__(index) -> item: Index access
+      - __len__() -> int: Length
+      - __contains__(item) -> bool: Support 'in' operator
+      - __iter__(): Support iteration
+      - __repr__(): String representation
+      - reverse(): Reverse the list in place
+      - to_list() -> list: Convert to Python list
+    target_dir: src/linked_list
+    test_dir: tests/test_linked_list
+    min_tests: 10

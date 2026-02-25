@@ -143,3 +143,53 @@ def mock_workflow_client(monkeypatch):
     monkeypatch.setattr(workflow_client, "list_agents", _mock_state.list_agents)
 
     yield _mock_state
+
+
+# ============================================================================
+# Parallel Orchestration Fixtures
+# ============================================================================
+# These fixtures support tests for the parallel-orchestrate subsystem
+# (manifest-driven CLI orchestration, separate from MCP router workflows).
+
+@pytest.fixture
+def tmp_state_dir(tmp_path):
+    """Provide an isolated state directory for parallel orchestration tests."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    old = os.environ.get("ORCHESTRATION_STATE_DIR")
+    os.environ["ORCHESTRATION_STATE_DIR"] = str(state_dir)
+    yield state_dir
+    if old is None:
+        os.environ.pop("ORCHESTRATION_STATE_DIR", None)
+    else:
+        os.environ["ORCHESTRATION_STATE_DIR"] = old
+
+
+@pytest.fixture
+def tmp_manifest_file(tmp_path):
+    """Create a temporary YAML manifest file."""
+    def _create(content: str) -> str:
+        path = tmp_path / "manifest.yaml"
+        path.write_text(content)
+        return str(path)
+    return _create
+
+
+@pytest.fixture
+def sample_manifest_yaml():
+    """Return a valid manifest YAML string."""
+    return """\
+project: test-project
+base_branch: main
+tasks:
+  - name: stack
+    description: "Implement a stack data structure"
+    target_dir: src/stack
+    test_dir: tests/test_stack
+    min_tests: 10
+  - name: queue
+    description: "Implement a queue data structure"
+    target_dir: src/queue
+    test_dir: tests/test_queue
+    min_tests: 10
+"""

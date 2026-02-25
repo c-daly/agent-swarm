@@ -1,0 +1,4 @@
+{
+  "name": "plan-to-manifest",
+  "description": "Translate a superpowers implementation plan into a parallel orchestration manifest YAML"
+}
