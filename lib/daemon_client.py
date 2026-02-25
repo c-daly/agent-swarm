@@ -203,7 +203,7 @@ class DaemonClient:
         """Send JSON-RPC request, block for response, return result."""
         if self._sock is None:
             raise ConnectionError("Not connected")
-        if method != "agent/register" and not self._registered:
+        if not self._registered and method not in ("agent/register", "tools/list"):
             raise RuntimeError("Must call register() before other methods")
 
         self._request_id += 1

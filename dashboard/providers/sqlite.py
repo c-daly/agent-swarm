@@ -648,9 +648,13 @@ class SqliteProvider:
 
     def activity_heatmap(self, filters: dict) -> dict:
         where, params = build_where(filters)
+        # Compute local UTC offset (accounts for DST)
+        import time as _time
+        _utc_offset_hours = -_time.timezone // 3600 if _time.daylight == 0 else -_time.altzone // 3600
+        _offset_str = f"{_utc_offset_hours:+d} hours"
         rows = self._query(
-            f"SELECT CAST(strftime('%w', timestamp, '-5 hours') AS INTEGER) as day_of_week, "
-            f"CAST(strftime('%H', timestamp, '-5 hours') AS INTEGER) as hour_of_day, "
+            f"SELECT CAST(strftime('%w', timestamp, '{_offset_str}') AS INTEGER) as day_of_week, "
+            f"CAST(strftime('%H', timestamp, '{_offset_str}') AS INTEGER) as hour_of_day, "
             f"COUNT(*) as event_count FROM events {where} GROUP BY day_of_week, hour_of_day",
             params,
         )

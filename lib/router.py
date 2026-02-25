@@ -29,6 +29,23 @@ MAX_IDLE_TIME = 1800.0      # Drop connection after 30 min with no data
 _MCP_VERSION = "2024-11-05"
 _SERVER_INFO = {"name": "agent-swarm", "version": "2.0.0"}
 
+# Custom daemon method names -> internal tool names
+_DAEMON_METHODS = {
+    "agent/register": "router__register_agent",
+    "workflow/start": "workflow__workflow_start",
+    "workflow/stop": "workflow__workflow_stop",
+    "workflow/get_state": "workflow__workflow_get_state",
+    "workflow/get_value": "workflow__workflow_get_value",
+    "workflow/set_value": "workflow__workflow_set_value",
+    "workflow/is_active": "workflow__workflow_is_active",
+    "workflow/advance_phase": "workflow__workflow_advance_phase",
+    "workflow/pass_checkpoint": "workflow__workflow_pass_checkpoint",
+    "agent/get_state": "workflow__agent_get_state",
+    "agent/set_state": "workflow__agent_set_state",
+    "agent/delete": "workflow__agent_delete",
+    "agent/list": "workflow__list_agents",
+}
+
 
 class Router:
     """TCP server that accepts MCP and internal JSON-RPC connections."""
@@ -177,6 +194,10 @@ class Router:
         if method == "daemon/shutdown":
             return self._handle_daemon_shutdown(message)
 
+        tool_name = _DAEMON_METHODS.get(method)
+        if tool_name:
+            return self._handle_daemon_method(message, tool_name)
+
         return {
             "jsonrpc": "2.0",
             "id": message.get("id"),
@@ -285,6 +306,26 @@ class Router:
         """Shutdown after a brief delay to allow the response to be sent."""
         time.sleep(0.1)
         self.shutdown()
+
+    def _handle_daemon_method(self, message: dict, tool_name: str) -> dict:
+        """Route custom daemon methods to the controller (raw result, no MCP envelope)."""
+        msg_id = message.get("id")
+        params = message.get("params", {})
+        try:
+            result = self._controller.handle_call(tool_name, dict(params))
+        except PermissionDeniedError as e:
+            return {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "error": {"code": -32603, "message": str(e)},
+            }
+        except Exception as e:
+            return {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "error": {"code": -32603, "message": f"Internal error: {e}"},
+            }
+        return {"jsonrpc": "2.0", "id": msg_id, "result": result}
 
     # --- Wire helpers ---
 

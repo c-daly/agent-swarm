@@ -302,26 +302,20 @@ PHASE_PROTOCOLS = {
 # STATE QUERYING
 # =============================================================================
 
-def _get_daemon_client():
-    """Get daemon client for state queries."""
-    try:
-        from lib.daemon_client import DaemonClient
-        return DaemonClient()
-    except ImportError:
-        return None
+# Known workflow IDs to check (matches permission_query._KNOWN_WORKFLOWS)
+_KNOWN_WORKFLOWS = ["iterate", "debug", "pr_comment", "implementer"]
 
 
 def get_workflow_state():
     """Query controller for current workflow and phase."""
     try:
-        client = _get_daemon_client()
-        if not client:
-            return None, None
-        with client:
-            if not client.workflow_is_active():
-                return None, None
-            state = client.workflow_get_state()
-            return state.get("workflow"), state.get("phase")
+        import workflow_client
+        for wf_id in _KNOWN_WORKFLOWS:
+            if workflow_client.workflow_is_active(wf_id):
+                state = workflow_client.workflow_get_state(wf_id)
+                if state:
+                    return state.get("workflow", wf_id), state.get("phase")
+        return None, None
     except Exception:
         return None, None
 
