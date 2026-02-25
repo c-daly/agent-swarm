@@ -1,6 +1,6 @@
 {
   "serena": {
-    "command": ["uvx", "--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server", "--project", "/home/fearsidhe/.claude/plugins/agent-swarm"],
+    "command": ["uvx", "--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server", "--project", "{{PLUGIN_ROOT}}"],
     "tool_prefix": "serena"
   },
   "context7": {
@@ -12,11 +12,11 @@
     "tool_prefix": "playwright"
   },
   "native": {
-    "command": ["python3", "/home/fearsidhe/.claude/plugins/agent-swarm/bin/mcp-native"],
+    "command": ["python3", "{{PLUGIN_ROOT}}/bin/mcp-native"],
     "tool_prefix": "native"
   },
   "workflow": {
-    "command": ["python3", "/home/fearsidhe/.claude/plugins/agent-swarm/lib/workflow_server.py"],
+    "command": ["python3", "{{PLUGIN_ROOT}}/lib/workflow_server.py"],
     "tool_prefix": "workflow"
   }
 }

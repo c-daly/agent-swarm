@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 from datetime import datetime
 
-STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
+STATE_DIR = Path(__file__).resolve().parent.parent / ".state"
 SUBAGENT_METRICS = STATE_DIR / "subagent_metrics.json"
 TASK_OUTPUT_DIR = Path("/tmp/claude/-home-fearsidhe/tasks")
 

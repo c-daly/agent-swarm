@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 # Log file location (alongside other state files)
-LOG_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
+LOG_DIR = Path(__file__).resolve().parent.parent / ".state"
 LOG_FILE = LOG_DIR / "hooks.log"
 
 # Default log level, overridable via environment

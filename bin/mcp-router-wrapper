@@ -4,4 +4,5 @@
 # Source zshrc for OPENAI_API_KEY etc
 [ -f ~/.zshrc ] && source ~/.zshrc 2>/dev/null
 
-exec /home/fearsidhe/.claude/plugins/agent-swarm/bin/mcp-router "$@"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+exec "$SCRIPT_DIR/mcp-router" "$@"

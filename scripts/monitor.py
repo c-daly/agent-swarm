@@ -14,9 +14,9 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-STATE_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/session.json"
-LOG_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/activity.log"
-STATS_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/stats.json"
+STATE_FILE = Path(__file__).resolve().parent.parent / ".state" / "session.json"
+LOG_FILE = Path(__file__).resolve().parent.parent / ".state" / "activity.log"
+STATS_FILE = Path(__file__).resolve().parent.parent / ".state" / "stats.json"
 
 
 def load_state() -> dict:

@@ -1,6 +1,6 @@
-# /home/fearsidhe/.claude/plugins/agent-swarm/tests/test_event_client.py
+# tests/test_event_client.py
 import sys
-sys.path.insert(0, '/home/fearsidhe/.claude/plugins/agent-swarm/lib')
+from pathlib import Path; sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'lib'))
 from workflow_client import generate_correlation_id  # noqa: E402
 
 def test_generate_correlation_id_returns_string():

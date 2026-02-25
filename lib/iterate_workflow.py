@@ -20,7 +20,7 @@ from enum import Enum
 
 # Allow override via environment variable for test isolation
 _state_dir_override = os.environ.get("ITERATE_STATE_DIR")
-STATE_DIR = Path(_state_dir_override) if _state_dir_override else Path.home() / ".claude/plugins/agent-swarm/.state"
+STATE_DIR = Path(_state_dir_override) if _state_dir_override else Path(__file__).resolve().parent.parent / ".state"
 LOG_FILE = STATE_DIR / "iterate.log"
 
 # Ensure lib is in path for workflow_server import (needed when run standalone)

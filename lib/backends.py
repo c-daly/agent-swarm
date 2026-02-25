@@ -63,6 +63,9 @@ class BackendManager:
         if config_path.exists():
             with open(config_path) as f:
                 raw = json.load(f)
+            # Resolve {{PLUGIN_ROOT}} placeholders in config values
+            from lib.paths import resolve_config_paths
+            raw = resolve_config_paths(raw)
             for name, cfg in raw.items():
                 if name in _INTERNAL_BACKENDS:
                     continue

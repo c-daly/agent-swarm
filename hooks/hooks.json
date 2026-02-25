@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/native-tool-blocking.py",
+            "command": "python3 {{PLUGIN_ROOT}}/hooks/native-tool-blocking.py",
             "timeout": 3
           }
         ]
@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/pre-compacting.py",
+            "command": "python3 {{PLUGIN_ROOT}}/hooks/pre-compacting.py",
             "timeout": 5
           }
         ]
@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/session-start.py",
+            "command": "python3 {{PLUGIN_ROOT}}/hooks/session-start.py",
             "timeout": 10
           }
         ]
@@ -41,7 +41,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /home/fearsidhe/.claude/plugins/agent-swarm/hooks/session-end.py",
+            "command": "python3 {{PLUGIN_ROOT}}/hooks/session-end.py",
             "timeout": 30
           }
         ]

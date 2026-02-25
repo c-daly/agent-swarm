@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "router": {
-      "command": "/home/fearsidhe/.claude/plugins/agent-swarm/bin/mcp-router"
+      "command": "{{PLUGIN_ROOT}}/bin/mcp-router"
     }
   }
 }
