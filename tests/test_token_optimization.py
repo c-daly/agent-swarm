@@ -402,15 +402,16 @@ class TestTokenOptimizationIntegration:
         """Full workflow should use all optimizations together."""
         # This test verifies the optimizations work together
 
-        # 1. Start workflow with workflow_client
+        # 1. Start workflow with DaemonClient
         import sys
         sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
-        import workflow_client  # noqa: E402
+        import daemon_client  # noqa: E402
 
-        workflow_client.workflow_set_state(
-            "iterate",
-            {"active": True, "task": "integration test", "phase": "implement"}
-        )
+        with daemon_client.DaemonClient() as dc:
+            dc.workflow_set_state(
+                "iterate",
+                {"active": True, "task": "integration test", "phase": "implement"}
+            )
 
         # 2. Resolve context with caching
         from context.cached_resolver import CachedResolver  # noqa: E402
@@ -453,13 +454,14 @@ class TestTokenOptimizationIntegration:
                 # Simulate workflow operations
                 import sys  # noqa: E402
                 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
-                import workflow_client  # noqa: E402
+                import daemon_client  # noqa: E402
 
                 # Single save/load via MCP - no file I/O
-                workflow_client.workflow_set_state("iterate", {"active": True})
-                workflow_client.workflow_get_state("iterate")
+                with daemon_client.DaemonClient() as dc:
+                    dc.workflow_set_state("iterate", {"active": True})
+                    dc.workflow_get_state("iterate")
 
-        # With workflow_client, state is in MCP server memory, no file writes
+        # With DaemonClient, state is in MCP server memory, no file writes
         # (vs. old approach of reading 4 separate files)
         assert io_count["reads"] <= 2  # At most migration check files
         assert io_count["writes"] == 0  # No file writes for MCP-based state

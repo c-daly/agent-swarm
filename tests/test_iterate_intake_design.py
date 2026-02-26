@@ -43,20 +43,23 @@ from iterate_workflow import (  # noqa: E402
     _reset_logger,
     _is_spec,
 )
-import workflow_client  # noqa: E402
+import daemon_client  # noqa: E402
 
 
 def get_state():
     """Helper to get orchestrator state for tests."""
-    return workflow_client.workflow_get_state("iterate")
+    with daemon_client.DaemonClient() as dc:
+        return dc.workflow_get_state("iterate")
 
 
 @pytest.fixture(autouse=True)
 def clean_state():
     """Clean state before and after each test."""
-    workflow_client.workflow_stop("iterate")
+    with daemon_client.DaemonClient() as dc:
+        dc.workflow_stop("iterate")
     yield
-    workflow_client.workflow_stop("iterate")
+    with daemon_client.DaemonClient() as dc:
+        dc.workflow_stop("iterate")
 
 
 @pytest.fixture(autouse=True)
@@ -317,7 +320,8 @@ class TestPhaseAdvanceVerification:
         # Record only test results, not lint or coverage
         state = get_state()
         state["tests_passed"] = True
-        workflow_client.workflow_set_state("iterate", state)
+        with daemon_client.DaemonClient() as dc:
+            dc.workflow_set_state("iterate", state)
         
         with pytest.raises(RuntimeError, match="Cannot advance from TEST.*must record test results"):
             advance_phase()
@@ -386,7 +390,8 @@ class TestPhaseAdvanceVerification:
         # Manually set phase to TEST
         state = get_state()
         state["phase"] = Phase.TEST.value
-        workflow_client.workflow_set_state("iterate", state)
+        with daemon_client.DaemonClient() as dc:
+            dc.workflow_set_state("iterate", state)
         
         # Try to advance without results - should fail
         result = subprocess.run(
