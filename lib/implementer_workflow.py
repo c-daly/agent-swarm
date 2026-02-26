@@ -11,7 +11,7 @@ Phases:
 from enum import Enum
 from typing import Optional
 
-import workflow_client
+from daemon_client import DaemonClient
 from workflow_base import (
     WorkflowEngine, WorkflowDefinition, WorkflowPhase,
     PhaseTransition, TransitionResult, KickbackReason
@@ -126,9 +126,8 @@ class ImplementerWorkflow:
 
     def set_phase(self, phase: str) -> None:
         """Manually set phase (for testing/recovery)."""
-        state = self.engine.get_state() or {}
-        state["phase"] = phase
-        workflow_client.workflow_set_state(self.workflow_id, state)
+        with DaemonClient() as dc:
+            dc.workflow_set_value(self.workflow_id, "phase", phase)
 
     def is_tool_allowed(
         self, tool_name: str, file_path: Optional[str] = None  # noqa: ARG002 - kept for API compat
@@ -172,10 +171,9 @@ class ImplementerWorkflow:
 
     def record_verification(self, tests_pass: bool, lint_pass: bool) -> None:
         """Record verification results."""
-        state = self.engine.get_state() or {}
-        state["tests_pass"] = tests_pass
-        state["lint_pass"] = lint_pass
-        workflow_client.workflow_set_state(self.workflow_id, state)
+        with DaemonClient() as dc:
+            dc.workflow_set_value(self.workflow_id, "tests_pass", tests_pass)
+            dc.workflow_set_value(self.workflow_id, "lint_pass", lint_pass)
 
     def stop(self) -> None:
         """Stop the workflow."""
@@ -184,7 +182,8 @@ class ImplementerWorkflow:
 
 def is_active(workflow_id: str = "implementer") -> bool:
     """Check if implementer workflow is active."""
-    return workflow_client.workflow_is_active(workflow_id)
+    with DaemonClient() as dc:
+        return dc.workflow_is_active(workflow_id)
 
 
 def status(workflow_id: str = "implementer") -> str:

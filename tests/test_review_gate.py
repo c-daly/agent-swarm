@@ -1,6 +1,6 @@
 """Tests for review gate module.
 
-Uses workflow_client for in-memory state via MCP router
+Uses DaemonClient for in-memory state via MCP router
 instead of session.json file. Tests use autouse fixture to isolate state.
 """
 
@@ -12,7 +12,7 @@ from pathlib import Path
 lib_dir = Path(__file__).parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
-import workflow_client  # noqa: E402
+import daemon_client  # noqa: E402
 from lib.review_gate import (  # noqa: E402
     ReviewState,
     load_review_state,
@@ -26,11 +26,11 @@ from lib.review_gate import (  # noqa: E402
 @pytest.fixture(autouse=True)
 def clean_state_manager():
     """Clean workflow state before and after each test."""
-    # Clear review_gate state before test
-    workflow_client.workflow_stop("review_gate")
+    with daemon_client.DaemonClient() as dc:
+        dc.workflow_stop("review_gate")
     yield
-    # Clear after test
-    workflow_client.workflow_stop("review_gate")
+    with daemon_client.DaemonClient() as dc:
+        dc.workflow_stop("review_gate")
 
 
 
@@ -198,14 +198,16 @@ def test_state_isolation():
     save_review_state(state)
 
     # Set unrelated workflow key
-    workflow_client.workflow_set_state("other_key", {"foo": "bar"})
+    with daemon_client.DaemonClient() as dc:
+        dc.workflow_set_state("other_key", {"foo": "bar"})
 
     # Review gate state should be unaffected
     loaded = load_review_state()
     assert loaded.last_pushed_sha == "abc123"
 
     # Other key should be unaffected
-    other = workflow_client.workflow_get_state("other_key")
+    with daemon_client.DaemonClient() as dc:
+        other = dc.workflow_get_state("other_key")
     assert other == {"foo": "bar"}
 
 

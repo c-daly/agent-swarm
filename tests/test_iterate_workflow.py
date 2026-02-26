@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for iterate_workflow.py - minimal TDD workflow with phase gates.
 
-NOTE: Tests require workflow_client state refactoring for MCP router.
+NOTE: Tests use DaemonClient (mocked via conftest.py) for state management.
 """
 
 import sys
@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-# pytestmark removed: state refactoring to workflow_client complete
+# pytestmark removed: state refactoring to DaemonClient complete
 
 # Add lib to path
 lib_dir = Path(__file__).parent.parent / "lib"
@@ -36,12 +36,13 @@ from iterate_workflow import (  # noqa: E402
     _get_state,
     _set_state,
 )
-import workflow_client  # noqa: E402
+import daemon_client  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 def get_state():
     """Helper to get iterate workflow state for tests."""
-    return workflow_client.workflow_get_state("iterate")
+    with daemon_client.DaemonClient() as dc:
+        return dc.workflow_get_state("iterate")
 
 
 def force_phase(phase: Phase):
@@ -57,16 +58,18 @@ def force_phase(phase: Phase):
     if state is None:
         raise RuntimeError("No active workflow. Call start() first.")
     state["phase"] = phase.value
-    workflow_client.workflow_set_state("iterate", state)
+    with daemon_client.DaemonClient() as dc:
+        dc.workflow_set_state("iterate", state)
 
 
 @pytest.fixture(autouse=True)
 def clean_state():
     """Clean state before and after each test."""
-    # Clean workflow state via mock (conftest.py provides mock_workflow_client)
-    workflow_client.workflow_stop("iterate")
+    with daemon_client.DaemonClient() as dc:
+        dc.workflow_stop("iterate")
     yield
-    workflow_client.workflow_stop("iterate")
+    with daemon_client.DaemonClient() as dc:
+        dc.workflow_stop("iterate")
 
 
 @pytest.fixture(autouse=True)
@@ -92,22 +95,24 @@ class TestPhaseEnum:
 
 
 class TestStateHelpers:
-    """Tests for _get_state() and _set_state() workflow_client wrappers."""
+    """Tests for _get_state() and _set_state() DaemonClient wrappers."""
 
     def test_get_state_returns_empty_dict_when_no_workflow(self):
         """_get_state() returns {} when no workflow exists."""
         result = _get_state()
         assert result == {}
 
-    def test_set_state_persists_via_workflow_client(self):
-        """_set_state() persists state through workflow_client."""
+    def test_set_state_persists_via_daemon_client(self):
+        """_set_state() persists state through DaemonClient."""
         _set_state({"phase": "test", "active": True})
-        result = workflow_client.workflow_get_state("iterate")
+        with daemon_client.DaemonClient() as dc:
+            result = dc.workflow_get_state("iterate")
         assert result == {"phase": "test", "active": True}
 
-    def test_get_state_reads_from_workflow_client(self):
-        """_get_state() reads state set via workflow_client."""
-        workflow_client.workflow_set_state("iterate", {"phase": "implement"})
+    def test_get_state_reads_from_daemon_client(self):
+        """_get_state() reads state set via DaemonClient."""
+        with daemon_client.DaemonClient() as dc:
+            dc.workflow_set_state("iterate", {"phase": "implement"})
         result = _get_state()
         assert result == {"phase": "implement"}
 
@@ -184,8 +189,9 @@ class TestWorkflowStop:
     def test_stop_sets_inactive(self):
         """Stop should set active to False."""
         start("Test task")
-        # stop() enforces queue-empty; use workflow_client directly for basic stop
-        workflow_client.workflow_stop("iterate")
+        # stop() enforces queue-empty; use DaemonClient directly for basic stop
+        with daemon_client.DaemonClient() as dc:
+            dc.workflow_stop("iterate")
         assert is_active() is False
 
     def test_stop_sets_exit_reason(self):
@@ -195,7 +201,8 @@ class TestWorkflowStop:
         state = get_state()
         state["active"] = False
         state["exit_reason"] = "custom_reason"
-        workflow_client.workflow_set_state("iterate", state)
+        with daemon_client.DaemonClient() as dc:
+            dc.workflow_set_state("iterate", state)
         state = get_state()
         assert state["exit_reason"] == "custom_reason"
 
@@ -302,7 +309,8 @@ class TestPhaseTransitionValidation:
         # Directly set phase in state to bypass validation (for test setup)
         state = get_state()
         state["phase"] = phase.value
-        workflow_client.workflow_set_state("iterate", state)
+        with daemon_client.DaemonClient() as dc:
+            dc.workflow_set_state("iterate", state)
 
     def test_set_phase_from_implement_to_done_blocked(self):
         """Cannot skip from IMPLEMENT directly to DONE."""
@@ -436,7 +444,8 @@ class TestToolAllowance:
         start("Test task")
         state = get_state()
         state["phase"] = phase.value
-        workflow_client.workflow_set_state("iterate", state)
+        with daemon_client.DaemonClient() as dc:
+            dc.workflow_set_state("iterate", state)
 
     def test_no_active_workflow_blocks_editing(self):
         """When no workflow active, editing tools are blocked (BUG-PHASE-MISUSE fix)."""
@@ -547,7 +556,8 @@ class TestStatus:
     def test_status_shows_not_active_when_stopped(self):
         """Status should indicate inactive after stop."""
         start("Test task")
-        workflow_client.workflow_stop("iterate")
+        with daemon_client.DaemonClient() as dc:
+            dc.workflow_stop("iterate")
         output = status()
         assert "Not active" in output or "Completed" in output
 
@@ -558,13 +568,15 @@ class TestLogging:
     def test_log_file_created_on_start(self):
         """Starting workflow should create log file."""
         start("Test logging task")
-        workflow_client.workflow_stop("iterate")
+        with daemon_client.DaemonClient() as dc:
+            dc.workflow_stop("iterate")
         assert LOG_FILE.exists(), "Log file should be created after workflow start"
 
     def test_log_contains_start_entry(self):
         """Log should contain workflow start entry."""
         start("Test logging task")
-        workflow_client.workflow_stop("iterate")
+        with daemon_client.DaemonClient() as dc:
+            dc.workflow_stop("iterate")
         log_content = LOG_FILE.read_text()
         assert "Workflow started" in log_content, "Log should contain start entry"
         assert "Test logging task" in log_content, "Log should contain task name"
@@ -574,7 +586,8 @@ class TestLogging:
         start("Test task")
         force_phase(Phase.TEST_WRITING)
         advance_phase()  # test_writing -> implement
-        workflow_client.workflow_stop("iterate")
+        with daemon_client.DaemonClient() as dc:
+            dc.workflow_stop("iterate")
         log_content = LOG_FILE.read_text()
         assert "Phase transition" in log_content, "Log should contain phase transition"
         assert "test_writing" in log_content, "Log should show from phase"
@@ -584,7 +597,8 @@ class TestLogging:
         """Log should contain test results recording."""
         start("Test task")
         set_test_results(True, True, False)
-        workflow_client.workflow_stop("iterate")
+        with daemon_client.DaemonClient() as dc:
+            dc.workflow_stop("iterate")
         log_content = LOG_FILE.read_text()
         assert "Test results recorded" in log_content, "Log should contain test results"
 
@@ -602,7 +616,8 @@ class TestLogging:
         force_phase(Phase.TEST_WRITING)
         new_phase = advance_phase()
         assert new_phase == Phase.IMPLEMENT, "Workflow should work regardless of logging"
-        workflow_client.workflow_stop("iterate")
+        with daemon_client.DaemonClient() as dc:
+            dc.workflow_stop("iterate")
 
 
 class TestIntakePhase:

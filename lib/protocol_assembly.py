@@ -362,12 +362,13 @@ _KNOWN_WORKFLOWS = ["iterate", "debug", "pr_comment", "implementer", "develop"]
 def get_workflow_state():
     """Query controller for current workflow and phase."""
     try:
-        import workflow_client
-        for wf_id in _KNOWN_WORKFLOWS:
-            if workflow_client.workflow_is_active(wf_id):
-                state = workflow_client.workflow_get_state(wf_id)
-                if state:
-                    return state.get("workflow", wf_id), state.get("phase")
+        from daemon_client import DaemonClient
+        with DaemonClient() as dc:
+            for wf_id in _KNOWN_WORKFLOWS:
+                if dc.workflow_is_active(wf_id):
+                    state = dc.workflow_get_state(wf_id)
+                    if state:
+                        return state.get("workflow", wf_id), state.get("phase")
         return None, None
     except Exception:
         return None, None

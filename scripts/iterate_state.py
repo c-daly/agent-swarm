@@ -17,7 +17,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-# Add lib to path for workflow_client import
+# Add lib to path for daemon_client import
 _lib_dir = Path(__file__).parent.parent / "lib"
 if str(_lib_dir) not in sys.path:
     sys.path.insert(0, str(_lib_dir))
@@ -376,11 +376,11 @@ def save_state(state: dict) -> None:
 
 
 def save_queue(queue: "TaskQueue") -> None:
-    """Save queue state to workflow_client under 'queue' key.
+    """Save queue state to workflow server under 'queue' key.
 
     Note: Queue is ephemeral - resets on process restart.
     """
-    import workflow_client
+    from daemon_client import DaemonClient
 
     # Get existing session state (for compatibility with other keys)
     state = load_state()
@@ -421,8 +421,10 @@ def save_queue(queue: "TaskQueue") -> None:
         "failed": queue.failed,
     }
 
-    # Save to workflow_client (in-memory via MCP, ephemeral)
-    workflow_client.workflow_set_state("queue", queue_data)
+    # Save to workflow server (in-memory via MCP, ephemeral)
+    with DaemonClient() as dc:
+        for key, value in queue_data.items():
+            dc.workflow_set_value("queue", key, value)
 
     # Also save to session.json for backwards compatibility
     state["queue"] = queue_data
@@ -430,18 +432,19 @@ def save_queue(queue: "TaskQueue") -> None:
 
 
 def load_queue() -> "TaskQueue":
-    """Load queue from workflow_client via MCP.
+    """Load queue from workflow server via MCP.
 
     Returns empty TaskQueue if no queue state exists.
     Handles missing/malformed data gracefully.
     Note: Queue is ephemeral - resets on process restart.
     """
-    import workflow_client
+    from daemon_client import DaemonClient
 
     queue = TaskQueue()
 
-    # Load from workflow_client (single source of truth)
-    queue_data = workflow_client.workflow_get_state("queue")
+    # Load from workflow server (single source of truth)
+    with DaemonClient() as dc:
+        queue_data = dc.workflow_get_state("queue")
     
     if not queue_data:
         return queue

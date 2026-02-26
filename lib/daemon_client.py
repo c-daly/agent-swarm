@@ -203,8 +203,14 @@ class DaemonClient:
         """Send JSON-RPC request, block for response, return result."""
         if self._sock is None:
             raise ConnectionError("Not connected")
-        if not self._registered and method not in ("agent/register", "tools/list"):
-            raise RuntimeError("Must call register() before other methods")
+        # Registration required for agent tool calls, not for workflow/agent
+        # state operations (infrastructure ops used by internal tooling).
+        _NO_REGISTER = ("agent/register", "tools/list",
+                        "initialize", "notifications/initialized")
+        if (not self._registered
+                and method not in _NO_REGISTER
+                and not method.startswith(("workflow/", "agent/"))):
+            raise RuntimeError("Must call register() before tool calls")
 
         self._request_id += 1
         request = {

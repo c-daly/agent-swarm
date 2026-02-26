@@ -27,7 +27,19 @@ import os
 script_dir = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, os.path.join(script_dir, '..', 'lib'))
 
-from workflow_client import call_tool, list_tools
+from daemon_client import DaemonClient
+
+
+def call_tool(name, arguments):
+    """Call a tool via the router daemon."""
+    with DaemonClient() as dc:
+        return dc.call_tool(name, arguments)
+
+
+def list_tools():
+    """List available tools from the router daemon."""
+    with DaemonClient() as dc:
+        return dc.list_tools()
 
 # Explicitly blocked tools (shell execution, code injection vectors)
 BLOCKED_TOOLS = {

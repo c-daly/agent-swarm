@@ -3,8 +3,8 @@
 State machine for the develop workflow. Manages phase transitions,
 kickback counters, subtask scheduling, and ticket configuration.
 
-State persisted via workflow_client.workflow_set_state() (same pattern
-as iterate_workflow.py). Transition validation done here in Python.
+State persisted via DaemonClient (granular set_value calls).
+Transition validation done here in Python.
 
 Flow:
   intake -> research -> design -> branch -> test_writing -> implement
@@ -19,7 +19,7 @@ lib_dir = Path(__file__).parent
 if str(lib_dir) not in sys.path:
     sys.path.insert(0, str(lib_dir))
 
-import workflow_client  # noqa: E402
+from daemon_client import DaemonClient  # noqa: E402
 
 WORKFLOW_ID = "develop"
 
@@ -60,12 +60,15 @@ class DevelopWorkflowError(Exception):
 
 def _get_state() -> dict:
     """Get current develop workflow state from router."""
-    return workflow_client.workflow_get_state(WORKFLOW_ID) or {}
+    with DaemonClient() as dc:
+        return dc.workflow_get_state(WORKFLOW_ID) or {}
 
 
 def _set_state(state: dict) -> None:
     """Persist develop workflow state to router."""
-    workflow_client.workflow_set_state(WORKFLOW_ID, state)
+    with DaemonClient() as dc:
+        for key, value in state.items():
+            dc.workflow_set_value(WORKFLOW_ID, key, value)
 
 
 def _force_phase(phase: str) -> None:

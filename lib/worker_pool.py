@@ -26,12 +26,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-# Ensure lib directory is in path for workflow_client import
+# Ensure lib directory is in path
 lib_dir = Path(__file__).parent
 if str(lib_dir) not in sys.path:
     sys.path.insert(0, str(lib_dir))
 
-import workflow_client  # noqa: E402
+from daemon_client import DaemonClient  # noqa: E402
 
 
 def _generate_worker_id() -> str:
@@ -46,12 +46,15 @@ def _now_iso() -> str:
 
 def _load_state() -> dict:
     """Load worker pool state from workflow server."""
-    return workflow_client.workflow_get_state("worker_pool") or {"active": False}
+    with DaemonClient() as dc:
+        return dc.workflow_get_state("worker_pool") or {"active": False}
 
 
 def _save_state(state: dict) -> None:
-    """Save worker pool state to workflow server."""
-    workflow_client.workflow_set_state("worker_pool", state)
+    """Save worker pool state to workflow server via granular set_value."""
+    with DaemonClient() as dc:
+        for key, value in state.items():
+            dc.workflow_set_value("worker_pool", key, value)
 
 
 def start(max_agents: int, task: str = "", pr_id: str = "default", branch: str = "") -> None:
