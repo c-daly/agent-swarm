@@ -279,7 +279,7 @@ def get_eligible_subtasks() -> list[dict]:
     ]
 
 
-def complete_subtask(subtask_id: int) -> None:
+def complete_subtask(subtask_id) -> None:
     """Mark a subtask as completed by ID."""
     state = _get_state()
     for s in state.get("subtasks", []):
