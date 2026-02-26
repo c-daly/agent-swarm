@@ -81,6 +81,11 @@ agents:
     allowed: [native__read_file, native__glob, native__grep, serena__*, context7__*]
     blocked: [native__write_file, native__edit_file, native__bash]
 
+  # Git-agent - branch/PR/merge operations
+  git-agent:
+    allowed: [native__read_file, native__glob, native__grep, native__bash(git*), native__bash(gh*)]
+    blocked: [native__write_file, native__edit_file]
+
   # PM - stakeholder proxy, read + workflow control
   pm:
     allowed: [native__read_file, native__glob, native__grep, serena__*, workflow__*, context7__*]
