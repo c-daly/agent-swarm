@@ -356,7 +356,7 @@ PHASE_PROTOCOLS = {
 # =============================================================================
 
 # Known workflow IDs to check (matches permission_query._KNOWN_WORKFLOWS)
-_KNOWN_WORKFLOWS = ["iterate", "debug", "pr_comment", "implementer"]
+_KNOWN_WORKFLOWS = ["iterate", "debug", "pr_comment", "implementer", "develop"]
 
 
 def get_workflow_state():
