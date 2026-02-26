@@ -81,6 +81,11 @@ agents:
     allowed: [native__read_file, native__glob, native__grep, serena__*, context7__*]
     blocked: [native__write_file, native__edit_file, native__bash]
 
+  # PM - stakeholder proxy, read + workflow control
+  pm:
+    allowed: [native__read_file, native__glob, native__grep, serena__*, workflow__*, context7__*]
+    blocked: [native__write_file, native__edit_file, native__bash]
+
 workflows:
   # Iterate workflow (TDD-style)
   iterate:
@@ -135,3 +140,36 @@ workflows:
     comment:
       allowed: [native__read_file, native__bash(gh pr comment*), native__bash(gh pr review*)]
       blocked: [native__write_file, native__edit_file]
+
+  # Develop workflow (PR-based SE team)
+  develop:
+    intake:
+      allowed: [native__read_file, native__glob, native__grep, serena__*, workflow__*]
+      blocked: [native__write_file, native__edit_file, native__bash]
+    research:
+      allowed: [native__read_file, native__glob, native__grep, serena__*, context7__*, native__web_fetch, native__web_search]
+      blocked: [native__write_file, native__edit_file, native__bash]
+    design:
+      allowed: [native__read_file, native__glob, native__grep, serena__*, context7__*]
+      blocked: [native__write_file, native__edit_file, native__bash]
+    branch:
+      allowed: [native__read_file, native__bash(git*)]
+      blocked: [native__write_file, native__edit_file]
+    test_writing:
+      allowed: [native__write_file, native__edit_file, native__read_file, native__glob, native__grep, native__bash(pytest*), serena__*]
+      blocked: []
+    implement:
+      allowed: [native__write_file, native__edit_file, native__read_file, native__glob, native__grep, native__bash(pytest*), native__bash(python*), native__bash(ruff*), serena__*]
+      blocked: []
+    test:
+      allowed: [native__read_file, native__bash(pytest*), native__bash(python -m pytest*), native__bash(ruff*)]
+      blocked: [native__write_file, native__edit_file]
+    review:
+      allowed: [native__read_file, native__glob, native__grep, serena__*]
+      blocked: [native__write_file, native__edit_file, native__bash]
+    merge:
+      allowed: [native__read_file, native__bash(git*), native__bash(gh*)]
+      blocked: [native__write_file, native__edit_file]
+    acceptance:
+      allowed: [native__read_file, native__glob, native__grep, serena__*, workflow__*]
+      blocked: [native__write_file, native__edit_file, native__bash]
