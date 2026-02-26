@@ -78,14 +78,19 @@ Tools via MCP router: mcp__router__<server>__<tool>
 
 SUBAGENT_PROTOCOL = """## Subagent Protocol
 
+### Identity
+Your agent ID is provided at the top of your briefing. Pass it with EVERY
+mcp-call invocation using `--caller-id=<your_agent_id>`. This lets the
+router resolve your permissions. Without it, tool calls will be denied.
+
 ### Tool Access
-All tools via `mcp-call` in Bash. Two forms:
+All tools via `mcp-call` in Bash. Always include `--caller-id`. Two forms:
 
 **Shell aliases** (raw args -> routed to native__bash):
 ```
-mcp-call pytest -v tests/
-mcp-call git status
-mcp-call ruff check src/
+mcp-call --caller-id=YOUR_AGENT_ID pytest -v tests/
+mcp-call --caller-id=YOUR_AGENT_ID git status
+mcp-call --caller-id=YOUR_AGENT_ID ruff check src/
 ```
 
 **MCP tools** (JSON args):

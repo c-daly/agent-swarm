@@ -284,6 +284,7 @@ class TestRouterOps:
         assert result["workflow_id"] == "iterate"
         assert result["phase"] == "test_writing"  # initial_phase from config
 
+    @pytest.mark.skip(reason="Briefing removed from register_agent return to fix summarization bug. Briefing now injected by _native_task at dispatch time.")
     def test_register_agent_returns_briefing(self, ctrl):
         """register_agent should return an assembled briefing."""
         result = ctrl.handle_call(
