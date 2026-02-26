@@ -45,6 +45,29 @@ class TestPMAgentType:
         assert "native__bash" in blocked
 
 
+# ── Git-agent Agent Type ──────────────────────────────────────────────
+
+class TestGitAgentType:
+    def test_git_agent_exists_in_agents(self, config):
+        assert "git-agent" in config["agents"]
+
+    def test_git_agent_allowed_includes_read(self, config):
+        allowed = config["agents"]["git-agent"]["allowed"]
+        assert "native__read_file" in allowed
+        assert "native__glob" in allowed
+        assert "native__grep" in allowed
+
+    def test_git_agent_allowed_includes_git_commands(self, config):
+        allowed = config["agents"]["git-agent"]["allowed"]
+        assert "native__bash(git*)" in allowed
+        assert "native__bash(gh*)" in allowed
+
+    def test_git_agent_blocked_includes_write_edit(self, config):
+        blocked = config["agents"]["git-agent"]["blocked"]
+        assert "native__write_file" in blocked
+        assert "native__edit_file" in blocked
+
+
 # ── Develop Workflow Section ──────────────────────────────────────────
 
 class TestDevelopWorkflowSection:
