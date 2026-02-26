@@ -1,0 +1,174 @@
+name: develop
+description: "PR-based SE team simulation with TDD and adversarial review"
+initial_phase: intake
+terminal_phase: complete
+max_agents: 8
+max_review_retries: 0
+max_agent_respawns: 3
+
+tickets:
+  enabled: true
+  provider: github
+  feature_ticket: true
+  subtask_tickets: true
+  followup_tickets: true
+
+phases:
+  - name: intake
+    allowed_tool_categories:
+      - FILE_READ
+      - FILE_SEARCH
+      - CODE_QUERY
+      - USER_INTERACTION
+    blocked_tools:
+      - native__bash
+      - native__write_file
+      - native__edit_file
+    eligible_agents:
+      - pm
+    checkpoint: false
+
+  - name: research
+    allowed_tool_categories:
+      - FILE_READ
+      - FILE_SEARCH
+      - CODE_QUERY
+      - WEB_RESEARCH
+    blocked_tools:
+      - native__bash
+      - native__write_file
+      - native__edit_file
+    eligible_agents:
+      - researcher
+    checkpoint: false
+
+  - name: design
+    allowed_tool_categories:
+      - FILE_READ
+      - FILE_SEARCH
+      - CODE_QUERY
+    blocked_tools:
+      - native__bash
+      - native__write_file
+      - native__edit_file
+    eligible_agents:
+      - architect
+    checkpoint: true
+
+  - name: branch
+    allowed_tool_categories:
+      - SHELL_SAFE
+    blocked_tools:
+      - native__write_file
+      - native__edit_file
+    eligible_agents:
+      - git-agent
+    checkpoint: false
+
+  - name: test_writing
+    allowed_tool_categories:
+      - FILE_READ
+      - FILE_WRITE
+      - CODE_QUERY
+      - CODE_EDIT
+      - FILE_SEARCH
+      - SHELL_SAFE
+    blocked_tools: []
+    eligible_agents:
+      - implementer
+    checkpoint: false
+
+  - name: implement
+    allowed_tool_categories:
+      - FILE_READ
+      - FILE_WRITE
+      - CODE_QUERY
+      - CODE_EDIT
+      - FILE_SEARCH
+      - SHELL_SAFE
+    blocked_tools: []
+    eligible_agents:
+      - implementer
+    checkpoint: false
+
+  - name: test
+    allowed_tool_categories:
+      - FILE_READ
+      - SHELL_SAFE
+    blocked_tools:
+      - native__write_file
+      - native__edit_file
+    eligible_agents:
+      - implementer
+      - debugger
+    checkpoint: true
+
+  - name: review
+    allowed_tool_categories:
+      - FILE_READ
+      - CODE_QUERY
+    blocked_tools:
+      - native__bash
+      - native__write_file
+      - native__edit_file
+    eligible_agents:
+      - reviewer
+    checkpoint: true
+
+  - name: merge
+    allowed_tool_categories:
+      - FILE_READ
+      - SHELL_SAFE
+    blocked_tools:
+      - native__write_file
+      - native__edit_file
+    eligible_agents:
+      - git-agent
+    checkpoint: false
+
+  - name: acceptance
+    allowed_tool_categories:
+      - FILE_READ
+      - CODE_QUERY
+      - USER_INTERACTION
+    blocked_tools:
+      - native__bash
+      - native__write_file
+      - native__edit_file
+    eligible_agents:
+      - pm
+    checkpoint: true
+
+  - name: complete
+    allowed_tool_categories: []
+    blocked_tools: []
+    eligible_agents: []
+    checkpoint: false
+
+transitions:
+  intake:
+    - research
+  research:
+    - design
+  design:
+    - branch
+  branch:
+    - test_writing
+  test_writing:
+    - implement
+  implement:
+    - test
+  test:
+    - review
+    - implement
+  review:
+    - merge
+    - implement
+    - test_writing
+  merge:
+    - acceptance
+    - implement
+  acceptance:
+    - complete
+    - implement
+    - test_writing
