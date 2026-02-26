@@ -195,6 +195,16 @@ ROLE_PROTOCOLS = {
 - Gather information, summarize findings
 - Return structured results
 """,
+    "pm": """## PM Role
+- Stakeholder proxy -- owns the feature from intake to acceptance
+- Write user stories with clear acceptance criteria at intake
+- Approve or reject design specs from Architect
+- Schedule subtasks based on Architect's dependency graph
+- Monitor kickback history -- intervene if progress stalls
+- Validate implementation against original user stories at acceptance
+- Can create GitHub tickets when ticket config is enabled
+- Read-only for code -- no file writes, edits, or bash
+""",
 }
 
 DEFAULT_ROLE = """## Agent Role
@@ -245,6 +255,21 @@ Phases: intake -> design -> orchestrate
 - No direct implementation -- delegate everything
 - Task queue in workflow state, orchestrator owns exclusively
 - Subagents run iterate workflow independently
+""",
+    "develop": """## Develop Workflow
+PR-based SE team: intake -> research -> design -> branch -> test_writing -> implement -> test -> review -> merge -> acceptance -> complete
+
+### Team Coordination
+- PM is team lead via Claude Code Teams (TeamCreate/SendMessage).
+- All phase transitions decided by PM.
+- Agents communicate via SendMessage. PM assigns work, receives results.
+- Kickbacks target implement (code issue) or test_writing (test gap).
+- Retry counters tracked per kickback source in workflow state.
+
+### Subtask Parallelism
+- Architect produces dependency graph. Independent subtasks run in parallel.
+- Each parallel Implementer gets isolated worktree.
+- Idle agents stay alive, PM messages to wake when work unblocks.
 """,
 }
 
@@ -299,6 +324,29 @@ PHASE_PROTOCOLS = {
   ```
 - Do NOT push
 - Issues found -> back to implement
+""",
+    "research": """## Phase: Research
+- Investigate codebase, APIs, libraries, prior art
+- Produce structured context document for Architect
+- -> design when context is sufficient
+""",
+    "branch": """## Phase: Branch
+- Create feature branch from main
+- If ticket exists, reference ticket ID in branch name
+- -> test_writing when branch is created
+""",
+    "merge": """## Phase: Merge
+- Create PR linking to feature ticket if tickets enabled
+- Attempt merge
+- If merge conflicts -> kickback to implement with list of conflicting files
+- If clean -> advance to acceptance
+""",
+    "acceptance": """## Phase: Acceptance
+- PM validates implementation against original user stories
+- Check each acceptance criterion from the stories
+- Accept -> complete (workflow done)
+- Reject (code issue) -> kickback to implement with feedback
+- Reject (insufficient tests) -> kickback to test_writing with feedback
 """,
 }
 
