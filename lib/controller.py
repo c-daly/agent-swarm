@@ -181,7 +181,12 @@ class Controller:
             )
             raise
 
-        skip_summarization = (prefix == "router" and tool_name in _ROUTER_NO_SUMMARIZE)
+        skip_summarization = (
+            (prefix == "router" and tool_name in _ROUTER_NO_SUMMARIZE)
+            or (prefix == "native" and tool_name == "bash"
+                and any(clean_args.get("command", "").lstrip().startswith(t)
+                        for t in ("pytest", "python -m pytest", "ruff", "mypy")))
+        )
 
         if skip_summarization:
             result = raw_result
