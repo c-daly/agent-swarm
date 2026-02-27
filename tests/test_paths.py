@@ -124,6 +124,18 @@ class TestResolveConfigPaths:
         result = resolve_plugin_path("{{CLAUDE_HOME}}/projects")
         assert result == f"{CLAUDE_HOME}/projects"
 
+    def test_resolve_shell_env_plugin_root(self):
+        """${AGENT_SWARM_ROOT} resolves the same as {{PLUGIN_ROOT}}."""
+        from lib.paths import resolve_plugin_path, PLUGIN_ROOT
+        result = resolve_plugin_path("${AGENT_SWARM_ROOT}/hooks/session-start.py")
+        assert result == f"{PLUGIN_ROOT}/hooks/session-start.py"
+
+    def test_resolve_shell_env_claude_home(self):
+        """${CLAUDE_HOME} resolves the same as {{CLAUDE_HOME}}."""
+        from lib.paths import resolve_plugin_path, CLAUDE_HOME
+        result = resolve_plugin_path("${CLAUDE_HOME}/projects")
+        assert result == f"{CLAUDE_HOME}/projects"
+
     def test_resolve_in_list(self):
         """resolve_config_paths handles lists (e.g., command arrays in backends.json)."""
         from lib.paths import resolve_config_paths, PLUGIN_ROOT
@@ -193,7 +205,7 @@ class TestBackendsJsonPortable:
 
 
 class TestHooksJsonPortable:
-    """hooks.json should use {{PLUGIN_ROOT}} placeholders, not absolute paths."""
+    """hooks.json should use ${AGENT_SWARM_ROOT} shell placeholders, not absolute paths."""
 
     def test_no_hardcoded_home_paths(self):
         hooks_path = PROJECT_ROOT / "hooks" / "hooks.json"
@@ -202,11 +214,11 @@ class TestHooksJsonPortable:
             f"hooks.json contains hard-coded user paths: {content}"
         )
 
-    def test_uses_plugin_root_placeholder(self):
+    def test_uses_shell_env_placeholder(self):
         hooks_path = PROJECT_ROOT / "hooks" / "hooks.json"
         content = hooks_path.read_text()
         if "agent-swarm" in content:
-            assert "{{PLUGIN_ROOT}}" in content
+            assert "${AGENT_SWARM_ROOT}" in content
 
 
 class TestBatchScriptsPortable:

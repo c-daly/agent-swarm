@@ -42,7 +42,9 @@ CLAUDE_PROJECTS: Path = CLAUDE_HOME / "projects"
 
 _PLACEHOLDERS = {
     "{{PLUGIN_ROOT}}": lambda: str(PLUGIN_ROOT),
+    "${AGENT_SWARM_ROOT}": lambda: str(PLUGIN_ROOT),
     "{{CLAUDE_HOME}}": lambda: str(CLAUDE_HOME),
+    "${CLAUDE_HOME}": lambda: str(CLAUDE_HOME),
 }
 
 
