@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "router": {
-      "command": "{{PLUGIN_ROOT}}/bin/mcp-router"
+      "command": "${AGENT_SWARM_ROOT}/bin/mcp-router"
     }
   }
 }
