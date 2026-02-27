@@ -27,7 +27,19 @@ import os
 script_dir = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, os.path.join(script_dir, '..', 'lib'))
 
-from workflow_client import call_tool, list_tools
+from daemon_client import DaemonClient
+
+
+def call_tool(name, arguments):
+    """Call a tool via the router daemon."""
+    with DaemonClient() as dc:
+        return dc.call_tool(name, arguments)
+
+
+def list_tools():
+    """List available tools from the router daemon."""
+    with DaemonClient() as dc:
+        return dc.list_tools()
 
 # Explicitly blocked tools (shell execution, code injection vectors)
 BLOCKED_TOOLS = {
@@ -76,15 +88,21 @@ def is_tool_blocked(tool_name: str) -> bool:
 
 
 def main():
-    # Parse --cwd flag if present
+    # Parse flags (--cwd, --caller-id)
     cwd = None
+    caller_id = None
     args = sys.argv[1:]
-    if args and args[0].startswith("--cwd="):
-        cwd = args[0].split("=", 1)[1]
+    while args and args[0].startswith("--"):
+        if args[0].startswith("--cwd="):
+            cwd = args[0].split("=", 1)[1]
+        elif args[0].startswith("--caller-id="):
+            caller_id = args[0].split("=", 1)[1]
+        else:
+            break
         args = args[1:]
 
     if len(args) < 1:
-        print("Usage: mcp-call [--cwd=<path>] <tool_name> [json_args]", file=sys.stderr)
+        print("Usage: mcp-call [--cwd=<path>] [--caller-id=<id>] <tool_name> [json_args]", file=sys.stderr)
         print("\nShell aliases (routed to bash):", file=sys.stderr)
         print(f"  {', '.join(sorted(SHELL_ALIASES))}", file=sys.stderr)
         print("\nExamples:", file=sys.stderr)
@@ -102,6 +120,8 @@ def main():
             call_args = {"command": command}
             if cwd:
                 call_args["cwd"] = cwd
+            if caller_id:
+                call_args["_caller"] = caller_id
             result = call_tool("native__bash", call_args)
             if isinstance(result, (dict, list)):
                 print(json.dumps(result, indent=2))
@@ -126,6 +146,10 @@ def main():
             sys.exit(1)
     else:
         tool_args = {}
+
+    # Inject caller identity for router permission resolution
+    if caller_id:
+        tool_args["_caller"] = caller_id
 
     # Call the tool via router
     try:

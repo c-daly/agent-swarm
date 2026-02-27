@@ -37,11 +37,9 @@ except ImportError:
     def get_permissions(workflow_id=None): return None
 
 try:
-    from workflow_client import workflow_get_state, workflow_set_state, agent_set_state
+    from daemon_client import DaemonClient
 except ImportError:
-    def workflow_get_state(workflow_id): return None
-    def workflow_set_state(workflow_id, state): return None
-    def agent_set_state(agent_id, state): return None
+    DaemonClient = None
 
 try:
     from project_root import find_project_root, find_recent_handoffs
@@ -155,11 +153,12 @@ def reset_enforcement_counters(agent_id: str | None = None):
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         state_file.write_text(json.dumps(state, indent=2))
 
-        if agent_id:
+        if agent_id and DaemonClient:
             try:
                 phase = compaction_flags.get("phase")
                 if phase:
-                    agent_set_state(agent_id, {"phase": phase})
+                    with DaemonClient() as dc:
+                        dc.agent_set_state(agent_id, {"phase": phase})
             except Exception:
                 pass
 

@@ -7,7 +7,7 @@ Phases:
 from enum import Enum
 from typing import Optional
 
-import workflow_client
+from daemon_client import DaemonClient
 from workflow_base import (
     WorkflowEngine, WorkflowDefinition, WorkflowPhase,
     PhaseTransition, TransitionResult, KickbackReason
@@ -195,9 +195,8 @@ class DebugWorkflow:
 
     def set_phase(self, phase: str) -> None:
         """Manually set phase (for testing/recovery)."""
-        state = self.engine.get_state() or {}
-        state["phase"] = phase
-        workflow_client.workflow_set_state("debug", state)
+        with DaemonClient() as dc:
+            dc.workflow_set_value("debug", "phase", phase)
 
     def is_tool_allowed(self, tool_name: str, file_path: Optional[str] = None) -> tuple[bool, str]:
         """Check tool restriction."""
@@ -209,25 +208,22 @@ class DebugWorkflow:
 
     def record_triage(self, severity: str, components: list, artifacts: list) -> None:
         """Record triage outputs."""
-        state = self.engine.get_state() or {}
-        state["severity"] = severity
-        state["affected_components"] = components
-        state["error_artifacts"] = artifacts
-        workflow_client.workflow_set_state("debug", state)
+        with DaemonClient() as dc:
+            dc.workflow_set_value("debug", "severity", severity)
+            dc.workflow_set_value("debug", "affected_components", components)
+            dc.workflow_set_value("debug", "error_artifacts", artifacts)
 
     def record_hypothesis(self, hypothesis: str, prediction: str) -> None:
         """Record hypothesis and prediction."""
-        state = self.engine.get_state() or {}
-        state["hypothesis"] = hypothesis
-        state["prediction"] = prediction
-        workflow_client.workflow_set_state("debug", state)
+        with DaemonClient() as dc:
+            dc.workflow_set_value("debug", "hypothesis", hypothesis)
+            dc.workflow_set_value("debug", "prediction", prediction)
 
     def record_verification(self, tests_pass: bool, lint_pass: bool) -> None:
         """Record verification results."""
-        state = self.engine.get_state() or {}
-        state["tests_pass"] = tests_pass
-        state["lint_pass"] = lint_pass
-        workflow_client.workflow_set_state("debug", state)
+        with DaemonClient() as dc:
+            dc.workflow_set_value("debug", "tests_pass", tests_pass)
+            dc.workflow_set_value("debug", "lint_pass", lint_pass)
 
     def stop(self) -> None:
         """Stop the workflow."""
@@ -236,7 +232,8 @@ class DebugWorkflow:
 
 def is_active() -> bool:
     """Check if debug workflow is active."""
-    return workflow_client.workflow_is_active("debug")
+    with DaemonClient() as dc:
+        return dc.workflow_is_active("debug")
 
 
 def status() -> str:

@@ -78,14 +78,19 @@ Tools via MCP router: mcp__router__<server>__<tool>
 
 SUBAGENT_PROTOCOL = """## Subagent Protocol
 
+### Identity
+Your agent ID is provided at the top of your briefing. Pass it with EVERY
+mcp-call invocation using `--caller-id=<your_agent_id>`. This lets the
+router resolve your permissions. Without it, tool calls will be denied.
+
 ### Tool Access
-All tools via `mcp-call` in Bash. Two forms:
+All tools via `mcp-call` in Bash. Always include `--caller-id`. Two forms:
 
 **Shell aliases** (raw args -> routed to native__bash):
 ```
-mcp-call pytest -v tests/
-mcp-call git status
-mcp-call ruff check src/
+mcp-call --caller-id=YOUR_AGENT_ID pytest -v tests/
+mcp-call --caller-id=YOUR_AGENT_ID git status
+mcp-call --caller-id=YOUR_AGENT_ID ruff check src/
 ```
 
 **MCP tools** (JSON args):
@@ -190,6 +195,16 @@ ROLE_PROTOCOLS = {
 - Gather information, summarize findings
 - Return structured results
 """,
+    "pm": """## PM Role
+- Stakeholder proxy -- owns the feature from intake to acceptance
+- Write user stories with clear acceptance criteria at intake
+- Approve or reject design specs from Architect
+- Schedule subtasks based on Architect's dependency graph
+- Monitor kickback history -- intervene if progress stalls
+- Validate implementation against original user stories at acceptance
+- Can create GitHub tickets when ticket config is enabled
+- Read-only for code -- no file writes, edits, or bash
+""",
 }
 
 DEFAULT_ROLE = """## Agent Role
@@ -240,6 +255,21 @@ Phases: intake -> design -> orchestrate
 - No direct implementation -- delegate everything
 - Task queue in workflow state, orchestrator owns exclusively
 - Subagents run iterate workflow independently
+""",
+    "develop": """## Develop Workflow
+PR-based SE team: intake -> research -> design -> branch -> test_writing -> implement -> test -> review -> merge -> acceptance -> complete
+
+### Team Coordination
+- PM is team lead via Claude Code Teams (TeamCreate/SendMessage).
+- All phase transitions decided by PM.
+- Agents communicate via SendMessage. PM assigns work, receives results.
+- Kickbacks target implement (code issue) or test_writing (test gap).
+- Retry counters tracked per kickback source in workflow state.
+
+### Subtask Parallelism
+- Architect produces dependency graph. Independent subtasks run in parallel.
+- Each parallel Implementer gets isolated worktree.
+- Idle agents stay alive, PM messages to wake when work unblocks.
 """,
 }
 
@@ -295,6 +325,29 @@ PHASE_PROTOCOLS = {
 - Do NOT push
 - Issues found -> back to implement
 """,
+    "research": """## Phase: Research
+- Investigate codebase, APIs, libraries, prior art
+- Produce structured context document for Architect
+- -> design when context is sufficient
+""",
+    "branch": """## Phase: Branch
+- Create feature branch from main
+- If ticket exists, reference ticket ID in branch name
+- -> test_writing when branch is created
+""",
+    "merge": """## Phase: Merge
+- Create PR linking to feature ticket if tickets enabled
+- Attempt merge
+- If merge conflicts -> kickback to implement with list of conflicting files
+- If clean -> advance to acceptance
+""",
+    "acceptance": """## Phase: Acceptance
+- PM validates implementation against original user stories
+- Check each acceptance criterion from the stories
+- Accept -> complete (workflow done)
+- Reject (code issue) -> kickback to implement with feedback
+- Reject (insufficient tests) -> kickback to test_writing with feedback
+""",
 }
 
 
@@ -303,18 +356,19 @@ PHASE_PROTOCOLS = {
 # =============================================================================
 
 # Known workflow IDs to check (matches permission_query._KNOWN_WORKFLOWS)
-_KNOWN_WORKFLOWS = ["iterate", "debug", "pr_comment", "implementer"]
+_KNOWN_WORKFLOWS = ["iterate", "debug", "pr_comment", "implementer", "develop"]
 
 
 def get_workflow_state():
     """Query controller for current workflow and phase."""
     try:
-        import workflow_client
-        for wf_id in _KNOWN_WORKFLOWS:
-            if workflow_client.workflow_is_active(wf_id):
-                state = workflow_client.workflow_get_state(wf_id)
-                if state:
-                    return state.get("workflow", wf_id), state.get("phase")
+        from daemon_client import DaemonClient
+        with DaemonClient() as dc:
+            for wf_id in _KNOWN_WORKFLOWS:
+                if dc.workflow_is_active(wf_id):
+                    state = dc.workflow_get_state(wf_id)
+                    if state:
+                        return state.get("workflow", wf_id), state.get("phase")
         return None, None
     except Exception:
         return None, None

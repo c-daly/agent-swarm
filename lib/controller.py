@@ -181,7 +181,12 @@ class Controller:
             )
             raise
 
-        skip_summarization = (prefix == "router" and tool_name in _ROUTER_NO_SUMMARIZE)
+        skip_summarization = (
+            (prefix == "router" and tool_name in _ROUTER_NO_SUMMARIZE)
+            or (prefix == "native" and tool_name == "bash"
+                and any(clean_args.get("command", "").lstrip().startswith(t)
+                        for t in ("pytest", "python -m pytest", "ruff", "mypy")))
+        )
 
         if skip_summarization:
             result = raw_result
@@ -579,8 +584,9 @@ class Controller:
                     "isError": True,
                 }
 
-        # 2. Generate agent_id and register
+        # 2. Generate agent_id and register in both state and permissions
         agent_id = f"sub-{uuid.uuid4().hex[:8]}"
+        role = subagent_type.split(":")[-1] if ":" in subagent_type else subagent_type
         with self._state_lock:
             self._agent_state[agent_id] = {
                 "type": subagent_type,
@@ -588,13 +594,19 @@ class Controller:
                 "started_at": datetime.now(timezone.utc).isoformat(),
                 "description": description,
             }
+        # Register in permissions system so router can resolve agent_type
+        self.permissions.register_agent(agent_id, role)
 
         # 3. Assemble briefing context
-        role = subagent_type.split(":")[-1] if ":" in subagent_type else subagent_type
         wf_override = "iterate" if role == "implementer" else None
         briefing = assemble_subagent_briefing(role, workflow_override=wf_override)
+        caller_header = (
+            f"## Your Agent Identity\n"
+            f"Agent ID: `{agent_id}`\n"
+            f"Use `--caller-id={agent_id}` with ALL mcp-call invocations.\n"
+        )
         if "SUBAGENT OPERATING PROTOCOL" not in prompt:
-            enriched_prompt = f"# SUBAGENT OPERATING PROTOCOL\n\n{briefing}\n\n# TASK\n\n{prompt}"
+            enriched_prompt = f"# SUBAGENT OPERATING PROTOCOL\n\n{caller_header}\n{briefing}\n\n# TASK\n\n{prompt}"
         else:
             enriched_prompt = prompt
 
@@ -642,6 +654,8 @@ class Controller:
                     if agent_id in self._agent_state:
                         self._agent_state[agent_id]["status"] = "failed"
                         self._agent_state[agent_id]["error"] = str(e)
+            finally:
+                self.permissions.remove_agent(agent_id)
 
         # 6. Execute - background or foreground
         if run_in_background:
@@ -709,16 +723,12 @@ class Controller:
             }
             self._agent_set_state({"agent_id": agent_id, "state": agent_state})
 
-            # 4. Assemble briefing
-            briefing = assemble_subagent_briefing(agent_type)
-
             return {
                 "agent_id": info.agent_id,
                 "agent_type": info.agent_type,
                 "roles": info.roles,
                 "workflow_id": workflow_id,
                 "phase": phase,
-                "briefing": briefing,
             }
 
         if tool_name == "update_agent_phase":

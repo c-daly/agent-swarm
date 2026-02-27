@@ -29,19 +29,26 @@ lib_dir = Path(__file__).parent
 if str(lib_dir) not in sys.path:
     sys.path.insert(0, str(lib_dir))
 
-# CLI script: uses workflow_client (socket-based) for persistent state
+# CLI script: uses DaemonClient for persistent state
 # via the MCP router, same as subagents and hooks
-import workflow_client  # noqa: E402
+from daemon_client import DaemonClient, is_daemon_only_key  # noqa: E402
 
 
 def _get_state() -> dict:
     """Get current iterate workflow state from router."""
-    return workflow_client.workflow_get_state("iterate") or {}
+    with DaemonClient() as dc:
+        return dc.workflow_get_state("iterate") or {}
 
 
 def _set_state(state: dict) -> None:
-    """Persist iterate workflow state to router."""
-    workflow_client.workflow_set_state("iterate", state)
+    """Persist iterate workflow state, routing protected keys correctly."""
+    with DaemonClient() as dc:
+        if "phase" in state:
+            dc.workflow_advance_phase("iterate", state["phase"])
+        for key, value in state.items():
+            if is_daemon_only_key(key):
+                continue
+            dc.workflow_set_value("iterate", key, value)
 from workflow_base import (  # noqa: E402
     WorkflowPhase, WorkflowDefinition, WorkflowEngine,
     PhaseTransition, KickbackReason

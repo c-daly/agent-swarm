@@ -7,7 +7,7 @@ Phases:
 from enum import Enum
 from typing import Optional
 
-import workflow_client
+from daemon_client import DaemonClient
 from workflow_base import (
     WorkflowEngine, WorkflowDefinition, WorkflowPhase,
     PhaseTransition, TransitionResult, KickbackReason
@@ -133,9 +133,8 @@ class PRCommentWorkflow:
 
     def set_phase(self, phase: str) -> None:
         """Manually set phase (for testing/recovery)."""
-        state = self.engine.get_state() or {}
-        state["phase"] = phase
-        workflow_client.workflow_set_state("pr_comment", state)
+        with DaemonClient() as dc:
+            dc.workflow_set_value("pr_comment", "phase", phase)
 
     def is_tool_allowed(self, tool_name: str, **kwargs) -> tuple[bool, str]:
         return self.engine.is_tool_allowed(tool_name, **kwargs)
@@ -146,17 +145,15 @@ class PRCommentWorkflow:
 
     def record_understanding(self, articulation: str, problem: str) -> None:
         """Record understanding of reviewer's concern."""
-        state = self.engine.get_state() or {}
-        state["articulation"] = articulation
-        state["current_code_problem"] = problem
-        workflow_client.workflow_set_state("pr_comment", state)
+        with DaemonClient() as dc:
+            dc.workflow_set_value("pr_comment", "articulation", articulation)
+            dc.workflow_set_value("pr_comment", "current_code_problem", problem)
 
     def record_verification(self, tests_pass: bool, lint_pass: bool) -> None:
         """Record verification results."""
-        state = self.engine.get_state() or {}
-        state["tests_pass"] = tests_pass
-        state["lint_pass"] = lint_pass
-        workflow_client.workflow_set_state("pr_comment", state)
+        with DaemonClient() as dc:
+            dc.workflow_set_value("pr_comment", "tests_pass", tests_pass)
+            dc.workflow_set_value("pr_comment", "lint_pass", lint_pass)
 
     def stop(self) -> None:
         """Stop the workflow."""
@@ -165,7 +162,8 @@ class PRCommentWorkflow:
 
 def is_active() -> bool:
     """Check if pr_comment workflow is active."""
-    return workflow_client.workflow_is_active("pr_comment")
+    with DaemonClient() as dc:
+        return dc.workflow_is_active("pr_comment")
 
 
 def status() -> str:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for worker_pool.py - worker pool management for parallel subagents.
 
-Uses workflow_client for in-memory state via MCP router
+Uses DaemonClient for in-memory state via MCP router
 instead of JSON file. Tests use autouse fixture to isolate state.
 """
 
@@ -14,7 +14,7 @@ import pytest
 lib_dir = Path(__file__).parent.parent / "lib"
 sys.path.insert(0, str(lib_dir))
 
-import workflow_client  # noqa: E402
+import daemon_client  # noqa: E402
 from worker_pool import (  # noqa: E402
     start,
     stop,
@@ -31,11 +31,11 @@ from worker_pool import (  # noqa: E402
 @pytest.fixture(autouse=True)
 def clean_state_manager():
     """Clean workflow state before and after each test."""
-    # Clear worker_pool state before test
-    workflow_client.workflow_stop("worker_pool")
+    with daemon_client.DaemonClient() as dc:
+        dc.workflow_stop("worker_pool")
     yield
-    # Clear after test
-    workflow_client.workflow_stop("worker_pool")
+    with daemon_client.DaemonClient() as dc:
+        dc.workflow_stop("worker_pool")
 
 
 class TestOrchestrateStart:

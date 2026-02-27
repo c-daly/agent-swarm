@@ -43,20 +43,23 @@ from iterate_workflow import (  # noqa: E402
     LOG_FILE,
     _reset_logger,
 )
-import workflow_client  # noqa: E402
+import daemon_client  # noqa: E402
 
 
 def get_state():
     """Helper to get orchestrator state for tests."""
-    return workflow_client.workflow_get_state("iterate")
+    with daemon_client.DaemonClient() as dc:
+        return dc.workflow_get_state("iterate")
 
 
 @pytest.fixture(autouse=True)
 def clean_state():
     """Clean state before and after each test."""
-    workflow_client.workflow_stop("iterate")
+    with daemon_client.DaemonClient() as dc:
+        dc.workflow_stop("iterate")
     yield
-    workflow_client.workflow_stop("iterate")
+    with daemon_client.DaemonClient() as dc:
+        dc.workflow_stop("iterate")
 
 
 @pytest.fixture(autouse=True)
@@ -362,14 +365,16 @@ class TestExceptionHandling:
 
     def test_get_phase_handles_invalid_phase_value(self):
         """get_phase returns None for invalid phase string."""
-        workflow_client.workflow_set_state("iterate", {"active": True, "phase": "bogus_phase"})
+        with daemon_client.DaemonClient() as dc:
+            dc.workflow_set_state("iterate", {"active": True, "phase": "bogus_phase"})
 
         # Invalid phase value triggers ValueError in Phase() constructor
         assert get_phase() is None
 
     def test_get_phase_returns_none_when_no_phase_key(self):
         """get_phase returns None when phase key missing."""
-        workflow_client.workflow_set_state("iterate", {"active": True})  # No phase key
+        with daemon_client.DaemonClient() as dc:
+            dc.workflow_set_state("iterate", {"active": True})  # No phase key
 
         assert get_phase() is None
 
@@ -418,7 +423,8 @@ class TestVerifyActive:
 
     def test_verify_active_raises_when_workflow_inactive(self):
         """verify_active raises RuntimeError when workflow not active."""
-        workflow_client.workflow_set_state("iterate", {"active": False, "exit_reason": "test_stopped"})
+        with daemon_client.DaemonClient() as dc:
+            dc.workflow_set_state("iterate", {"active": False, "exit_reason": "test_stopped"})
 
         with pytest.raises(RuntimeError) as exc_info:
             verify_active()

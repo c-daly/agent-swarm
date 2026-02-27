@@ -32,13 +32,13 @@ def cleanup_test_state_dir():
 
 
 # ============================================================================
-# Workflow Client Mock
+# Workflow State Mock
 # ============================================================================
-# This mock replaces workflow_client functions to avoid requiring MCP router.
-# All tests get this mock automatically via autouse=True.
+# This mock replaces DaemonClient and workflow_client to avoid requiring
+# the MCP router daemon. All tests get this mock automatically via autouse=True.
 
 class MockWorkflowState:
-    """In-memory mock for workflow_client state management."""
+    """In-memory mock for workflow state management."""
 
     def __init__(self):
         self.workflows: dict[str, dict[str, Any]] = {}
@@ -86,10 +86,24 @@ class MockWorkflowState:
         return deepcopy(self.workflows[workflow_id].get(key, default))
 
     def workflow_set_value(self, workflow_id: str, key: str, value: Any) -> Any:
+        # Auto-create workflow if not exists (lenient for tests)
         if workflow_id not in self.workflows:
-            raise ValueError(f"Workflow '{workflow_id}' not found")
+            self.workflows[workflow_id] = {}
         self.workflows[workflow_id][key] = deepcopy(value)
         return deepcopy(value)
+
+    def workflow_advance_phase(self, workflow_id: str, target_phase: str) -> dict:
+        if workflow_id not in self.workflows:
+            self.workflows[workflow_id] = {}
+        self.workflows[workflow_id]["phase"] = target_phase
+        return {"status": "advanced", "phase": target_phase}
+
+    def workflow_pass_checkpoint(self, workflow_id: str) -> dict:
+        if workflow_id not in self.workflows:
+            raise ValueError(f"Workflow '{workflow_id}' not found")
+        phase = self.workflows[workflow_id].get("phase", "")
+        self.workflows[workflow_id][f"{phase}_checkpoint_passed"] = True
+        return {"status": "passed", "phase": phase}
 
     # Agent operations
     def agent_get_state(self, agent_id: str) -> Optional[dict]:
@@ -115,32 +129,108 @@ class MockWorkflowState:
 _mock_state = MockWorkflowState()
 
 
+class MockDaemonClient:
+    """Mock DaemonClient that delegates to MockWorkflowState.
+
+    Supports context manager protocol (with DaemonClient() as dc:).
+    """
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+    def connect(self):
+        pass
+
+    def close(self):
+        pass
+
+    def register(self, *args, **kwargs):
+        return {"agent_id": "test", "roles": []}
+
+    # Workflow operations
+    def workflow_start(self, workflow_id, initial_state=None):
+        return _mock_state.workflow_start(workflow_id, initial_state)
+
+    def workflow_stop(self, workflow_id):
+        return _mock_state.workflow_stop(workflow_id)
+
+    def workflow_is_active(self, workflow_id):
+        return _mock_state.workflow_is_active(workflow_id)
+
+    def workflow_get_state(self, workflow_id):
+        return _mock_state.workflow_get_state(workflow_id)
+
+    def workflow_get_value(self, workflow_id, key, default=None):
+        return _mock_state.workflow_get_value(workflow_id, key, default)
+
+    def workflow_set_value(self, workflow_id, key, value):
+        return _mock_state.workflow_set_value(workflow_id, key, value)
+
+    def workflow_advance_phase(self, workflow_id, target_phase):
+        return _mock_state.workflow_advance_phase(workflow_id, target_phase)
+
+    def workflow_pass_checkpoint(self, workflow_id):
+        return _mock_state.workflow_pass_checkpoint(workflow_id)
+
+    def workflow_set_state(self, workflow_id, state):
+        """Test convenience: bulk set state (not on real DaemonClient)."""
+        return _mock_state.workflow_set_state(workflow_id, state)
+
+    def workflow_update(self, workflow_id, updates):
+        """Test convenience: update state (not on real DaemonClient)."""
+        return _mock_state.workflow_update(workflow_id, updates)
+
+    # Agent operations
+    def agent_get_state(self, agent_id):
+        return _mock_state.agent_get_state(agent_id)
+
+    def agent_set_state(self, agent_id, state):
+        return _mock_state.agent_set_state(agent_id, state)
+
+    def agent_delete(self, agent_id):
+        return _mock_state.agent_delete(agent_id)
+
+    def list_agents(self):
+        return _mock_state.list_agents()
+
+    def list_tools(self):
+        return []
+
+
+# Modules that import DaemonClient at module level and need patching
+_DAEMON_CLIENT_MODULES = [
+    "daemon_client",
+    "workflow_base", "debug_workflow", "pr_comment_workflow",
+    "implementer_workflow", "develop_workflow", "iterate_workflow",
+    "orchestrate", "permission_query", "agent_recovery",
+    "review_gate", "worker_pool", "protocol_assembly",
+]
+
+
 @pytest.fixture(autouse=True)
 def mock_workflow_client(monkeypatch):
-    """Mock workflow_client functions to avoid requiring MCP router.
+    """Mock DaemonClient and workflow_client to avoid requiring daemon.
 
-    This fixture is autouse=True, so all tests get mocked workflow_client
+    This fixture is autouse=True, so all tests get mocked state
     automatically. Each test gets isolated state via reset().
     """
     # Reset state before each test
     _mock_state.reset()
 
-    # Import workflow_client to patch it
-    import workflow_client
-
-    # Patch all workflow_client functions
-    monkeypatch.setattr(workflow_client, "workflow_start", _mock_state.workflow_start)
-    monkeypatch.setattr(workflow_client, "workflow_stop", _mock_state.workflow_stop)
-    monkeypatch.setattr(workflow_client, "workflow_is_active", _mock_state.workflow_is_active)
-    monkeypatch.setattr(workflow_client, "workflow_get_state", _mock_state.workflow_get_state)
-    monkeypatch.setattr(workflow_client, "workflow_set_state", _mock_state.workflow_set_state)
-    monkeypatch.setattr(workflow_client, "workflow_update", _mock_state.workflow_update)
-    monkeypatch.setattr(workflow_client, "workflow_get_value", _mock_state.workflow_get_value)
-    monkeypatch.setattr(workflow_client, "workflow_set_value", _mock_state.workflow_set_value)
-    monkeypatch.setattr(workflow_client, "agent_get_state", _mock_state.agent_get_state)
-    monkeypatch.setattr(workflow_client, "agent_set_state", _mock_state.agent_set_state)
-    monkeypatch.setattr(workflow_client, "agent_delete", _mock_state.agent_delete)
-    monkeypatch.setattr(workflow_client, "list_agents", _mock_state.list_agents)
+    # Patch DaemonClient in all modules that import it
+    # Check both bare names (e.g. "review_gate") and lib-prefixed names
+    # (e.g. "lib.review_gate") since tests may import either way
+    for mod_name in _DAEMON_CLIENT_MODULES:
+        for variant in (mod_name, f"lib.{mod_name}"):
+            mod = sys.modules.get(variant)
+            if mod and hasattr(mod, "DaemonClient"):
+                monkeypatch.setattr(mod, "DaemonClient", MockDaemonClient)
 
     yield _mock_state
 

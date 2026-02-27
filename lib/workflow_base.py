@@ -4,7 +4,7 @@ All workflows (debug, PR comment, iterate) inherit from this base.
 Provides:
 - Phase definitions with tool restrictions
 - Transition logic with kickback support
-- State management via workflow_client
+- State management via DaemonClient
 - Adversary gate integration points
 """
 
@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Callable, FrozenSet, Optional, Any
 
-import workflow_client
+from daemon_client import DaemonClient, is_daemon_only_key
 from permission_store import PermissionStore, PhasePermissions
 
 
@@ -84,7 +84,7 @@ class WorkflowEngine:
     """Executes a workflow definition as a state machine.
 
     Handles:
-    - State persistence via workflow_client
+    - State persistence via DaemonClient
     - Phase transitions with kickback logic
     - Tool restriction enforcement
     - Iteration counting
@@ -107,12 +107,27 @@ class WorkflowEngine:
             "max_iterations": self.definition.max_iterations,
             **initial_state,
         }
-        workflow_client.workflow_set_state(self.workflow_id, state)
+        self._save_state(state)
         return state
 
     def get_state(self) -> Optional[dict]:
         """Get current workflow state."""
-        return workflow_client.workflow_get_state(self.workflow_id)
+        with DaemonClient() as dc:
+            return dc.workflow_get_state(self.workflow_id)
+
+    def _save_state(self, state: dict) -> None:
+        """Save workflow state, routing protected keys correctly.
+
+        Uses workflow_advance_phase for phase changes and skips other
+        daemon-managed keys. All remaining keys use workflow_set_value.
+        """
+        with DaemonClient() as dc:
+            if "phase" in state:
+                dc.workflow_advance_phase(self.workflow_id, state["phase"])
+            for key, value in state.items():
+                if is_daemon_only_key(key):
+                    continue
+                dc.workflow_set_value(self.workflow_id, key, value)
 
     def get_phase(self) -> Optional[str]:
         """Get current phase name."""
@@ -199,7 +214,7 @@ class WorkflowEngine:
 
         if result.success and result.next_phase:
             state["phase"] = result.next_phase
-            workflow_client.workflow_set_state(self.workflow_id, state)
+            self._save_state(state)
         elif result.kickback_to:
             state["phase"] = result.kickback_to
             state["iteration"] = state.get("iteration", 0) + 1
@@ -211,7 +226,7 @@ class WorkflowEngine:
                     reason=KickbackReason.MAX_ITERATIONS,
                     message="Max iterations reached"
                 )
-            workflow_client.workflow_set_state(self.workflow_id, state)
+            self._save_state(state)
 
         return result
 
@@ -220,7 +235,7 @@ class WorkflowEngine:
         state = self.get_state() or {}
         state["active"] = False
         state["exit_reason"] = reason
-        workflow_client.workflow_set_state(self.workflow_id, state)
+        self._save_state(state)
 
     def start_adversary_check(self) -> Optional[str]:
         """Start adversary check in background (for parallel execution).
@@ -239,7 +254,7 @@ class WorkflowEngine:
         task_id = f"adversary-{uuid.uuid4().hex[:8]}"
         state["_adversary_task_id"] = task_id
         state["_adversary_started"] = True
-        workflow_client.workflow_set_state(self.workflow_id, state)
+        self._save_state(state)
 
         return task_id
 
