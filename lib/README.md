@@ -1,4 +1,4 @@
-# /home/fearsidhe/.claude/plugins/agent-swarm/lib
+# ./lib
 
 Shared utilities and scripts for Claude Code operations.
 
@@ -19,7 +19,7 @@ Programmatic access to MCP tools from Python scripts.
 **Example:**
 ```python
 import sys
-sys.path.insert(0, '/home/fearsidhe/.claude/plugins/agent-swarm/lib')
+sys.path.insert(0, './lib')
 from mcp_bridge import native_glob, native_grep
 
 # Fast local operations
@@ -34,13 +34,13 @@ Common batch operation scripts.
 ### `batch_search.py`
 Search multiple patterns efficiently.
 ```bash
-python3 /home/fearsidhe/.claude/plugins/agent-swarm/lib/scripts/batch_search.py "TODO" "FIXME" "XXX" --path src/
+python3 ./lib/scripts/batch_search.py "TODO" "FIXME" "XXX" --path src/
 ```
 
 ### `batch_glob.py`
 Find files matching multiple patterns.
 ```bash
-python3 /home/fearsidhe/.claude/plugins/agent-swarm/lib/scripts/batch_glob.py "*.py" "*.md" --path /project
+python3 ./lib/scripts/batch_glob.py "*.py" "*.md" --path /project
 ```
 
 ## Usage in CLAUDE.md Scripts
@@ -50,7 +50,7 @@ When CLAUDE.md instructs you to write scripts, use these utilities:
 ```python
 #!/usr/bin/env python3
 import sys
-sys.path.insert(0, '/home/fearsidhe/.claude/plugins/agent-swarm/lib')
+sys.path.insert(0, './lib')
 from mcp_bridge import native_glob, native_grep
 
 # Your batch operation here

@@ -23,16 +23,16 @@ mcp-call <tool_name> '<json_args>'
 
 ```bash
 # Read a file
-mcp-call native__read_file '{"file_path": "/home/fearsidhe/projects/myproject/src/main.py"}'
+mcp-call native__read_file '{"file_path": "/path/to/project/src/main.py"}'
 
 # Write a file
-mcp-call native__write_file '{"file_path": "/home/fearsidhe/projects/myproject/src/new.py", "content": "class Foo:\n    pass\n"}'
+mcp-call native__write_file '{"file_path": "/path/to/project/src/new.py", "content": "class Foo:\n    pass\n"}'
 
 # Run tests
-mcp-call native__bash '{"command": "cd /home/fearsidhe/projects/myproject && pytest tests/ -v"}'
+mcp-call native__bash '{"command": "cd /path/to/project && pytest tests/ -v"}'
 
 # Git operations
-mcp-call native__bash '{"command": "cd /home/fearsidhe/projects/myproject && git add -A && git commit -m \"feat: add feature\""}'
+mcp-call native__bash '{"command": "cd /path/to/project && git add -A && git commit -m \"feat: add feature\""}'
 ```
 
 **IMPORTANT:** Do NOT use bare `Bash` commands like `cat`, `echo`, `python3`. Always use `mcp-call`.
