@@ -31,7 +31,7 @@ lib_dir = Path(__file__).parent
 if str(lib_dir) not in sys.path:
     sys.path.insert(0, str(lib_dir))
 
-from daemon_client import DaemonClient  # noqa: E402
+from daemon_client import DaemonClient, is_daemon_only_key  # noqa: E402
 
 
 def _generate_worker_id() -> str:
@@ -51,9 +51,11 @@ def _load_state() -> dict:
 
 
 def _save_state(state: dict) -> None:
-    """Save worker pool state to workflow server via granular set_value."""
+    """Save worker pool state, filtering protected keys."""
     with DaemonClient() as dc:
         for key, value in state.items():
+            if is_daemon_only_key(key):
+                continue
             dc.workflow_set_value("worker_pool", key, value)
 
 

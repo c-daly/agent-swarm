@@ -422,9 +422,12 @@ def save_queue(queue: "TaskQueue") -> None:
     }
 
     # Save to workflow server (in-memory via MCP, ephemeral)
+    # Use explicit keys to avoid accidentally writing protected keys
     with DaemonClient() as dc:
-        for key, value in queue_data.items():
-            dc.workflow_set_value("queue", key, value)
+        dc.workflow_set_value("queue", "tasks", queue_data["tasks"])
+        dc.workflow_set_value("queue", "prs", queue_data["prs"])
+        dc.workflow_set_value("queue", "completed", queue_data["completed"])
+        dc.workflow_set_value("queue", "failed", queue_data["failed"])
 
     # Also save to session.json for backwards compatibility
     state["queue"] = queue_data

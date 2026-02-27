@@ -36,7 +36,7 @@ scripts_dir = lib_dir.parent / "scripts"
 sys.path.insert(0, str(lib_dir))
 sys.path.insert(0, str(scripts_dir))
 
-from daemon_client import DaemonClient  # noqa: E402
+from daemon_client import DaemonClient, is_daemon_only_key  # noqa: E402
 from iterate_state import (  # noqa: E402
     TaskStatus,
     load_queue,
@@ -118,6 +118,8 @@ def _save_state(state: OrchestrateState) -> None:
     }
     with DaemonClient() as dc:
         for key, value in data.items():
+            if is_daemon_only_key(key):
+                continue
             dc.workflow_set_value("orchestrate", key, value)
 
 
@@ -252,13 +254,11 @@ def spawn_eligible_tasks(
         save_queue(queue)
 
         # Update iterate state with task context for subagent-enforcement hook
-        # This sets current_group and current_repo_path before spawning
+        # Set current_group and current_repo_path before spawning
         with DaemonClient() as dc:
-            iterate_state = dc.workflow_get_state("iterate") or {}
-            iterate_state["current_group"] = task.pr_id
-            iterate_state["current_repo_path"] = getattr(task, "repo_path", "") or ""
-            for key, value in iterate_state.items():
-                dc.workflow_set_value("iterate", key, value)
+            dc.workflow_set_value("iterate", "current_group", task.pr_id)
+            dc.workflow_set_value("iterate", "current_repo_path",
+                                 getattr(task, "repo_path", "") or "")
 
         # Spawn worker
         worker_id = spawn_worker(task.id, task.description)

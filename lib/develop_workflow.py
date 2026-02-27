@@ -19,7 +19,7 @@ lib_dir = Path(__file__).parent
 if str(lib_dir) not in sys.path:
     sys.path.insert(0, str(lib_dir))
 
-from daemon_client import DaemonClient  # noqa: E402
+from daemon_client import DaemonClient, is_daemon_only_key  # noqa: E402
 
 WORKFLOW_ID = "develop"
 
@@ -65,9 +65,13 @@ def _get_state() -> dict:
 
 
 def _set_state(state: dict) -> None:
-    """Persist develop workflow state to router."""
+    """Persist develop workflow state, routing protected keys correctly."""
     with DaemonClient() as dc:
+        if "phase" in state:
+            dc.workflow_advance_phase(WORKFLOW_ID, state["phase"])
         for key, value in state.items():
+            if is_daemon_only_key(key):
+                continue
             dc.workflow_set_value(WORKFLOW_ID, key, value)
 
 
