@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Callable, FrozenSet, Optional, Any
 
-from daemon_client import DaemonClient
+from daemon_client import DaemonClient, is_daemon_only_key
 from permission_store import PermissionStore, PhasePermissions
 
 
@@ -116,9 +116,17 @@ class WorkflowEngine:
             return dc.workflow_get_state(self.workflow_id)
 
     def _save_state(self, state: dict) -> None:
-        """Save workflow state via granular set_value calls."""
+        """Save workflow state, routing protected keys correctly.
+
+        Uses workflow_advance_phase for phase changes and skips other
+        daemon-managed keys. All remaining keys use workflow_set_value.
+        """
         with DaemonClient() as dc:
+            if "phase" in state:
+                dc.workflow_advance_phase(self.workflow_id, state["phase"])
             for key, value in state.items():
+                if is_daemon_only_key(key):
+                    continue
                 dc.workflow_set_value(self.workflow_id, key, value)
 
     def get_phase(self) -> Optional[str]:

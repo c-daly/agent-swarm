@@ -20,6 +20,21 @@ RECV_BUFFER = 8192
 DEFAULT_TIMEOUT = 30.0
 MAX_RESPONSE_SIZE = 10 * 1024 * 1024  # 10 MB — matches daemon MAX_MESSAGE_SIZE
 
+# Keys that only the daemon controller should set — skip in _save_state loops.
+# "phase" is handled separately via workflow_advance_phase.
+# Note: started_at and _checkpoint_passed keys are also protected by the controller
+# but are currently managed in Python. They'll need migration to daemon APIs
+# (workflow_start, workflow_pass_checkpoint) for full production compatibility.
+DAEMON_ONLY_KEYS = frozenset({
+    "phase", "active_agents", "completed_at",
+    "agent_id", "agent_type", "session_id", "workflow_id",
+})
+
+
+def is_daemon_only_key(key: str) -> bool:
+    """Check whether a key should be skipped in _save_state loops."""
+    return key in DAEMON_ONLY_KEYS
+
 
 class DaemonError(Exception):
     """Error returned by the daemon.
