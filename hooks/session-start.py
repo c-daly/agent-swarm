@@ -50,7 +50,7 @@ except ImportError:
     find_recent_handoffs = None
 
 
-STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
+from paths import STATE_DIR
 
 DAEMON_PORT = int(os.environ.get("DAEMON_PORT", "7523"))
 

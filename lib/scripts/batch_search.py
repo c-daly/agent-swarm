@@ -8,7 +8,8 @@ Usage:
 
 import sys
 import argparse
-sys.path.insert(0, '/home/fearsidhe/.claude/plugins/agent-swarm/lib')
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from mcp_bridge import native_grep  # noqa: E402
 
 def main():

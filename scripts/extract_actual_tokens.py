@@ -19,8 +19,8 @@ from collections import defaultdict
 import sys
 
 CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
-TELEMETRY_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/telemetry.json"
-STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
+TELEMETRY_FILE = Path(__file__).resolve().parent.parent / ".state" / "telemetry.json"
+STATE_DIR = Path(__file__).resolve().parent.parent / ".state"
 
 
 def parse_timestamp(ts: str) -> datetime | None:

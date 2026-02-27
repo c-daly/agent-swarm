@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
 
-STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
+STATE_DIR = Path(__file__).resolve().parent.parent / ".state"
 METRICS_FILE = STATE_DIR / "metrics.json"
 BASELINE_FILE = STATE_DIR / "baseline.json"
 ACTIVITY_LOG = STATE_DIR / "activity.log"

@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 from collections import defaultdict, Counter
 
-STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
+STATE_DIR = Path(__file__).resolve().parent.parent / ".state"
 ACTIVITY_LOG = STATE_DIR / "activity.log"
 SUBAGENT_METRICS = STATE_DIR / "subagent_metrics.json"
 

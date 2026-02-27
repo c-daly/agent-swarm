@@ -7,7 +7,7 @@ Run this once to populate historical daily data for the token trend chart.
 import json
 from pathlib import Path
 
-TELEMETRY_FILE = Path.home() / ".claude/plugins/agent-swarm/.state/telemetry.json"
+TELEMETRY_FILE = Path(__file__).resolve().parent.parent / ".state" / "telemetry.json"
 
 
 def rebuild():

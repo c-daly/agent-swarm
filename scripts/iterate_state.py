@@ -348,7 +348,7 @@ class TaskQueue:
 # State Management
 # =============================================================================
 
-STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
+STATE_DIR = Path(__file__).resolve().parent.parent / ".state"
 SESSION_FILE = STATE_DIR / "session.json"
 STATE_FILE = SESSION_FILE  # Alias for queue persistence tests
 

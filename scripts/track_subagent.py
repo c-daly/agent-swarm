@@ -8,15 +8,19 @@ Usage:
 Extracts token usage from task output and logs to metrics.
 """
 
+import os
 import sys
 import json
 import re
 from pathlib import Path
 from datetime import datetime
 
-STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
+STATE_DIR = Path(__file__).resolve().parent.parent / ".state"
 SUBAGENT_METRICS = STATE_DIR / "subagent_metrics.json"
-TASK_OUTPUT_DIR = Path("/tmp/claude/-home-fearsidhe/tasks")
+TASK_OUTPUT_DIR = Path(os.environ.get(
+    "CLAUDE_TASK_OUTPUT_DIR",
+    f"/tmp/claude/{str(Path.home()).replace('/', '-').lstrip('-')}/tasks"
+))
 
 
 def load_subagent_metrics():

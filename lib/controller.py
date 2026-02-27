@@ -43,6 +43,14 @@ PROTECTED_KEYS = frozenset({
 })
 
 
+# Router control ops return structured data callers must parse;
+# summarizing them destroys the contract.
+_ROUTER_NO_SUMMARIZE = frozenset({
+    "get_full", "register_agent", "update_agent_phase",
+    "get_allowed_tools", "ping", "list_tools",
+})
+
+
 def _is_protected_key(key: str) -> bool:
     """Check whether a workflow state key is daemon-managed."""
     return (
@@ -173,8 +181,7 @@ class Controller:
             )
             raise
 
-        # Skip caching/summarization for get_full (agent explicitly wants full content)
-        skip_summarization = (prefix == "router" and tool_name == "get_full")
+        skip_summarization = (prefix == "router" and tool_name in _ROUTER_NO_SUMMARIZE)
 
         if skip_summarization:
             result = raw_result

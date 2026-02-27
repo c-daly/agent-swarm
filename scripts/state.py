@@ -15,7 +15,7 @@ import json
 import sys
 from pathlib import Path
 
-STATE_DIR = Path.home() / ".claude/plugins/agent-swarm/.state"
+STATE_DIR = Path(__file__).resolve().parent.parent / ".state"
 SESSION_FILE = STATE_DIR / "session.json"
 WORKFLOW_FILE = STATE_DIR / "workflow.json"
 
