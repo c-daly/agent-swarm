@@ -1,5 +1,11 @@
 # Develop Workflow Implementation Plan
 
+> **Status: COMPLETED / OUTDATED** — This plan was executed and the develop
+> workflow is implemented. References to `workflow_client` and
+> `workflow_set_state` are obsolete; all state persistence now uses
+> `DaemonClient` with `workflow_set_value` / `workflow_advance_phase`.
+> See PR #75 for the migration.
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Implement a `develop` workflow — a PR-based SE team simulation with PM, Researcher, Architect, Implementer, Reviewer, Git-agent, and Debugger roles using Claude Code native teams.
