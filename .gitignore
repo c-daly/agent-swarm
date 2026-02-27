@@ -1,5 +1,6 @@
 # State files (local to each installation)
 .state/
+.cache/
 
 # Local settings
 .claude/settings.local.json
