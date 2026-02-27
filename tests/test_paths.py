@@ -49,8 +49,7 @@ class TestPluginRoot:
             importlib.reload(paths_mod)
             assert paths_mod.PLUGIN_ROOT == Path("/tmp/fake-plugin")
 
-        # Restore
-        os.environ.pop("AGENT_SWARM_ROOT", None)
+        # Restore module after patch.dict restores env
         importlib.reload(paths_mod)
 
 
@@ -70,7 +69,7 @@ class TestClaudeHome:
             importlib.reload(paths_mod)
             assert paths_mod.CLAUDE_HOME == Path("/tmp/fake-claude")
 
-        os.environ.pop("CLAUDE_HOME", None)
+        # Restore module after patch.dict restores env
         importlib.reload(paths_mod)
 
 

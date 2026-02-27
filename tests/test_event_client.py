@@ -1,6 +1,8 @@
 # tests/test_event_client.py
 import sys
-from pathlib import Path; sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'lib'))
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'lib'))
 from workflow_client import generate_correlation_id  # noqa: E402
 
 def test_generate_correlation_id_returns_string():
