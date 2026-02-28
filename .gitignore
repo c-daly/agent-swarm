@@ -29,3 +29,11 @@ data/*.db-wal
 *.db-wal
 logs/*.log
 .daemon.lock
+
+# Tool-specific local data
+.serena/
+.context/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.DS_Store
