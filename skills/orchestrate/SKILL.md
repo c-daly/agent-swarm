@@ -146,13 +146,6 @@ Preferred → fallback:
 - The queue must support dependence ordering with a focus on parallelism
 - Once complete all that needs doing is pulling tasks off the queue - the thinking is done
 
-### Task Queue
-- There is almost never a one-to-one relationship between the entire spec and a task
-- Tasks are logical units of work, easily tested, and small enough to be convenient
-- Tasks may sometimes span concerns if a library or shared code is necessary
-- The queue must support dependence ordering with a focus on parallelism
-- Once complete all that needs doing is pulling tasks off the queue - the thinking is done
-
 ### Monitoring
 
 - **With teams**: agents report via messages / idle notifications

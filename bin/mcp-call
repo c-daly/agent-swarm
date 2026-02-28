@@ -41,15 +41,6 @@ def list_tools():
     with DaemonClient() as dc:
         return dc.list_tools()
 
-# Allowed backend prefixes - only tools from these backends can be called
-ALLOWED_BACKENDS = {
-    "serena__",
-    "context7__",
-    "playwright__",
-    "workflow__",
-    "native__",
-    "router__",
-}
 
 # Explicitly blocked tools (shell execution, code injection vectors)
 BLOCKED_TOOLS = {
