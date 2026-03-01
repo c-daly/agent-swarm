@@ -25,6 +25,7 @@ class SpawnRequest:
     task_name: str
     branch_name: str
     prompt: str
+    worktree_dir: str = ""
 
 
 @dataclass
@@ -53,8 +54,14 @@ class ParallelOrchestrator:
         if self._state.exists():
             self._state.load()
 
-    def start(self) -> None:
-        """Initialize orchestration state for all tasks."""
+    def start(self, cwd: str = "") -> None:
+        """Initialize orchestration state and create worktrees for all tasks.
+
+        Args:
+            cwd: Working directory containing the git repo. When provided,
+                 worktrees are created under {project_dir}/.worktrees/{project}/
+                 for each task.
+        """
         self._require_manifest()
         if self.is_active():
             raise RuntimeError("Orchestration already active — stop first")
@@ -62,16 +69,107 @@ class ParallelOrchestrator:
         self._state.set("active", True)
         self._state.set("phase", "spawning")
         self._state.set("tasks", {})
+
         for task in self._manifest.tasks:
-            self._state.update_task(task.name, status="pending", retries=0)
+            worktree_dir = ""
+            if cwd:
+                worktree_dir = self._create_worktree(cwd, task)
+            self._state.update_task(
+                task.name, status="pending", retries=0, worktree_dir=worktree_dir
+            )
         self._state.save()
 
-    def stop(self) -> None:
-        """Deactivate orchestration."""
+    def _create_worktree(self, cwd: str, task) -> str:
+        """Create a git worktree for a task. Returns the worktree path.
+
+        If the worktree already exists, reuses it.
+        If the branch already exists (retry), adds worktree without -b.
+        """
+        project_root = str(Path(cwd) / self._manifest.project_dir)
+        worktree_path = str(
+            Path(project_root) / ".worktrees" / self._manifest.project / task.name
+        )
+
+        # Check if worktree already exists
+        if Path(worktree_path).exists():
+            return worktree_path
+
+        # Check if branch already exists
+        branch_check = subprocess.run(
+            ["git", "rev-parse", "--verify", task.branch_name],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+        )
+
+        Path(worktree_path).parent.mkdir(parents=True, exist_ok=True)
+
+        if branch_check.returncode == 0:
+            # Branch exists (retry case) — add worktree on existing branch
+            subprocess.run(
+                ["git", "worktree", "add", worktree_path, task.branch_name],
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        else:
+            # New branch — create from base_branch
+            subprocess.run(
+                [
+                    "git", "worktree", "add",
+                    worktree_path,
+                    "-b", task.branch_name,
+                    self._manifest.base_branch,
+                ],
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+        return worktree_path
+
+    def stop(self, cwd: str = "") -> None:
+        """Deactivate orchestration and clean up worktrees.
+
+        Args:
+            cwd: Working directory. When provided, removes worktrees
+                 created during start().
+        """
         self._require_state()
+        if cwd:
+            self._cleanup_worktrees(cwd)
         self._state.set("active", False)
         self._state.set("phase", "stopped")
         self._state.save()
+
+    def _cleanup_worktrees(self, cwd: str) -> None:
+        """Remove all worktrees created for this orchestration."""
+        self._require_manifest()
+        project_root = str(Path(cwd) / self._manifest.project_dir)
+        worktrees_parent = (
+            Path(project_root) / ".worktrees" / self._manifest.project
+        )
+
+        tasks = self._state.get("tasks", {})
+        for task in self._manifest.tasks:
+            ts = tasks.get(task.name, {})
+            worktree_dir = ts.get("worktree_dir", "")
+            if worktree_dir and Path(worktree_dir).exists():
+                subprocess.run(
+                    ["git", "worktree", "remove", worktree_dir, "--force"],
+                    cwd=project_root,
+                    capture_output=True,
+                    text=True,
+                )
+
+        # Remove empty .worktrees/{project}/ directory
+        if worktrees_parent.exists():
+            try:
+                worktrees_parent.rmdir()
+            except OSError:
+                pass  # Not empty, leave it
 
     def is_active(self) -> bool:
         self._require_state()
@@ -99,6 +197,7 @@ class ParallelOrchestrator:
             if ts.get("status") == "pending" and self._dependencies_met(task):
                 retries = ts.get("retries", 0)
                 last_error = ts.get("last_error", "")
+                worktree_dir = ts.get("worktree_dir", "")
                 if retries > 0 and last_error:
                     prompt = build_retry_prompt(
                         task,
@@ -106,13 +205,21 @@ class ParallelOrchestrator:
                         error=last_error,
                         attempt=retries + 1,
                         max_retries=self._manifest.max_retries,
+                        worktree_dir=worktree_dir,
+                        project_dir=self._manifest.project_dir,
                     )
                 else:
-                    prompt = build_subagent_prompt(task, self._manifest.base_branch)
+                    prompt = build_subagent_prompt(
+                        task,
+                        self._manifest.base_branch,
+                        worktree_dir=worktree_dir,
+                        project_dir=self._manifest.project_dir,
+                    )
                 pending.append(SpawnRequest(
                     task_name=task.name,
                     branch_name=task.branch_name,
                     prompt=prompt,
+                    worktree_dir=worktree_dir,
                 ))
         return pending
 
@@ -191,11 +298,12 @@ class ParallelOrchestrator:
         self._require_state()
         results = []
         tasks = self._state.get("tasks", {})
+        project_root = str(Path(cwd) / self._manifest.project_dir)
 
         # Checkout base branch first
         subprocess.run(
             ["git", "checkout", self._manifest.base_branch],
-            cwd=cwd,
+            cwd=project_root,
             capture_output=True,
             text=True,
         )
@@ -211,7 +319,7 @@ class ParallelOrchestrator:
             result = subprocess.run(
                 ["git", "merge", task.branch_name, "--no-ff",
                  "-m", f"Merge {task.branch_name}"],
-                cwd=cwd,
+                cwd=project_root,
                 capture_output=True,
                 text=True,
             )
@@ -226,7 +334,7 @@ class ParallelOrchestrator:
                 # Abort the failed merge
                 subprocess.run(
                     ["git", "merge", "--abort"],
-                    cwd=cwd,
+                    cwd=project_root,
                     capture_output=True,
                     text=True,
                 )
@@ -242,9 +350,11 @@ class ParallelOrchestrator:
 
     def verify(self, cwd: str) -> tuple[bool, str]:
         """Run full test suite after merges."""
+        self._require_manifest()
+        project_root = str(Path(cwd) / self._manifest.project_dir)
         result = subprocess.run(
             ["python3", "-m", "pytest", "-v", "--tb=short"],
-            cwd=cwd,
+            cwd=project_root,
             capture_output=True,
             text=True,
         )
@@ -378,22 +488,38 @@ def main():
         }, indent=2))
 
     elif cmd == "start":
-        if len(sys.argv) < 3:
-            print("Usage: orchestrator.py start <manifest.yaml>")
+        if len(sys.argv) < 4:
+            print("Usage: orchestrator.py start <manifest.yaml> <cwd>")
             sys.exit(1)
         orch.load_manifest(sys.argv[2])
-        orch.start()
+        orch.start(cwd=sys.argv[3])
         print(json.dumps(orch.get_status(), indent=2))
 
     elif cmd == "pending":
         if len(sys.argv) < 3:
-            print("Usage: orchestrator.py pending <manifest.yaml>")
+            print("Usage: orchestrator.py pending <manifest.yaml> [--json]")
             sys.exit(1)
         orch.load_manifest(sys.argv[2])
         pending = orch.get_pending_tasks()
-        for req in pending:
-            print(f"\n=== {req.task_name} ({req.branch_name}) ===")
-            print(req.prompt)
+        use_json = "--json" in sys.argv
+        if use_json:
+            print(json.dumps([
+                {
+                    "task_name": req.task_name,
+                    "branch_name": req.branch_name,
+                    "worktree_dir": req.worktree_dir,
+                    "prompt": req.prompt,
+                }
+                for req in pending
+            ], indent=2))
+        else:
+            for req in pending:
+                header = f"\n=== {req.task_name} ({req.branch_name})"
+                if req.worktree_dir:
+                    header += f" [worktree: {req.worktree_dir}]"
+                header += " ==="
+                print(header)
+                print(req.prompt)
 
     elif cmd == "spawned":
         if len(sys.argv) < 5:
@@ -433,10 +559,11 @@ def main():
             print(f"[{status}] {r.branch}: {r.message}")
 
     elif cmd == "verify":
-        if len(sys.argv) < 3:
-            print("Usage: orchestrator.py verify <cwd>")
+        if len(sys.argv) < 4:
+            print("Usage: orchestrator.py verify <manifest.yaml> <cwd>")
             sys.exit(1)
-        ok, msg = orch.verify(cwd=sys.argv[2])
+        orch.load_manifest(sys.argv[2])
+        ok, msg = orch.verify(cwd=sys.argv[3])
         print(f"{'PASS' if ok else 'FAIL'}: {msg}")
 
     elif cmd == "summary":
@@ -447,11 +574,11 @@ def main():
         print(orch.generate_summary())
 
     elif cmd == "stop":
-        if len(sys.argv) < 3:
-            print("Usage: orchestrator.py stop <manifest.yaml>")
+        if len(sys.argv) < 4:
+            print("Usage: orchestrator.py stop <manifest.yaml> <cwd>")
             sys.exit(1)
         orch.load_manifest(sys.argv[2])
-        orch.stop()
+        orch.stop(cwd=sys.argv[3])
         print("Orchestration stopped.")
 
     else:

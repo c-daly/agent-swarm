@@ -32,6 +32,7 @@ class Manifest:
     tasks: list[ManifestTask]
     base_branch: str = "main"
     max_retries: int = 2
+    project_dir: str = "."
 
 
 def parse_manifest(path: str) -> Manifest:
@@ -78,6 +79,7 @@ def parse_manifest(path: str) -> Manifest:
         tasks=tasks,
         base_branch=data.get("base_branch", "main"),
         max_retries=data.get("max_retries", 2),
+        project_dir=data.get("project_dir", "."),
     )
 
 
