@@ -1,6 +1,7 @@
 """Tests for the ParallelOrchestrator."""
 
-from unittest.mock import MagicMock, patch
+from pathlib import Path
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -431,3 +432,170 @@ class TestSummary:
         summary = orch_with_deps.generate_summary()
         # integration depends on feature-a and feature-b
         assert "Blocked" in summary or "blocked" in summary
+
+
+@pytest.fixture
+def worktree_manifest_path(tmp_path):
+    """Create a manifest with project_dir set."""
+    content = """\
+project: test-project
+base_branch: main
+max_retries: 2
+project_dir: hermes
+tasks:
+  - name: stack
+    description: "Implement a stack"
+    target_dir: hermes/src/stack
+    test_dir: hermes/tests/test_stack
+    min_tests: 10
+  - name: queue
+    description: "Implement a queue"
+    target_dir: hermes/src/queue
+    test_dir: hermes/tests/test_queue
+    min_tests: 10
+  - name: linked_list
+    description: "Implement a linked list"
+    target_dir: hermes/src/linked_list
+    test_dir: hermes/tests/test_linked_list
+    min_tests: 10
+"""
+    path = tmp_path / "manifest.yaml"
+    path.write_text(content)
+    return str(path)
+
+
+@pytest.fixture
+def worktree_orchestrator(tmp_state_dir, worktree_manifest_path):
+    """Create orchestrator with project_dir manifest."""
+    orch = ParallelOrchestrator()
+    orch.load_manifest(worktree_manifest_path)
+    return orch
+
+
+class TestWorktreeLifecycle:
+    @patch("lib.orchestrator.subprocess.run")
+    def test_start_creates_worktrees(self, mock_run, worktree_orchestrator, tmp_path):
+        """start(cwd) calls git worktree add for each task."""
+        # rev-parse --verify returns non-zero (branch doesn't exist yet)
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="")
+        worktree_orchestrator.start(cwd=str(tmp_path))
+
+        # Should have called git worktree add for each of 3 tasks
+        # Plus git rev-parse --verify for each task to check branch existence
+        worktree_add_calls = [
+            c for c in mock_run.call_args_list
+            if "worktree" in c.args[0] and "add" in c.args[0]
+        ]
+        assert len(worktree_add_calls) == 3
+
+        # Each should include -b flag (new branches)
+        for c in worktree_add_calls:
+            assert "-b" in c.args[0]
+
+    @patch("lib.orchestrator.subprocess.run")
+    def test_start_stores_worktree_dir_in_state(self, mock_run, worktree_orchestrator, tmp_path):
+        """start(cwd) stores worktree_dir in per-task state."""
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="")
+        worktree_orchestrator.start(cwd=str(tmp_path))
+
+        status = worktree_orchestrator.get_status()
+        for task_name, task_state in status["tasks"].items():
+            assert task_state["worktree_dir"] != ""
+            assert "test-project" in task_state["worktree_dir"]
+            assert task_name in task_state["worktree_dir"]
+
+    @patch("lib.orchestrator.subprocess.run")
+    def test_start_reuses_existing_worktrees(self, mock_run, worktree_orchestrator, tmp_path):
+        """start(cwd) reuses worktrees that already exist on disk."""
+        # Create the worktree directory so it appears to already exist
+        project_root = tmp_path / "hermes"
+        project_root.mkdir()
+        wt_dir = project_root / ".worktrees" / "test-project" / "stack"
+        wt_dir.mkdir(parents=True)
+
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="")
+        worktree_orchestrator.start(cwd=str(tmp_path))
+
+        # Should NOT have called git worktree add for "stack" (it already exists)
+        worktree_add_calls = [
+            c for c in mock_run.call_args_list
+            if "worktree" in c.args[0] and "add" in c.args[0]
+        ]
+        # Only 2 tasks should get worktree add (queue and linked_list)
+        assert len(worktree_add_calls) == 2
+
+    @patch("lib.orchestrator.subprocess.run")
+    def test_start_existing_branch_no_b_flag(self, mock_run, worktree_orchestrator, tmp_path):
+        """start(cwd) uses no -b flag when branch already exists (retry)."""
+        # First call (rev-parse) returns 0 = branch exists, rest return 1
+        def side_effect(cmd, **kwargs):
+            if "rev-parse" in cmd:
+                return MagicMock(returncode=0, stdout="abc123", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        mock_run.side_effect = side_effect
+        worktree_orchestrator.start(cwd=str(tmp_path))
+
+        worktree_add_calls = [
+            c for c in mock_run.call_args_list
+            if "worktree" in c.args[0] and "add" in c.args[0]
+        ]
+        # None should have -b flag since branches "already exist"
+        for c in worktree_add_calls:
+            assert "-b" not in c.args[0]
+
+    @patch("lib.orchestrator.subprocess.run")
+    def test_stop_removes_worktrees(self, mock_run, worktree_orchestrator, tmp_path):
+        """stop(cwd) calls git worktree remove for each task."""
+        # Start first (branches don't exist)
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="")
+        worktree_orchestrator.start(cwd=str(tmp_path))
+        mock_run.reset_mock()
+
+        # Now stop
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+        # Create the worktree dirs so cleanup finds them
+        project_root = tmp_path / "hermes"
+        project_root.mkdir(exist_ok=True)
+        for task_name in ["stack", "queue", "linked_list"]:
+            wt = project_root / ".worktrees" / "test-project" / task_name
+            wt.mkdir(parents=True, exist_ok=True)
+
+        worktree_orchestrator.stop(cwd=str(tmp_path))
+
+        worktree_remove_calls = [
+            c for c in mock_run.call_args_list
+            if "worktree" in c.args[0] and "remove" in c.args[0]
+        ]
+        assert len(worktree_remove_calls) == 3
+
+    @patch("lib.orchestrator.subprocess.run")
+    def test_get_pending_tasks_includes_worktree_dir(self, mock_run, worktree_orchestrator, tmp_path):
+        """get_pending_tasks() includes worktree_dir in SpawnRequest."""
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="")
+        worktree_orchestrator.start(cwd=str(tmp_path))
+
+        pending = worktree_orchestrator.get_pending_tasks()
+        assert len(pending) == 3
+        for req in pending:
+            assert req.worktree_dir != ""
+            assert req.task_name in req.worktree_dir
+
+    @patch("lib.orchestrator.subprocess.run")
+    def test_pending_prompt_has_worktree_instructions(self, mock_run, worktree_orchestrator, tmp_path):
+        """Pending task prompts mention worktree dir and no branch switching."""
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="")
+        worktree_orchestrator.start(cwd=str(tmp_path))
+
+        pending = worktree_orchestrator.get_pending_tasks()
+        for req in pending:
+            assert "do NOT create or switch branches" in req.prompt
+            assert req.worktree_dir in req.prompt
+
+    def test_start_without_cwd_skips_worktrees(self, worktree_orchestrator):
+        """start() without cwd doesn't create worktrees (backward compat)."""
+        worktree_orchestrator.start()
+        status = worktree_orchestrator.get_status()
+        for task_state in status["tasks"].values():
+            assert task_state["worktree_dir"] == ""
