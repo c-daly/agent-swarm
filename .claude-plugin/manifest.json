@@ -12,7 +12,8 @@
     "parallel-orchestrate",
     "agent-teams-workflow",
     "pipeline",
-    "plan-to-manifest"
+    "plan-to-manifest",
+    "teams-develop"
   ],
   "hooks": {
     "preToolUse": {
