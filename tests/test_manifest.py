@@ -85,6 +85,14 @@ class TestManifest:
         manifest = Manifest(project="my-project", tasks=[])
         assert manifest.max_retries == 2
 
+    def test_manifest_default_project_dir(self):
+        manifest = Manifest(project="my-project", tasks=[])
+        assert manifest.project_dir == "."
+
+    def test_manifest_custom_project_dir(self):
+        manifest = Manifest(project="my-project", tasks=[], project_dir="hermes")
+        assert manifest.project_dir == "hermes"
+
 
 class TestParseManifest:
     def test_parse_valid_manifest(self, tmp_manifest_file, sample_manifest_yaml):
@@ -182,6 +190,33 @@ tasks:
         assert manifest.tasks[0].min_tests == 20
         assert manifest.tasks[0].branch_name == "feature/custom"
 
+
+    def test_parse_project_dir_default(self, tmp_manifest_file):
+        yaml_str = """\
+project: foo
+tasks:
+  - name: bar
+    description: desc
+    target_dir: x
+    test_dir: y
+"""
+        path = tmp_manifest_file(yaml_str)
+        manifest = parse_manifest(path)
+        assert manifest.project_dir == "."
+
+    def test_parse_project_dir_from_yaml(self, tmp_manifest_file):
+        yaml_str = """\
+project: foo
+project_dir: hermes
+tasks:
+  - name: bar
+    description: desc
+    target_dir: hermes/src/bar
+    test_dir: hermes/tests/bar
+"""
+        path = tmp_manifest_file(yaml_str)
+        manifest = parse_manifest(path)
+        assert manifest.project_dir == "hermes"
 
     def test_parse_depends_on(self, tmp_manifest_file):
         yaml_str = """\

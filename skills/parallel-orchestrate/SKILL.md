@@ -1,39 +1,52 @@
 ---
 name: parallel-orchestrate
-description: "Orchestrate N independent TDD subagents from a YAML task manifest with branch isolation"
+description: "Orchestrate N independent TDD subagents from a YAML task manifest with worktree isolation"
+user_invocable: true
 ---
 
 # Parallel Orchestrate
 
-Orchestrate N independent TDD subagents from a YAML task manifest. Each subagent works on its own git branch, writes tests first, implements until green, then commits. You monitor progress, retry failures, merge branches, and verify the full suite.
+Orchestrate N independent TDD subagents from a YAML task manifest. Each subagent works in its own git worktree (isolated directory + branch), writes tests first, implements until green, then commits. You monitor progress, retry failures, merge branches, and verify the full suite.
+
+## Inputs
+
+You need two things:
+- **`<manifest.yaml>`** — path to the YAML task manifest
+- **`<cwd>`** — workspace root (e.g., `~/projects/LOGOS`). The orchestrator resolves `project_dir` relative to this.
 
 ## Initialize
 
 ```bash
 python3 lib/orchestrator.py load <manifest.yaml>
-python3 lib/orchestrator.py start <manifest.yaml>
+python3 lib/orchestrator.py start <manifest.yaml> <cwd>
 ```
+
+The `start` command creates a git worktree per task under `{project_dir}/.worktrees/{project}/`, so each subagent gets an isolated directory with its branch already checked out. No branch conflicts when running in parallel.
 
 ## Flow
 
 ```
-LOAD → START → SPAWN → MONITOR → MERGE → VERIFY → COMPLETE → DONE
+LOAD → START → SPAWN → MONITOR → MERGE → VERIFY → COMPLETE → STOP
                  ↑         |                |
                  └─ RETRY ─┘          (fail: fix/rollback/continue)
          (blocked tasks wait for dependencies)
 ```
 
 ### Phase 1: SPAWN
-Get pending tasks and spawn subagents:
+Get pending tasks:
 
 ```bash
-python3 lib/orchestrator.py pending <manifest.yaml>
+python3 lib/orchestrator.py pending <manifest.yaml> --json
 ```
 
-For each SpawnRequest, use the Task tool to launch a subagent:
+This returns a JSON array. For each entry, spawn a subagent using the **Agent tool**:
+
 - Use `subagent_type: "general-purpose"`
-- Pass the `prompt` from the SpawnRequest verbatim
-- Record the spawn:
+- Pass the `prompt` field verbatim — it already contains worktree paths and "do NOT switch branches" instructions
+- The `worktree_dir` field tells you where the subagent will work (for your reference)
+- Run subagents **in parallel** — worktrees give each one an isolated directory
+
+After spawning each subagent, record it:
 
 ```bash
 python3 lib/orchestrator.py spawned <manifest.yaml> <task_name> <worker_id>
@@ -61,14 +74,14 @@ If result is "retrying", go back to SPAWN phase for that task.
 Once all tasks are completed/failed, merge branches:
 
 ```bash
-python3 lib/orchestrator.py merge <manifest.yaml> <project_cwd>
+python3 lib/orchestrator.py merge <manifest.yaml> <cwd>
 ```
 
 ### Phase 4: VERIFY
 Run full suite verification:
 
 ```bash
-python3 lib/orchestrator.py verify <project_cwd>
+python3 lib/orchestrator.py verify <manifest.yaml> <cwd>
 ```
 
 **If verification fails**, present these options to the user:
@@ -88,10 +101,10 @@ python3 lib/orchestrator.py summary <manifest.yaml>
 
 2. Hand off to `superpowers:finishing-a-development-branch` to decide how to integrate the work (merge, PR, or cleanup). This is a **REQUIRED SUB-SKILL** — do not skip.
 
-3. Stop orchestration:
+3. Stop orchestration (cleans up worktrees):
 
 ```bash
-python3 lib/orchestrator.py stop <manifest.yaml>
+python3 lib/orchestrator.py stop <manifest.yaml> <cwd>
 ```
 
 ### Summary
@@ -102,10 +115,10 @@ python3 lib/orchestrator.py summary <manifest.yaml>
 ```
 
 ### Stop
-Stop orchestration:
+Stop orchestration (cleans up worktrees):
 
 ```bash
-python3 lib/orchestrator.py stop <manifest.yaml>
+python3 lib/orchestrator.py stop <manifest.yaml> <cwd>
 ```
 
 ## CLI Reference
@@ -113,15 +126,15 @@ python3 lib/orchestrator.py stop <manifest.yaml>
 | Command | Args | Description |
 |---------|------|-------------|
 | `load` | `<manifest.yaml>` | Parse manifest, show task count |
-| `start` | `<manifest.yaml>` | Initialize state, set all tasks pending |
-| `pending` | `<manifest.yaml>` | Show pending SpawnRequests with prompts |
+| `start` | `<manifest.yaml> <cwd>` | Initialize state, create worktrees, set all tasks pending |
+| `pending` | `<manifest.yaml> [--json]` | Show pending SpawnRequests (use `--json` for structured output) |
 | `spawned` | `<manifest.yaml> <task> <worker>` | Record task spawn |
 | `complete` | `<manifest.yaml> <task> [error]` | Record completion (error = failure) |
 | `status` | `<manifest.yaml>` | Show JSON state |
 | `merge` | `<manifest.yaml> <cwd>` | Merge completed branches |
-| `verify` | `<cwd>` | Run full test suite |
+| `verify` | `<manifest.yaml> <cwd>` | Run full test suite |
 | `summary` | `<manifest.yaml>` | Markdown summary table |
-| `stop` | `<manifest.yaml>` | Deactivate orchestration |
+| `stop` | `<manifest.yaml> <cwd>` | Deactivate orchestration, remove worktrees |
 
 ## Manifest Format
 
@@ -129,6 +142,7 @@ python3 lib/orchestrator.py stop <manifest.yaml>
 project: my-project          # Project name (used for state file)
 base_branch: main             # Branch to create task branches from
 max_retries: 2                # Max retry attempts per task
+project_dir: .                # Git repo root relative to cwd (default: ".")
 
 tasks:
   - name: feature-name        # Unique task identifier
@@ -142,14 +156,18 @@ tasks:
       - other-task-name
 ```
 
+When `project_dir` is set (e.g., `hermes`), paths in `target_dir` / `test_dir` should be relative to `cwd` (e.g., `hermes/src/feature`). The orchestrator strips the prefix in worktree prompts automatically.
+
 ## Rules
 
 1. **Never skip TDD** — subagents must write tests FIRST
 2. **One branch per task** — no cross-task file modifications
 3. **Retry before failing** — exhaust max_retries before marking failed
-4. **Merge order matters** — merge in manifest order to minimize conflicts
+4. **Merge order matters** — merge in topological order to minimize conflicts
 5. **Verify after merge** — always run full suite after merging all branches
 6. **Don't modify subagent branches** — only subagents write to their branches
+7. **Subagents do NOT manage branches** — worktrees handle isolation; subagents must not create or switch branches
+8. **Use `--json` for automation** — when calling `pending` programmatically, use `--json` for reliable parsing
 
 ## Dependencies
 

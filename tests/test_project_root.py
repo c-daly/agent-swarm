@@ -19,7 +19,7 @@ class TestFindProjectRoot:
         from project_root import find_project_root
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             (root / ".git").mkdir()
             subdir = root / "src" / "lib"
             subdir.mkdir(parents=True)
@@ -33,7 +33,7 @@ class TestFindProjectRoot:
         from project_root import find_project_root
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             (root / "pyproject.toml").touch()
             subdir = root / "src"
             subdir.mkdir()
@@ -47,7 +47,7 @@ class TestFindProjectRoot:
         from project_root import find_project_root
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             (root / "package.json").touch()
             subdir = root / "src" / "components"
             subdir.mkdir(parents=True)
@@ -61,7 +61,7 @@ class TestFindProjectRoot:
         from project_root import find_project_root
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             (root / ".project-root").touch()
             subdir = root / "deep" / "nested" / "path"
             subdir.mkdir(parents=True)
@@ -75,7 +75,7 @@ class TestFindProjectRoot:
         from project_root import find_project_root
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             (root / ".git").mkdir()
             (root / "pyproject.toml").touch()
             subdir = root / "src"
@@ -91,10 +91,10 @@ class TestFindProjectRoot:
         
         with tempfile.TemporaryDirectory() as tmpdir:
             # No markers, should return the directory itself
-            path = Path(tmpdir)
-            
+            path = Path(tmpdir).resolve()
+
             result = find_project_root(path)
-            
+
             assert result == path
 
     def test_handles_nested_git_repositories(self):
@@ -102,9 +102,9 @@ class TestFindProjectRoot:
         from project_root import find_project_root
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            outer = Path(tmpdir)
+            outer = Path(tmpdir).resolve()
             (outer / ".git").mkdir()
-            
+
             inner = outer / "submodule"
             inner.mkdir()
             (inner / ".git").mkdir()
@@ -122,7 +122,7 @@ class TestFindProjectRoot:
         from project_root import find_project_root
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             (root / ".git").mkdir()
             subdir = root / "src"
             subdir.mkdir()
@@ -151,7 +151,7 @@ class TestGetHandoffDir:
         from project_root import get_handoff_dir
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             (root / ".git").mkdir()
             
             result = get_handoff_dir(root)
@@ -163,7 +163,7 @@ class TestGetHandoffDir:
         from project_root import get_handoff_dir
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             (root / ".git").mkdir()
             
             result = get_handoff_dir(root, create=True)
@@ -176,7 +176,7 @@ class TestGetHandoffDir:
         from project_root import get_handoff_dir
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             (root / ".git").mkdir()
             
             result = get_handoff_dir(root, create=False)
@@ -194,7 +194,7 @@ class TestFindRecentHandoffs:
         import os
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             memories = root / ".serena" / "memories"
             memories.mkdir(parents=True)
             
@@ -222,7 +222,7 @@ class TestFindRecentHandoffs:
         from project_root import find_recent_handoffs
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             memories = root / ".serena" / "memories"
             memories.mkdir(parents=True)
             
@@ -235,7 +235,7 @@ class TestFindRecentHandoffs:
         from project_root import find_recent_handoffs
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             # No .serena/memories directory
             
             result = find_recent_handoffs(root)
@@ -247,7 +247,7 @@ class TestFindRecentHandoffs:
         from project_root import find_recent_handoffs
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             memories = root / ".serena" / "memories"
             memories.mkdir(parents=True)
             
@@ -264,7 +264,7 @@ class TestFindRecentHandoffs:
         import time
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
+            root = Path(tmpdir).resolve()
             memories = root / ".serena" / "memories"
             memories.mkdir(parents=True)
             
