@@ -112,6 +112,26 @@ class BackendManager:
             self._tools_cache[backend] = tools
             return tools
 
+    def reconnect_if_needed(self, backend: str) -> bool:
+        """Check if backend connection is alive; reconnect if dead.
+
+        Returns True if the backend is healthy after this call, False on failure.
+        Safe to call from a background thread — uses the per-backend lock.
+        """
+        if backend not in self._configs:
+            return False
+        with self._locks[backend]:
+            conn = self._connections.get(backend)
+            if conn is not None and conn.poll() is None:
+                return True  # Already alive, nothing to do
+            # Connection is dead or missing — clear stale cache and reconnect
+            self._tools_cache.pop(backend, None)
+            try:
+                self._get_connection(backend)
+                return True
+            except Exception:
+                return False
+
     def list(self) -> list[str]:
         """Return list of registered backend names."""
         return list(self._configs.keys())
