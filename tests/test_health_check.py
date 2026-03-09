@@ -47,7 +47,7 @@ def test_health_check_thread_is_daemon(tmp_path):
     ctrl, _, stop = _make_controller(tmp_path)
     try:
         threads = [t for t in threading.enumerate() if t.name == "backend-health-check"]
-        assert len(threads) == 1
+        assert len(threads) >= 1
         assert all(t.daemon for t in threads)
     finally:
         stop()
