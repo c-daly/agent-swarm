@@ -89,6 +89,7 @@ class Controller:
 
         # Import previous session data into dashboard DB periodically
         self._import_interval = 300  # seconds between import runs
+        self._health_check_interval = _HEALTH_CHECK_INTERVAL
         threading.Thread(
             target=self._dashboard_import_loop, daemon=True, name="dashboard-import"
         ).start()
@@ -109,12 +110,18 @@ class Controller:
     def _health_check_loop(self) -> None:
         """Periodically reconnect any disconnected external backend.
 
-        Runs every _HEALTH_CHECK_INTERVAL seconds. Swallows all exceptions
-        so the thread never dies. Logs a warning when a backend is down.
+        Sleeps first so startup is not delayed. Runs every _health_check_interval
+        seconds. Swallows all exceptions so the thread never dies. Logs a warning
+        when a backend is down.
         """
         while True:
-            time.sleep(_HEALTH_CHECK_INTERVAL)
-            for name in self.backends.list():
+            time.sleep(self._health_check_interval)
+            try:
+                backend_names = self.backends.list()
+            except Exception as e:
+                log.warning("Health check: failed to list backends: %s", e)
+                continue
+            for name in backend_names:
                 try:
                     healthy = self.backends.reconnect_if_needed(name)
                     if not healthy:
