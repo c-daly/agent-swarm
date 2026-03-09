@@ -126,6 +126,7 @@ class BackendManager:
                 return True  # Already alive, nothing to do
             # Connection is dead or missing — clear stale cache and reconnect
             self._tools_cache.pop(backend, None)
+            self._connections.pop(backend, None)
             try:
                 self._get_connection(backend)
                 return True

@@ -253,6 +253,7 @@ class TestReconnectIfNeeded:
         mock_select.return_value = ([proc.stdout], [], [])
 
         mgr = BackendManager(_write_config(tmp_path))
+        # proc.poll() returns None (alive) — _get_connection returns early before Popen
         mgr._connections["serena"] = proc  # inject live connection
 
         result = mgr.reconnect_if_needed("serena")
