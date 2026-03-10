@@ -76,9 +76,9 @@ agents:
     allowed: [native__read_file, native__glob, native__grep, native__bash(pytest*), native__bash(python*), native__bash(ruff*), native__bash(black*), native__bash(mypy*), serena__*]
     blocked: [native__write_file, native__edit_file]
 
-  # Adversary - test quality evaluation, needs write for test files
+  # Adversary - test quality evaluation (writes via serena__*, project-scoped)
   adversary:
-    allowed: [native__read_file, native__glob, native__grep, native__write_file, native__edit_file, native__bash(pytest*), native__bash(python*), native__bash(ruff*), serena__*]
+    allowed: [native__read_file, native__glob, native__grep, native__bash(pytest*), native__bash(python*), native__bash(ruff*), serena__*]
     blocked: [native__bash(rm*), native__bash(git push*), workflow__workflow_start, workflow__workflow_stop, workflow__workflow_update, workflow__workflow_set_state, workflow__workflow_set_value]
 
   # Architect - planning and design (serena__create_text_file for docs/plans)

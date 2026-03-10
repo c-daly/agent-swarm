@@ -243,6 +243,14 @@ class TestReconnectIfNeeded:
         mgr = BackendManager(_write_config(tmp_path))
         assert mgr.reconnect_if_needed("nonexistent") is False
 
+    def test_never_connected_backend_skips_spawn(self, tmp_path):
+        """Backend in configs but never connected should not be eagerly spawned."""
+        mgr = BackendManager(_write_config(tmp_path))
+        assert "serena" not in mgr._connections
+        result = mgr.reconnect_if_needed("serena")
+        assert result is True
+        assert "serena" not in mgr._connections  # still not spawned
+
     @patch("lib.backends.select.select")
     @patch("lib.backends.subprocess.Popen")
     def test_alive_connection_returns_true_without_respawn(

@@ -121,10 +121,12 @@ class BackendManager:
         if backend not in self._configs:
             return False
         with self._locks[backend]:
-            conn = self._connections.get(backend)
+            if backend not in self._connections:
+                return True  # Never connected — preserve lazy init
+            conn = self._connections[backend]
             if conn is not None and conn.poll() is None:
                 return True  # Already alive, nothing to do
-            # Connection is dead or missing — clear stale cache and reconnect
+            # Connection is dead — clear stale cache and reconnect
             self._tools_cache.pop(backend, None)
             self._connections.pop(backend, None)
             try:
