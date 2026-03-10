@@ -754,12 +754,23 @@ class Controller:
             }
             self._agent_set_state({"agent_id": agent_id, "state": agent_state})
 
+            # 4. Assemble briefing (identity header + role/workflow protocol)
+            caller_header = (
+                f"## Your Agent Identity\n"
+                f"Agent ID: `{agent_id}`\n"
+                f"Use `--caller-id={agent_id}` with ALL mcp-call invocations.\n\n"
+            )
+            briefing = caller_header + assemble_subagent_briefing(
+                agent_type, workflow_override=workflow_id
+            )
+
             return {
                 "agent_id": info.agent_id,
                 "agent_type": info.agent_type,
                 "roles": info.roles,
                 "workflow_id": workflow_id,
                 "phase": phase,
+                "briefing": briefing,
             }
 
         if tool_name == "update_agent_phase":

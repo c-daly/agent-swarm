@@ -50,19 +50,19 @@ UNIVERSAL_PROTOCOL = """## Universal Protocol
 AGENT_PROTOCOL = """## Main Agent Protocol
 
 ### Tool Access
-Tools via MCP router: mcp__router__<server>__<tool>
+Tools via MCP router: mcp__plugin_agent-swarm_router__<server>__<tool>
 
 | Operation | Tool |
 |-----------|------|
-| Read file | serena__read_file, native__read_file |
-| Search | native__grep, serena__search_for_pattern |
-| Find files | native__glob, serena__find_file |
-| Find symbols | serena__find_symbol, serena__get_symbols_overview |
-| Edit code | serena__replace_content, serena__replace_symbol_body |
-| Run command | native__bash |
-| Write file | serena__create_text_file |
-| Web fetch | native__web_fetch |
-| Web search | native__web_search |
+| Read file | mcp__plugin_agent-swarm_router__serena__read_file, mcp__plugin_agent-swarm_router__native__read_file |
+| Search | mcp__plugin_agent-swarm_router__native__grep, mcp__plugin_agent-swarm_router__serena__search_for_pattern |
+| Find files | mcp__plugin_agent-swarm_router__native__glob, mcp__plugin_agent-swarm_router__serena__find_file |
+| Find symbols | mcp__plugin_agent-swarm_router__serena__find_symbol, mcp__plugin_agent-swarm_router__serena__get_symbols_overview |
+| Edit code | mcp__plugin_agent-swarm_router__serena__replace_content, mcp__plugin_agent-swarm_router__serena__replace_symbol_body |
+| Run command | mcp__plugin_agent-swarm_router__native__bash |
+| Write file | mcp__plugin_agent-swarm_router__serena__create_text_file |
+| Web fetch | mcp__plugin_agent-swarm_router__native__web_fetch |
+| Web search | mcp__plugin_agent-swarm_router__native__web_search |
 
 ### Tool Priority
 1. Serena symbolic tools (code understanding)

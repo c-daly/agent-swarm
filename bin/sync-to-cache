@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# sync-to-cache — Copy plugin source to Claude Code's cache directory.
+#
+# Usage:
+#   bin/sync-to-cache          # sync all plugin files
+#   bin/sync-to-cache --undo   # restore cache from symlink state
+#
+# Call this after editing source files to push changes to the cache
+# where Claude Code actually reads hooks, skills, settings, etc.
+#
+# After syncing, rewrites ${AGENT_SWARM_ROOT} references in cached
+# hooks.json and .mcp.json to absolute paths so they work regardless
+# of whether the env var is set.
+
+set -euo pipefail
+
+SOURCE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+CACHE_DIR="$HOME/.claude/plugins/cache/fearsidhe-plugins/agent-swarm/1.0.0"
+
+# --- helpers ---
+
+die() { echo "ERROR: $1" >&2; exit 1; }
+
+undo_symlink() {
+    if [ -L "$CACHE_DIR" ]; then
+        echo "Cache is a symlink — removing..."
+        rm "$CACHE_DIR"
+    fi
+}
+
+sync_files() {
+    mkdir -p "$CACHE_DIR"
+
+    rsync -a --delete \
+        --exclude='.git/' \
+        --exclude='.venv/' \
+        --exclude='__pycache__/' \
+        --exclude='*.pyc' \
+        --exclude='.state/' \
+        --exclude='.cache/' \
+        --exclude='.logs/' \
+        --exclude='.worktrees/' \
+        --exclude='.daemon.lock' \
+        --exclude='.coverage' \
+        --exclude='.coverage.*' \
+        --exclude='.pytest_cache/' \
+        --exclude='.ruff_cache/' \
+        --exclude='.mypy_cache/' \
+        --exclude='.DS_Store' \
+        --exclude='.serena/' \
+        --exclude='.context/' \
+        --exclude='logs/*.log' \
+        --exclude='data/*.db' \
+        --exclude='data/*.db-shm' \
+        --exclude='data/*.db-wal' \
+        --exclude='HANDOFF.md' \
+        --exclude='.claude/settings.local.json' \
+        "$SOURCE_DIR/" "$CACHE_DIR/"
+
+    echo "Synced: $SOURCE_DIR → $CACHE_DIR"
+}
+
+rewrite_paths() {
+    # Replace ${AGENT_SWARM_ROOT} with the actual cache path in config files
+    # so hooks and MCP server commands work without the env var.
+    local files=("$CACHE_DIR/hooks/hooks.json" "$CACHE_DIR/.mcp.json")
+    for f in "${files[@]}"; do
+        if [ -f "$f" ]; then
+            sed -i "s|\${AGENT_SWARM_ROOT}|${CACHE_DIR}|g" "$f"
+            echo "Rewrote paths in: $(basename "$f")"
+        fi
+    done
+}
+
+# --- main ---
+
+if [ "${1:-}" = "--undo" ]; then
+    undo_symlink
+    sync_files
+    rewrite_paths
+    echo "Cache restored. Restart Claude Code to pick up changes."
+    exit 0
+fi
+
+if [ -L "$CACHE_DIR" ]; then
+    echo "Cache is a symlink — converting back to real directory first."
+    undo_symlink
+fi
+
+sync_files
+rewrite_paths
+echo "Done. Restart Claude Code if hooks.json changed."

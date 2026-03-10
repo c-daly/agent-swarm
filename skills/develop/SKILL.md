@@ -65,8 +65,8 @@ Spawn Researcher to gather codebase context.
 **Actions:**
 - Register + spawn Researcher teammate
   ```
-  router__register_agent(agent_id="researcher", agent_type="researcher", workflow_id="develop")
-  Task(team_name=<team>, name="researcher", prompt=briefing + context_request)
+  reg = router__register_agent(agent_id="researcher", agent_type="researcher", workflow_id="develop")
+  Task(team_name=<team>, name="researcher", prompt=reg.briefing + "\n\n" + context_request)
   ```
 - Send context request via `SendMessage(recipient="researcher", content=<stories + questions>)`
 - Wait for context document
@@ -80,6 +80,10 @@ Spawn Architect to produce design spec with subtask dependency graph.
 
 **Actions:**
 - Register + spawn Architect teammate
+  ```
+  reg = router__register_agent(agent_id="architect", agent_type="architect", workflow_id="develop")
+  Task(team_name=<team>, name="architect", prompt=reg.briefing + "\n\n" + design_request)
+  ```
 - Send stories + research context via `SendMessage`
 - Wait for design spec with:
   - Architecture decisions
@@ -97,6 +101,10 @@ Spawn Git-agent to create feature branch from main.
 
 **Actions:**
 - Register + spawn Git-agent teammate
+  ```
+  reg = router__register_agent(agent_id="git-agent", agent_type="git-agent", workflow_id="develop")
+  Task(team_name=<team>, name="git-agent", prompt=reg.briefing + "\n\n" + branch_request)
+  ```
 - Request branch creation via `SendMessage`
   ```
   SendMessage(recipient="git-agent", content="Create feature branch 'feat/<name>' from main")
@@ -118,11 +126,11 @@ For each eligible subtask (respecting dependency graph):
   ```
   # Implementers use iterate sub-workflow (TDD loop) for their individual work.
   # The develop workflow governs the PM's outer lifecycle.
-  router__register_agent(agent_id=<subtask-id>, agent_type="implementer", workflow_id="iterate")
+  reg = router__register_agent(agent_id=<subtask-id>, agent_type="implementer", workflow_id="iterate")
   Task(
     team_name=<team>,
     name=<subtask-id>,
-    prompt=briefing + subtask_description + working_dir,
+    prompt=reg.briefing + "\n\n" + subtask_description + working_dir,
     subagent_type="implementer",
     isolation="worktree"  # parallel subtasks get isolated worktrees
   )
@@ -140,6 +148,10 @@ Spawn Reviewer for adversarial code review.
 
 **Actions:**
 - Register + spawn Reviewer teammate
+  ```
+  reg = router__register_agent(agent_id="reviewer", agent_type="reviewer", workflow_id="develop")
+  Task(team_name=<team>, name="reviewer", prompt=reg.briefing + "\n\n" + review_request)
+  ```
 - Send design spec + full diff via `SendMessage`
 - Reviewer performs adversarial review against:
   - Design spec compliance
@@ -241,8 +253,8 @@ Kickback loops (3+ same-issue kickbacks) trigger PM intervention — escalate to
 - **Stale agents**: Monitor via messages/task list. Dead/stuck agent -> re-register and re-spawn.
 - **Debugger escalation**: For persistent test failures, spawn a debugger on demand:
   ```
-  router__register_agent(agent_id="debugger-<issue>", agent_type="debugger", workflow_id="develop")
-  Task(team_name=<team>, name="debugger-<issue>", prompt=briefing + error_context)
+  reg = router__register_agent(agent_id="debugger-<issue>", agent_type="debugger", workflow_id="develop")
+  Task(team_name=<team>, name="debugger-<issue>", prompt=reg.briefing + "\n\n" + error_context)
   ```
   Shut down debugger after issue is resolved.
 
