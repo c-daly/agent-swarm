@@ -48,8 +48,8 @@ roles:
 agents:
   # Explorer - research only
   explorer:
-    allowed: [native__read_file, native__glob, native__grep, serena__*, context7__*]
-    blocked: [native__write_file, native__edit_file, native__bash, workflow__workflow_start, workflow__workflow_stop, workflow__workflow_update, workflow__workflow_set_state, workflow__workflow_set_value]
+    allowed: [native__read_file, native__glob, native__grep, serena__*, context7__*, native__bash(git log*), native__bash(git show*), native__bash(git diff*), native__bash(git status*), native__bash(git branch*), native__bash(ls*), native__bash(tree*), native__bash(wc*), native__bash(file*)]
+    blocked: [native__write_file, native__edit_file, workflow__workflow_start, workflow__workflow_stop, workflow__workflow_update, workflow__workflow_set_state, workflow__workflow_set_value]
 
   # Implementer - can edit code, uses mcp-call via Bash
   implementer:
@@ -63,7 +63,7 @@ agents:
 
   # Researcher - web and code research
   researcher:
-    allowed: [native__read_file, native__glob, native__grep, serena__find_symbol, serena__search_for_pattern, serena__read_file, serena__list_dir, context7__*]
+    allowed: [native__read_file, native__glob, native__grep, serena__find_symbol, serena__find_referencing_symbols, serena__get_symbols_overview, serena__search_for_pattern, serena__read_file, serena__list_dir, context7__*, native__web_fetch, native__web_search]
     blocked: [native__write_file, native__edit_file, native__bash]
 
   # Reviewer - read-only analysis
@@ -73,12 +73,17 @@ agents:
 
   # Debugger - can read and run tests
   debugger:
-    allowed: [native__read_file, native__glob, native__grep, native__bash(pytest*), native__bash(python*), serena__*]
+    allowed: [native__read_file, native__glob, native__grep, native__bash(pytest*), native__bash(python*), native__bash(ruff*), native__bash(black*), native__bash(mypy*), serena__*]
     blocked: [native__write_file, native__edit_file]
 
-  # Architect - planning and design
+  # Adversary - test quality evaluation (writes via serena__*, project-scoped)
+  adversary:
+    allowed: [native__read_file, native__glob, native__grep, native__bash(pytest*), native__bash(python*), native__bash(ruff*), serena__*]
+    blocked: [native__bash(rm*), native__bash(git push*), workflow__workflow_start, workflow__workflow_stop, workflow__workflow_update, workflow__workflow_set_state, workflow__workflow_set_value]
+
+  # Architect - planning and design (serena__create_text_file for docs/plans)
   architect:
-    allowed: [native__read_file, native__glob, native__grep, serena__*, context7__*]
+    allowed: [native__read_file, native__glob, native__grep, serena__*, context7__*, native__web_fetch, native__web_search]
     blocked: [native__write_file, native__edit_file, native__bash]
 
   # Git-agent - branch/PR/merge operations

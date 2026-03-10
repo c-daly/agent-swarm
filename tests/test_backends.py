@@ -235,6 +235,81 @@ class TestListTools:
             mgr.list_tools("nonexistent")
 
 
+# --- reconnect_if_needed ---
+
+
+class TestReconnectIfNeeded:
+    def test_unknown_backend_returns_false(self, tmp_path):
+        mgr = BackendManager(_write_config(tmp_path))
+        assert mgr.reconnect_if_needed("nonexistent") is False
+
+    def test_never_connected_backend_skips_spawn(self, tmp_path):
+        """Backend in configs but never connected should not be eagerly spawned."""
+        mgr = BackendManager(_write_config(tmp_path))
+        assert "serena" not in mgr._connections
+        result = mgr.reconnect_if_needed("serena")
+        assert result is True
+        assert "serena" not in mgr._connections  # still not spawned
+
+    @patch("lib.backends.select.select")
+    @patch("lib.backends.subprocess.Popen")
+    def test_alive_connection_returns_true_without_respawn(
+        self, mock_popen, mock_select, tmp_path
+    ):
+        proc = _make_mock_proc([_handshake_response()])
+        mock_popen.return_value = proc
+        mock_select.return_value = ([proc.stdout], [], [])
+
+        mgr = BackendManager(_write_config(tmp_path))
+        # proc.poll() returns None (alive) — _get_connection returns early before Popen
+        mgr._connections["serena"] = proc  # inject live connection
+
+        result = mgr.reconnect_if_needed("serena")
+
+        assert result is True
+        assert mock_popen.call_count == 0  # no new spawn needed
+
+    @patch("lib.backends.select.select")
+    @patch("lib.backends.subprocess.Popen")
+    def test_dead_connection_clears_cache_and_reconnects(
+        self, mock_popen, mock_select, tmp_path
+    ):
+        dead_proc = MagicMock()
+        dead_proc.poll.return_value = 1  # process has exited
+
+        tools_response = {
+            "jsonrpc": "2.0", "id": "x",
+            "result": {"tools": [{"name": "t1"}]},
+        }
+        live_proc = _make_mock_proc([_handshake_response(), tools_response])
+        mock_popen.return_value = live_proc
+        mock_select.return_value = ([live_proc.stdout], [], [])
+
+        mgr = BackendManager(_write_config(tmp_path))
+        mgr._connections["serena"] = dead_proc
+        mgr._tools_cache["serena"] = [{"name": "stale"}]
+
+        result = mgr.reconnect_if_needed("serena")
+
+        assert result is True
+        assert "serena" not in mgr._tools_cache  # cache cleared
+        assert mgr._connections["serena"] is live_proc  # new connection stored
+
+    @patch("lib.backends.subprocess.Popen")
+    def test_reconnect_failure_returns_false(self, mock_popen, tmp_path):
+        dead_proc = MagicMock()
+        dead_proc.poll.return_value = 1  # process has exited
+
+        mock_popen.side_effect = FileNotFoundError("uvx not found")
+
+        mgr = BackendManager(_write_config(tmp_path))
+        mgr._connections["serena"] = dead_proc
+
+        result = mgr.reconnect_if_needed("serena")
+
+        assert result is False
+
+
 # --- Connection management ---
 
 

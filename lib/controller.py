@@ -50,6 +50,8 @@ _ROUTER_NO_SUMMARIZE = frozenset({
     "get_allowed_tools", "ping", "list_tools",
 })
 
+_HEALTH_CHECK_INTERVAL = 60  # seconds between backend reconnect attempts
+
 
 def _is_protected_key(key: str) -> bool:
     """Check whether a workflow state key is daemon-managed."""
@@ -87,8 +89,13 @@ class Controller:
 
         # Import previous session data into dashboard DB periodically
         self._import_interval = 300  # seconds between import runs
+        self._health_check_interval = _HEALTH_CHECK_INTERVAL
         threading.Thread(
             target=self._dashboard_import_loop, daemon=True, name="dashboard-import"
+        ).start()
+
+        threading.Thread(
+            target=self._health_check_loop, daemon=True, name="backend-health-check"
         ).start()
 
     def _dashboard_import_loop(self) -> None:
@@ -99,6 +106,30 @@ class Controller:
             except Exception:
                 pass
             time.sleep(self._import_interval)
+
+    def _health_check_loop(self) -> None:
+        """Periodically reconnect any disconnected external backend.
+
+        Sleeps first so startup is not delayed. Runs every _health_check_interval
+        seconds. Swallows all exceptions so the thread never dies. Logs a warning
+        when a backend is down.
+        """
+        while True:
+            time.sleep(self._health_check_interval)
+            try:
+                backend_names = self.backends.list()
+            except Exception as e:
+                log.warning("Health check: failed to list backends: %s", e)
+                continue
+            for name in backend_names:
+                try:
+                    healthy = self.backends.reconnect_if_needed(name)
+                    if not healthy:
+                        log.warning(
+                            "Health check: backend %s is down, reconnect failed", name
+                        )
+                except Exception as e:
+                    log.warning("Health check error for %s: %s", name, e)
 
     def run_dashboard_import(self) -> dict:
         """Import Claude JSONL transcripts into the dashboard database.
