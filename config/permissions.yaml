@@ -46,9 +46,9 @@ roles:
     blocked: []
 
 agents:
-  # Explorer - research only (role read_only provides broad bash block as safety net)
+  # Explorer - research only
   explorer:
-    allowed: [native__read_file, native__glob, native__grep, serena__*, context7__*, native__bash(git log*), native__bash(git show*), native__bash(git diff*), native__bash(git status*), native__bash(git branch*), native__bash(python -c*), native__bash(ls*), native__bash(tree*), native__bash(wc*), native__bash(file*)]
+    allowed: [native__read_file, native__glob, native__grep, serena__*, context7__*, native__bash(git log*), native__bash(git show*), native__bash(git diff*), native__bash(git status*), native__bash(git branch*), native__bash(ls*), native__bash(tree*), native__bash(wc*), native__bash(file*)]
     blocked: [native__write_file, native__edit_file, workflow__workflow_start, workflow__workflow_stop, workflow__workflow_update, workflow__workflow_set_state, workflow__workflow_set_value]
 
   # Implementer - can edit code, uses mcp-call via Bash

@@ -76,7 +76,6 @@ def test_health_check_loop_logs_warning_on_failure(tmp_path, caplog):
     try:
         with caplog.at_level(logging.WARNING, logger="lib.controller"):
             time.sleep(0.2)
+        assert any("serena" in r.message and "down" in r.message for r in caplog.records)
     finally:
         stop()
-
-    assert any("serena" in r.message and "down" in r.message for r in caplog.records)

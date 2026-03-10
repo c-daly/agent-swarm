@@ -131,6 +131,7 @@ class BackendManager:
                 self._get_connection(backend)
                 return True
             except Exception:
+                log.warning("reconnect_if_needed(%s): reconnect failed", backend, exc_info=True)
                 return False
 
     def list(self) -> list[str]:
