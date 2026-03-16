@@ -15,7 +15,7 @@ import json
 import os
 import sys
 
-ALWAYS_ALLOW = False  # Set to False to enable blocking logic
+ALWAYS_ALLOW = False  # Set to True to bypass all tool blocking (debug use only)
 
 MCP_CALL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bin", "mcp-call")
 

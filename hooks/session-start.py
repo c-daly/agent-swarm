@@ -289,7 +289,7 @@ def ensure_otel_stack() -> str | None:
             return None
         # Not running — start it
         result = subprocess.run(
-            ["docker", "compose", "-f", str(otel_dir / "docker-compose.yml"), "up", "-d"],
+            ["docker", "compose", "-f", str(compose_file), "up", "-d"],
             capture_output=True, text=True, timeout=30,
         )
         if result.returncode != 0:
