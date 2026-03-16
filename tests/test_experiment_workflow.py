@@ -10,6 +10,8 @@ def mock_daemon():
     mock_dc.workflow_get_state.return_value = state
     mock_dc.workflow_set_value.side_effect = lambda wf_id, k, v: state.update({k: v})
     mock_dc.workflow_advance_phase.side_effect = lambda wf_id, phase: state.update({"phase": phase})
+    mock_dc.workflow_is_active.return_value = False
+    mock_dc.workflow_start.return_value = {}
     mock_dc.__enter__ = MagicMock(return_value=mock_dc)
     mock_dc.__exit__ = MagicMock(return_value=False)
     with patch("experiment_workflow.DaemonClient", return_value=mock_dc):
@@ -140,6 +142,24 @@ class TestExperimentWorkflow:
         # No workflow started
         with pytest.raises(ExperimentWorkflowError, match="not active"):
             advance_phase("plan")
+    def test_workflow_start_called_on_fresh_experiment(self, mock_daemon):
+        from experiment_workflow import start_experiment
+
+        mock_dc, state = mock_daemon
+        mock_dc.workflow_is_active.return_value = False
+        start_experiment(experiment_dir="/tmp/exp", task="test")
+        mock_dc.workflow_start.assert_called_once_with(
+            "experiment", initial_state={"phase": "read"}
+        )
+
+    def test_workflow_start_not_called_when_already_active(self, mock_daemon):
+        from experiment_workflow import start_experiment
+
+        mock_dc, state = mock_daemon
+        mock_dc.workflow_is_active.return_value = True
+        start_experiment(experiment_dir="/tmp/exp", task="test")
+        mock_dc.workflow_start.assert_not_called()
+
     def test_best_metrics_lower_is_better(self, mock_daemon):
         from experiment_workflow import start_experiment, record_eval_result
 

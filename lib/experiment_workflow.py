@@ -43,6 +43,8 @@ def _get_state() -> dict:
 
 def _set_state(state: dict) -> None:
     with DaemonClient() as dc:
+        if state.get("active") and not dc.workflow_is_active(WORKFLOW_ID):
+            dc.workflow_start(WORKFLOW_ID, initial_state={"phase": state.get("phase", "read")})
         if "phase" in state:
             dc.workflow_advance_phase(WORKFLOW_ID, state["phase"])
         for key, value in state.items():
