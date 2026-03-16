@@ -287,14 +287,12 @@ def ensure_otel_stack() -> str | None:
         )
         if result.stdout.strip() == "true":
             return None
-        # Not running — start it
-        result = subprocess.run(
+        # Not running — fire-and-forget start (hook timeout is 10s, can't wait)
+        subprocess.Popen(
             ["docker", "compose", "-f", str(compose_file), "up", "-d"],
-            capture_output=True, text=True, timeout=30,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
-        if result.returncode != 0:
-            return None
-        return "OTEL stack started from ~/.claude/infra/otel/"
+        return "OTEL stack starting from ~/.claude/infra/otel/"
     except Exception:
         return None
 
