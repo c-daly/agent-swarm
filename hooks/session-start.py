@@ -283,10 +283,12 @@ def ensure_otel_stack() -> str | None:
         if result.stdout.strip() == "true":
             return None
         # Not running — start it
-        subprocess.run(
+        result = subprocess.run(
             ["docker", "compose", "-f", str(otel_dir / "docker-compose.yml"), "up", "-d"],
             capture_output=True, timeout=30,
         )
+        if result.returncode != 0:
+            return None
         return "OTEL stack started from ~/.claude/infra/otel/"
     except Exception:
         return None
