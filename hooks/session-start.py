@@ -273,7 +273,12 @@ def ensure_otel_stack() -> str | None:
     """Start OTEL stack if not running."""
     import subprocess
     otel_dir = Path.home() / ".claude" / "infra" / "otel"
-    if not (otel_dir / "docker-compose.yml").exists():
+    compose_file = next(
+        (otel_dir / name for name in ("docker-compose.yml", "docker-compose.yaml", "compose.yaml", "compose.yml")
+         if (otel_dir / name).exists()),
+        None,
+    )
+    if compose_file is None:
         return None
     try:
         result = subprocess.run(
