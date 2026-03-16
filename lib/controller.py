@@ -84,6 +84,7 @@ class Controller:
         self._tool_to_backend: dict[str, str] = {}
         self._workflow_state: dict[str, dict] = {}
         self._agent_state: dict[str, dict] = {}
+        self._pending_dispatches: dict[str, dict] = {}
         self._state_lock = threading.RLock()
         self._summarization_threshold = 2000
 
@@ -575,6 +576,65 @@ class Controller:
         except Exception as e:
             return {"query": query, "error": str(e), "isError": True}
 
+    # --- Dispatch enforcement ---
+
+    def _prepare_dispatch(self, args: dict) -> dict:
+        """Prepare an agent for dispatch. Called by hook before Task() proceeds.
+
+        Handles: validation, ID generation, permission registration,
+        briefing assembly, state recording.
+        Does NOT handle execution — the caller does Task().
+        """
+        agent_type = args.get("agent_type") or args.get("subagent_type")
+        if not agent_type:
+            raise RouterError("prepare_dispatch requires agent_type")
+
+        description = args.get("description", "")
+
+        # Generate agent ID
+        agent_id = f"sub-{uuid.uuid4().hex[:8]}"
+
+        # Extract role from agent_type (e.g., "agent-swarm:implementer" -> "implementer")
+        role = agent_type.split(":")[-1] if ":" in agent_type else agent_type
+
+        # Register in permissions system
+        self.permissions.register_agent(agent_id, role)
+
+        # Assemble role-specific briefing
+        wf_override = "iterate" if role == "implementer" else None
+        briefing = assemble_subagent_briefing(role, workflow_override=wf_override)
+        caller_header = (
+            f"## Your Agent Identity\n"
+            f"Agent ID: `{agent_id}`\n"
+            f"Use `--caller-id={agent_id}` with ALL mcp-call invocations.\n\n"
+        )
+        full_briefing = caller_header + briefing
+
+        # Store briefing for retrieval by session-start
+        with self._state_lock:
+            self._pending_dispatches[agent_id] = {
+                "briefing": full_briefing,
+                "agent_type": role,
+                "description": description,
+            }
+
+            # Record agent state
+            self._agent_state[agent_id] = {
+                "type": agent_type,
+                "status": "pending",
+                "started_at": datetime.now(timezone.utc).isoformat(),
+                "description": description,
+            }
+
+        return {"success": True, "agent_id": agent_id}
+
+    def _get_agent_briefing(self, args: dict) -> dict:
+        """Return agent briefing — stored role-specific if available, generic otherwise."""
+        agent_id = args.get("agent_id")
+        if agent_id and agent_id in self._pending_dispatches:
+            return {"briefing": self._pending_dispatches[agent_id]["briefing"]}
+        return {"briefing": assemble_agent_briefing()}
+
     # --- Router operations ---
 
     def _handle_router(self, tool_name: str, args: dict) -> Any:
@@ -654,8 +714,11 @@ class Controller:
         if tool_name == "import_dashboard":
             return self.run_dashboard_import()
 
+        if tool_name == "prepare_dispatch":
+            return self._prepare_dispatch(args)
+
         if tool_name == "get_agent_briefing":
-            return {"briefing": assemble_agent_briefing()}
+            return self._get_agent_briefing(args)
 
         raise RouterError(f"Unknown router tool: {tool_name}")
 
