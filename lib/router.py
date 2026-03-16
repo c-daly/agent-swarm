@@ -464,20 +464,6 @@ class Router:
                     "required": ["query"],
                 },
             },
-            {
-                "name": "native__task",
-                "description": "Spawn a subagent to execute a task. The router owns the full lifecycle: context injection, execution, and result processing.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "prompt": {"type": "string", "description": "The task prompt for the subagent"},
-                        "subagent_type": {"type": "string", "description": "Type of subagent (e.g., implementer, explorer, reviewer)"},
-                        "model": {"type": "string", "description": "Optional model override (sonnet, opus, haiku)"},
-                        "description": {"type": "string", "description": "Short description of the task (for logging)"},
-                    },
-                    "required": ["prompt", "subagent_type"],
-                },
-            },
         ]
 
     @staticmethod
