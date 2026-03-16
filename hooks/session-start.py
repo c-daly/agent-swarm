@@ -256,8 +256,16 @@ def list_serena_memories() -> list[str]:
 
 
 def get_agent_briefing() -> str:
-    """Get agent protocol briefing from router."""
-    result = call_router("get_agent_briefing")
+    """Get agent protocol briefing from router.
+
+    Passes agent_id if available so the controller can return
+    a role-specific briefing stored by prepare_dispatch().
+    """
+    args = {}
+    agent_id = os.environ.get("CLAUDE_AGENT_ID")
+    if agent_id:
+        args["agent_id"] = agent_id
+    result = call_router("get_agent_briefing", args)
     if result and "briefing" in result:
         return result["briefing"]
     
