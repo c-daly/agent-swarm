@@ -140,3 +140,27 @@ class TestExperimentWorkflow:
         # No workflow started
         with pytest.raises(ExperimentWorkflowError, match="not active"):
             advance_phase("plan")
+    def test_best_metrics_lower_is_better(self, mock_daemon):
+        from experiment_workflow import start_experiment, record_eval_result
+
+        _, state = mock_daemon
+        start_experiment(experiment_dir="/tmp/exp", task="test")
+        # Add success_criteria with a lower-is-better metric
+        state["success_criteria"] = [
+            {"metric": "loss", "threshold": 0.1, "comparison": "<=", "primary": True},
+            {"metric": "accuracy", "threshold": 0.9, "comparison": ">="},
+        ]
+
+        record_eval_result({"loss": 0.5, "accuracy": 0.80}, passed=False)
+        assert state["best_metrics"]["loss"] == 0.5
+        assert state["best_metrics"]["accuracy"] == 0.80
+
+        # Second eval: loss decreases (better), accuracy increases (better)
+        record_eval_result({"loss": 0.3, "accuracy": 0.85}, passed=False)
+        assert state["best_metrics"]["loss"] == 0.3
+        assert state["best_metrics"]["accuracy"] == 0.85
+
+        # Third eval: loss increases (worse), accuracy increases (better)
+        record_eval_result({"loss": 0.4, "accuracy": 0.90}, passed=True)
+        assert state["best_metrics"]["loss"] == 0.3   # stays at minimum
+        assert state["best_metrics"]["accuracy"] == 0.90  # tracks maximum

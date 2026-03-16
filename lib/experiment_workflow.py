@@ -143,10 +143,19 @@ def record_eval_result(metrics: dict, passed: bool) -> None:
     state["last_eval_passed"] = passed
     state["last_eval_metrics"] = metrics
 
+    lower_is_better = set()
+    for c in state.get("success_criteria", []):
+        if c.get("comparison", ">=") in ("<=", "<"):
+            lower_is_better.add(c["metric"])
+
     best = state.get("best_metrics", {})
     for k, v in metrics.items():
-        if k not in best or v > best[k]:
+        if k not in best:
             best[k] = v
+        elif k in lower_is_better:
+            best[k] = min(best[k], v)
+        else:
+            best[k] = max(best[k], v)
     state["best_metrics"] = best
     _set_state(state)
 
