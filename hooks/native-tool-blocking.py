@@ -10,10 +10,12 @@ Analogue map approach (block-on-hit):
 This hook is the first gate. Tools that pass through still need
 permission from the controller (permissions.yaml).
 """
+
 import json
 import os
 import sys
 
+ALWAYS_ALLOW = False  # Set to True to bypass all tool blocking (debug use only)
 
 MCP_CALL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bin", "mcp-call")
 
@@ -33,12 +35,7 @@ ROUTER_ANALOGUES = {
 
 
 def allow(reason: str = ""):
-    result = {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "allow"
-        }
-    }
+    result = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}
     if reason:
         result["hookSpecificOutput"]["permissionDecisionReason"] = reason
     return result
@@ -51,6 +48,9 @@ def block(reason: str):
 
 
 def main():
+    if ALWAYS_ALLOW:
+        print(json.dumps(allow("ALWAYS_ALLOW bypass")))
+        return
     try:
         input_data = json.loads(sys.stdin.read())
     except json.JSONDecodeError:
@@ -82,10 +82,7 @@ def main():
                 f"Use mcp-call via Bash: mcp-call {analogue} '<json_args>'"
             )
         else:
-            block(
-                f"[BLOCKED] '{tool_name}' blocked. "
-                f"Use mcp__router__{analogue} instead."
-            )
+            block(f"[BLOCKED] '{tool_name}' blocked. Use mcp__router__{analogue} instead.")
         return
 
     # Rule 4: No analogue → allow through (controller decides)

@@ -269,6 +269,34 @@ def get_agent_briefing() -> str:
         return ""
 
 
+def ensure_otel_stack() -> str | None:
+    """Start OTEL stack if not running."""
+    import subprocess
+    otel_dir = Path.home() / ".claude" / "infra" / "otel"
+    compose_file = next(
+        (otel_dir / name for name in ("docker-compose.yml", "docker-compose.yaml", "compose.yaml", "compose.yml")
+         if (otel_dir / name).exists()),
+        None,
+    )
+    if compose_file is None:
+        return None
+    try:
+        result = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Running}}", "otel-collector"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.stdout.strip() == "true":
+            return None
+        # Not running — fire-and-forget start (hook timeout is 10s, can't wait)
+        subprocess.Popen(
+            ["docker", "compose", "-f", str(compose_file), "up", "-d"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        return "OTEL stack starting from ~/.claude/infra/otel/"
+    except Exception:
+        return None
+
+
 def main():
     try:
         input_data = json.loads(sys.stdin.read())
@@ -288,6 +316,9 @@ def main():
 
         # 3. Cleanup stale files
         cleanup_msg = cleanup_stale_outputs()
+
+        # 3b. Ensure OTEL stack is running
+        otel_msg = ensure_otel_stack()
 
         # 4. Permission context
         permission_context = None
@@ -314,6 +345,8 @@ def main():
             messages.append(f"# AGENT PROTOCOL\n\n{briefing}")
         if cleanup_msg:
             messages.append(cleanup_msg)
+        if otel_msg:
+            messages.append(otel_msg)
         if permission_context:
             messages.append(f"Workflow Permissions:\n{permission_context}")
         if handoff_context:
