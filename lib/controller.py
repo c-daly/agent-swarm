@@ -627,6 +627,19 @@ class Controller:
         """Return main agent briefing. Subagents get briefing via dispatch hook additionalContext."""
         return {"briefing": assemble_agent_briefing()}
 
+    def _complete_dispatch(self, args: dict) -> dict:
+        """Mark an agent as completed/failed. Called after Task() finishes."""
+        agent_id = args.get("agent_id")
+        status = args.get("status", "completed")
+        if not agent_id:
+            raise RouterError("complete_dispatch requires agent_id")
+        with self._state_lock:
+            if agent_id in self._agent_state:
+                self._agent_state[agent_id]["status"] = status
+                self._agent_state[agent_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
+        self.permissions.remove_agent(agent_id)
+        return {"success": True, "agent_id": agent_id}
+
     # --- Router operations ---
 
     def _handle_router(self, tool_name: str, args: dict) -> Any:
@@ -708,6 +721,9 @@ class Controller:
 
         if tool_name == "prepare_dispatch":
             return self._prepare_dispatch(args)
+
+        if tool_name == "complete_dispatch":
+            return self._complete_dispatch(args)
 
         if tool_name == "get_agent_briefing":
             return self._get_agent_briefing(args)

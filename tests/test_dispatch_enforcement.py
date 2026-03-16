@@ -102,3 +102,27 @@ class TestGetAgentBriefing:
         with patch("controller.assemble_agent_briefing", return_value="MAIN BRIEFING"):
             result = controller._get_agent_briefing({})
             assert result["briefing"] == "MAIN BRIEFING"
+
+
+
+class TestCompleteDispatch:
+    def test_completes_agent(self, controller):
+        result = controller._prepare_dispatch({
+            "agent_type": "implementer",
+            "description": "test task",
+        })
+        agent_id = result["agent_id"]
+        complete_result = controller._complete_dispatch({
+            "agent_id": agent_id,
+            "status": "completed",
+        })
+        assert complete_result["success"] is True
+        assert complete_result["agent_id"] == agent_id
+        assert controller._agent_state[agent_id]["status"] == "completed"
+        assert "completed_at" in controller._agent_state[agent_id]
+        controller.permissions.remove_agent.assert_called_once_with(agent_id)
+
+    def test_missing_agent_id_raises(self, controller):
+        from lib.errors import RouterError
+        with pytest.raises(RouterError):
+            controller._complete_dispatch({})
