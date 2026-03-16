@@ -49,6 +49,7 @@ def block(reason: str):
 
 def main():
     if ALWAYS_ALLOW:
+        print(json.dumps(allow("ALWAYS_ALLOW bypass")))
         return
     try:
         input_data = json.loads(sys.stdin.read())
