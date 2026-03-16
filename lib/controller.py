@@ -23,7 +23,7 @@ from typing import Any
 from lib.backends import BackendManager
 from lib.cache import Cache
 from lib.datastore import DataStore
-from lib.protocol_assembly import assemble_agent_briefing, assemble_subagent_briefing
+from lib.protocol_assembly import assemble_agent_briefing, assemble_subagent_briefing, get_workflow_state
 from lib.errors import (
     BackendNotFoundError,
     PermissionDeniedError,
@@ -84,7 +84,7 @@ class Controller:
         self._tool_to_backend: dict[str, str] = {}
         self._workflow_state: dict[str, dict] = {}
         self._agent_state: dict[str, dict] = {}
-        self._pending_dispatches: dict[str, dict] = {}
+
         self._state_lock = threading.RLock()
         self._summarization_threshold = 2000
 
@@ -600,8 +600,9 @@ class Controller:
         # Register in permissions system
         self.permissions.register_agent(agent_id, role)
 
-        # Assemble role-specific briefing
-        wf_override = "iterate" if role == "implementer" else None
+        # Assemble role-specific briefing (only default to iterate if no workflow active)
+        active_wf, _ = get_workflow_state()
+        wf_override = "iterate" if role == "implementer" and not active_wf else None
         briefing = assemble_subagent_briefing(role, workflow_override=wf_override)
         caller_header = (
             f"## Your Agent Identity\n"
@@ -610,14 +611,8 @@ class Controller:
         )
         full_briefing = caller_header + briefing
 
-        # Store briefing for retrieval by session-start
+        # Record agent state
         with self._state_lock:
-            self._pending_dispatches[agent_id] = {
-                "briefing": full_briefing,
-                "agent_type": role,
-                "description": description,
-            }
-
             # Record agent state
             self._agent_state[agent_id] = {
                 "type": agent_type,
@@ -626,13 +621,10 @@ class Controller:
                 "description": description,
             }
 
-        return {"success": True, "agent_id": agent_id}
+        return {"success": True, "agent_id": agent_id, "briefing": full_briefing, "agent_type": role}
 
     def _get_agent_briefing(self, args: dict) -> dict:
-        """Return agent briefing — stored role-specific if available, generic otherwise."""
-        agent_id = args.get("agent_id")
-        if agent_id and agent_id in self._pending_dispatches:
-            return {"briefing": self._pending_dispatches[agent_id]["briefing"]}
+        """Return main agent briefing. Subagents get briefing via dispatch hook additionalContext."""
         return {"briefing": assemble_agent_briefing()}
 
     # --- Router operations ---

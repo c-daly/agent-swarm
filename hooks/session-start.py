@@ -258,18 +258,14 @@ def list_serena_memories() -> list[str]:
 def get_agent_briefing() -> str:
     """Get agent protocol briefing from router.
 
-    Passes agent_id if available so the controller can return
-    a role-specific briefing stored by prepare_dispatch().
+    For the main agent only — subagents receive their briefing via
+    additionalContext from the dispatch hook.
     """
-    args = {}
-    agent_id = os.environ.get("CLAUDE_AGENT_ID")
-    if agent_id:
-        args["agent_id"] = agent_id
-    result = call_router("get_agent_briefing", args)
+    result = call_router("get_agent_briefing", {})
     if result and "briefing" in result:
         return result["briefing"]
-    
-    # Fallback: try direct import if router unavailable
+
+    # Fallback: direct import if router unavailable
     try:
         from protocol_assembly import UNIVERSAL_PROTOCOL, AGENT_PROTOCOL
         return f"{UNIVERSAL_PROTOCOL}\n{AGENT_PROTOCOL}"

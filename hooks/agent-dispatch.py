@@ -3,7 +3,8 @@
 
 When an agent calls Task(), this hook calls prepare_dispatch() on the
 controller to register the subagent before allowing the call through.
-If prepare_dispatch() fails, the Task() call is blocked.
+The full dispatch state (agent_id, briefing, role) is returned via
+additionalContext so the subagent starts with its identity and protocol.
 """
 
 import json
@@ -15,7 +16,7 @@ DAEMON_PORT = 7523
 
 
 def call_router(tool_name: str, args: dict = None, timeout: float = 5.0) -> dict | None:
-    """Call router tool via TCP/JSON-RPC."""
+    """Call router tool via TCP/JSON-RPC. Unwraps MCP content envelope."""
     args = args or {}
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -42,19 +43,33 @@ def call_router(tool_name: str, args: dict = None, timeout: float = 5.0) -> dict
             response = json.loads(data.decode().strip())
             if "error" in response:
                 return None
-            return response.get("result", {})
+            result = response.get("result", {})
+            # Unwrap MCP content envelope
+            if isinstance(result, dict) and "content" in result:
+                content = result["content"]
+                if content and isinstance(content[0], dict):
+                    text = content[0].get("text", "")
+                    try:
+                        return json.loads(text)
+                    except json.JSONDecodeError:
+                        return {"text": text}
+            return result
     except Exception:
         return None
 
 
-def allow(reason: str = ""):
+def allow(reason: str = "", additional_context: str = "") -> dict:
+    """Return allow decision, optionally with additionalContext."""
     result = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}
     if reason:
         result["hookSpecificOutput"]["permissionDecisionReason"] = reason
+    if additional_context:
+        result["hookSpecificOutput"]["additionalContext"] = additional_context
     return result
 
 
-def block(reason: str):
+def block(reason: str) -> dict:
+    """Return block decision."""
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "block", "permissionDecisionReason": reason}}
 
 
@@ -68,6 +83,7 @@ def main():
 
     # Only intercept Task tool calls
     if tool_name != "Task":
+        print(json.dumps(allow()))
         return
 
     tool_input = input_data.get("toolInput", {})
@@ -83,10 +99,18 @@ def main():
     })
 
     if result and result.get("success"):
-        print(json.dumps(allow(f"Agent {result.get('agent_id', '?')} registered via prepare_dispatch")))
+        # Return full dispatch state as JSON in additionalContext
+        dispatch_state = json.dumps({
+            "agent_id": result.get("agent_id"),
+            "briefing": result.get("briefing", ""),
+            "agent_type": result.get("agent_type", agent_type),
+        })
+        print(json.dumps(allow(
+            reason=f"Agent {result.get('agent_id', '?')} registered via prepare_dispatch",
+            additional_context=dispatch_state,
+        )))
     else:
-        # If daemon is not running or prepare_dispatch fails, allow through
-        # (graceful degradation — don't break spawning if daemon is down)
+        # Graceful degradation — don't break spawning if daemon is down
         print(json.dumps(allow("prepare_dispatch unavailable, allowing through")))
 
 

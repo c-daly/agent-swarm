@@ -1,6 +1,6 @@
 """Tests for agent dispatch enforcement — prepare_dispatch and briefing retrieval."""
 import pytest
-from unittest.mock import patch, MagicMock, PropertyMock
+from unittest.mock import patch, MagicMock
 from pathlib import Path
 
 
@@ -18,7 +18,6 @@ def controller():
             roles=["editor", "shell_safe"],
         )
         ctrl._agent_state = {}
-        ctrl._pending_dispatches = {}
         ctrl._state_lock = __import__("threading").RLock()
         yield ctrl
 
@@ -32,24 +31,25 @@ class TestPrepareDispatch:
         assert result["success"] is True
         assert result["agent_id"].startswith("sub-")
 
-    def test_registers_in_permissions(self, controller):
-        controller._prepare_dispatch({"agent_type": "implementer"})
-        controller.permissions.register_agent.assert_called_once()
-
-    def test_stores_briefing(self, controller):
+    def test_returns_briefing(self, controller):
         with patch("controller.assemble_subagent_briefing", return_value="BRIEFING"):
             result = controller._prepare_dispatch({"agent_type": "implementer"})
-            agent_id = result["agent_id"]
-            assert agent_id in controller._pending_dispatches
-            assert "BRIEFING" in controller._pending_dispatches[agent_id]["briefing"]
+            assert "BRIEFING" in result["briefing"]
 
     def test_briefing_includes_identity_header(self, controller):
         with patch("controller.assemble_subagent_briefing", return_value="BRIEFING"):
             result = controller._prepare_dispatch({"agent_type": "implementer"})
-            agent_id = result["agent_id"]
-            briefing = controller._pending_dispatches[agent_id]["briefing"]
-            assert f"Agent ID: `{agent_id}`" in briefing
-            assert "mcp-call" in briefing
+            assert f"Agent ID: `{result['agent_id']}`" in result["briefing"]
+            assert "mcp-call" in result["briefing"]
+
+    def test_returns_role(self, controller):
+        with patch("controller.assemble_subagent_briefing", return_value=""):
+            result = controller._prepare_dispatch({"agent_type": "implementer"})
+            assert result["agent_type"] == "implementer"
+
+    def test_registers_in_permissions(self, controller):
+        controller._prepare_dispatch({"agent_type": "implementer"})
+        controller.permissions.register_agent.assert_called_once()
 
     def test_records_agent_state(self, controller):
         result = controller._prepare_dispatch({
@@ -78,23 +78,27 @@ class TestPrepareDispatch:
         result = controller._prepare_dispatch({"subagent_type": "explorer"})
         assert result["success"] is True
 
+    def test_wf_override_only_when_no_active_workflow(self, controller):
+        """iterate override should not apply when a workflow is already active."""
+        with patch("controller.assemble_subagent_briefing") as mock_brief, \
+             patch("controller.get_workflow_state", return_value=("experiment", "work")):
+            mock_brief.return_value = ""
+            controller._prepare_dispatch({"agent_type": "implementer"})
+            _, kwargs = mock_brief.call_args
+            assert kwargs.get("workflow_override") is None
+
+    def test_wf_override_defaults_to_iterate(self, controller):
+        """iterate override should apply for implementers when no workflow active."""
+        with patch("controller.assemble_subagent_briefing") as mock_brief, \
+             patch("controller.get_workflow_state", return_value=(None, None)):
+            mock_brief.return_value = ""
+            controller._prepare_dispatch({"agent_type": "implementer"})
+            _, kwargs = mock_brief.call_args
+            assert kwargs.get("workflow_override") == "iterate"
+
 
 class TestGetAgentBriefing:
-    def test_returns_stored_briefing(self, controller):
-        controller._pending_dispatches["sub-abc123"] = {
-            "briefing": "ROLE-SPECIFIC BRIEFING",
-            "agent_type": "implementer",
-        }
-        with patch("controller.assemble_agent_briefing", return_value="GENERIC"):
-            result = controller._get_agent_briefing({"agent_id": "sub-abc123"})
-            assert result["briefing"] == "ROLE-SPECIFIC BRIEFING"
-
-    def test_falls_back_to_generic(self, controller):
-        with patch("controller.assemble_agent_briefing", return_value="GENERIC"):
+    def test_returns_main_agent_briefing(self, controller):
+        with patch("controller.assemble_agent_briefing", return_value="MAIN BRIEFING"):
             result = controller._get_agent_briefing({})
-            assert result["briefing"] == "GENERIC"
-
-    def test_unknown_agent_id_falls_back(self, controller):
-        with patch("controller.assemble_agent_briefing", return_value="GENERIC"):
-            result = controller._get_agent_briefing({"agent_id": "sub-unknown"})
-            assert result["briefing"] == "GENERIC"
+            assert result["briefing"] == "MAIN BRIEFING"
