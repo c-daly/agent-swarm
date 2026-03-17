@@ -178,6 +178,18 @@ class TestParseHelpers:
         assert metrics["accuracy"] == 0.95
         assert metrics["f1"] == 0.88
 
+    def test_parse_metrics_scientific_notation(self):
+        output = "[METRIC] loss=1.5e-4\n[METRIC] lr=3.2E+2"
+        metrics = _parse_metrics(output)
+        assert metrics["loss"] == pytest.approx(0.00015)
+        assert metrics["lr"] == pytest.approx(320.0)
+
+    def test_parse_metrics_negative_values(self):
+        output = "[METRIC] temperature=-0.5\n[METRIC] offset=-3.14"
+        metrics = _parse_metrics(output)
+        assert metrics["temperature"] == -0.5
+        assert metrics["offset"] == pytest.approx(-3.14)
+
     def test_parse_pytest_summary(self):
         output = "===== 3 passed, 1 failed in 2.5s ====="
         total, passed, failed = _parse_pytest_summary(output)
@@ -268,3 +280,11 @@ class TestCheckCriteria:
         result = check_criteria(criteria, {"accuracy": 0.95, "f1": 0.7})
         assert result.primary_passed
         assert not result.all_passed
+
+    def test_unknown_comparison_warns_and_defaults_to_gte(self, caplog):
+        import logging
+        criteria = [{"metric": "score", "threshold": 0.5, "comparison": "!="}]
+        with caplog.at_level(logging.WARNING):
+            result = check_criteria(criteria, {"score": 0.6})
+        assert result.passed  # falls back to >= which passes
+        assert "Unknown comparison operator" in caplog.text

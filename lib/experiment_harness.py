@@ -199,7 +199,7 @@ class EvalResult:
 def _parse_metrics(output: str) -> dict:
     """Extract [METRIC] key=value pairs from eval output."""
     metrics = {}
-    for match in re.finditer(r"\[METRIC\]\s*(\w+)\s*=\s*([\d.]+)", output):
+    for match in re.finditer(r"\[METRIC\]\s*(\w+)\s*=\s*(-?[\d.]+(?:[eE][+-]?\d+)?)", output):
         try:
             metrics[match.group(1)] = float(match.group(2))
         except ValueError:
@@ -301,6 +301,10 @@ def check_criteria(criteria: list[dict], metrics: dict) -> CriteriaResult:
         elif comparison == "==":
             met = actual == threshold
         else:
+            logger.warning(
+                "Unknown comparison operator %r for metric %r; defaulting to '>=",
+                comparison, metric_name,
+            )
             met = actual >= threshold
 
         details.append({"metric": metric_name, "threshold": threshold,

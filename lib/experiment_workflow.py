@@ -1,11 +1,11 @@
 """Experiment workflow — autonomous experiment execution with eval gates.
 
 Flow: read -> plan -> work -> eval -> journal -> decide -> [plan | done]
-State persisted via DaemonClient.
+State persisted via DaemonClient. Phase transitions validated by daemon
+against config/workflows/experiment.yaml.
 """
 
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -13,21 +13,9 @@ lib_dir = Path(__file__).parent
 if str(lib_dir) not in sys.path:
     sys.path.insert(0, str(lib_dir))
 
-from daemon_client import DaemonClient, is_daemon_only_key  # noqa: E402
-from errors import RouterError  # noqa: E402
+from daemon_client import DaemonClient, DaemonError, is_daemon_only_key  # noqa: E402
 
 WORKFLOW_ID = "experiment"
-
-TRANSITIONS: dict[str, set[str]] = {
-    "read": {"plan"},
-    "plan": {"work"},
-    "work": {"eval"},
-    "eval": {"journal", "work"},
-    "journal": {"decide"},
-    "decide": {"plan", "done"},
-}
-
-ALL_PHASES: set[str] = set(TRANSITIONS.keys()) | {"done"}
 
 DEFAULTS = {"max_iterations": 10, "max_agents": 4}
 
@@ -41,16 +29,28 @@ def _get_state() -> dict:
         return dc.workflow_get_state(WORKFLOW_ID) or {}
 
 
-def _set_state(state: dict) -> None:
+def _set_state(state: dict, advance_to: str | None = None) -> None:
+    """Persist experiment state. Only calls workflow_advance_phase when advance_to is set."""
     with DaemonClient() as dc:
+        started = False
         if state.get("active") and not dc.workflow_is_active(WORKFLOW_ID):
             dc.workflow_start(WORKFLOW_ID, initial_state={"phase": state.get("phase", "read")})
-        if "phase" in state:
-            dc.workflow_advance_phase(WORKFLOW_ID, state["phase"])
+            started = True
+        if advance_to is not None and not started:
+            dc.workflow_advance_phase(WORKFLOW_ID, advance_to)
         for key, value in state.items():
             if is_daemon_only_key(key):
                 continue
             dc.workflow_set_value(WORKFLOW_ID, key, value)
+
+
+def _stop_daemon_workflow() -> None:
+    """Stop the daemon workflow record, ignoring errors if already stopped."""
+    with DaemonClient() as dc:
+        try:
+            dc.workflow_stop(WORKFLOW_ID)
+        except (DaemonError, ConnectionError):
+            pass
 
 
 def start_experiment(
@@ -58,6 +58,7 @@ def start_experiment(
     task: str,
     max_iterations: Optional[int] = None,
     max_agents: Optional[int] = None,
+    success_criteria: Optional[list] = None,
 ) -> dict:
     """Start a new experiment workflow."""
     state = {
@@ -72,6 +73,7 @@ def start_experiment(
         "hypotheses_tested": [],
         "execution_mode": None,
         "environment": "local",
+        "success_criteria": success_criteria or [],
     }
     _set_state(state)
     return state
@@ -85,6 +87,7 @@ def stop(reason: str = "user_stopped") -> None:
     state["active"] = False
     state["exit_reason"] = reason
     _set_state(state)
+    _stop_daemon_workflow()
 
 
 def get_phase() -> Optional[str]:
@@ -98,25 +101,18 @@ def is_active() -> bool:
 
 
 def advance_phase(target: str) -> dict:
-    """Advance to target phase with validation."""
+    """Advance to target phase.
+
+    Transition validation is delegated to the daemon (experiment.yaml config).
+    Business logic (iteration counting, max_iterations) is handled here.
+    """
     state = _get_state()
     if not state or not state.get("active"):
         raise ExperimentWorkflowError("Workflow not active")
 
     current = state["phase"]
 
-    if target not in ALL_PHASES:
-        raise ExperimentWorkflowError(
-            f"Unknown phase: {target}. Valid: {sorted(ALL_PHASES)}"
-        )
-
-    valid_targets = TRANSITIONS.get(current, set())
-    if target not in valid_targets:
-        raise ExperimentWorkflowError(
-            f"Invalid transition: {current} -> {target}. "
-            f"Valid targets from {current}: {sorted(valid_targets)}"
-        )
-
+    # Business logic: iteration counting on kickback
     if current == "decide" and target == "plan":
         state["iteration"] = state.get("iteration", 0) + 1
         max_iter = state.get("max_iterations", DEFAULTS["max_iterations"])
@@ -124,7 +120,11 @@ def advance_phase(target: str) -> dict:
             state["active"] = False
             state["exit_reason"] = "max_iterations"
             state["phase"] = target
-            _set_state(state)
+            try:
+                _set_state(state, advance_to=target)
+            except DaemonError as e:
+                raise ExperimentWorkflowError(str(e)) from e
+            _stop_daemon_workflow()
             raise ExperimentWorkflowError(
                 f"Max iterations ({max_iter}) reached"
             )
@@ -135,7 +135,14 @@ def advance_phase(target: str) -> dict:
         state["active"] = False
         state["exit_reason"] = "success"
 
-    _set_state(state)
+    try:
+        _set_state(state, advance_to=target)
+    except DaemonError as e:
+        raise ExperimentWorkflowError(str(e)) from e
+
+    if target == "done":
+        _stop_daemon_workflow()
+
     return state
 
 
@@ -233,7 +240,7 @@ def main():
     elif args.command == "set-phase":
         state = _get_state()
         state["phase"] = args.phase
-        _set_state(state)
+        _set_state(state, advance_to=args.phase)
         print(f"Phase set to: {args.phase}")
     elif args.command == "stop":
         stop()
