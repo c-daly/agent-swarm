@@ -464,20 +464,6 @@ class Router:
                     "required": ["query"],
                 },
             },
-            {
-                "name": "native__task",
-                "description": "Spawn a subagent to execute a task. The router owns the full lifecycle: context injection, execution, and result processing.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "prompt": {"type": "string", "description": "The task prompt for the subagent"},
-                        "subagent_type": {"type": "string", "description": "Type of subagent (e.g., implementer, explorer, reviewer)"},
-                        "model": {"type": "string", "description": "Optional model override (sonnet, opus, haiku)"},
-                        "description": {"type": "string", "description": "Short description of the task (for logging)"},
-                    },
-                    "required": ["prompt", "subagent_type"],
-                },
-            },
         ]
 
     @staticmethod
@@ -489,6 +475,8 @@ class Router:
             {"name": "router__get_full", "description": "Retrieve full cached content by content_id.", "inputSchema": {"type": "object", "properties": {"content_id": {"type": "string"}}, "required": ["content_id"]}},
             {"name": "router__register_agent", "description": "Register an agent for permission tracking.", "inputSchema": {"type": "object", "properties": {"agent_id": {"type": "string"}, "agent_type": {"type": "string"}, "roles": {"type": "array", "items": {"type": "string"}}}, "required": ["agent_id", "agent_type"]}},
             {"name": "router__update_agent_phase", "description": "Update an agent's workflow phase.", "inputSchema": {"type": "object", "properties": {"agent_id": {"type": "string"}, "workflow": {"type": "string"}, "phase": {"type": "string"}}, "required": ["agent_id", "workflow", "phase"]}},
+            {"name": "router__prepare_dispatch", "description": "Prepare an agent for dispatch. Registers agent, assembles briefing, records state. Called by agent-dispatch hook before Task() proceeds.", "inputSchema": {"type": "object", "properties": {"agent_type": {"type": "string", "description": "Type of agent (e.g., implementer, explorer, reviewer)"}, "prompt": {"type": "string", "description": "The task prompt"}, "description": {"type": "string", "description": "Short description for logging"}}, "required": ["agent_type"]}},
+            {"name": "router__complete_dispatch", "description": "Mark agent dispatch as completed.", "inputSchema": {"type": "object", "properties": {"agent_id": {"type": "string"}, "status": {"type": "string", "enum": ["completed", "failed"]}}, "required": ["agent_id"]}},
             {"name": "router__get_allowed_tools", "description": "Get tool patterns allowed for an agent type.", "inputSchema": {"type": "object", "properties": {"agent_type": {"type": "string"}}}},
             {"name": "workflow__workflow_start", "description": "Start a new workflow.", "inputSchema": {"type": "object", "properties": {"workflow_id": {"type": "string"}, "initial_state": {"type": "object"}}, "required": ["workflow_id"]}},
             {"name": "workflow__workflow_stop", "description": "Stop a running workflow.", "inputSchema": {"type": "object", "properties": {"workflow_id": {"type": "string"}}, "required": ["workflow_id"]}},
