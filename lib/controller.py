@@ -23,7 +23,7 @@ from typing import Any
 from lib.backends import BackendManager
 from lib.cache import Cache
 from lib.datastore import DataStore
-from lib.protocol_assembly import assemble_agent_briefing, assemble_subagent_briefing
+from lib.protocol_assembly import assemble_agent_briefing, assemble_subagent_briefing, get_workflow_state
 from lib.errors import (
     BackendNotFoundError,
     PermissionDeniedError,
@@ -84,6 +84,7 @@ class Controller:
         self._tool_to_backend: dict[str, str] = {}
         self._workflow_state: dict[str, dict] = {}
         self._agent_state: dict[str, dict] = {}
+
         self._state_lock = threading.RLock()
         self._summarization_threshold = 2000
 
@@ -323,7 +324,6 @@ class Controller:
             "bash": self._native_bash,
             "web_fetch": self._native_web_fetch,
             "web_search": self._native_web_search,
-            "task": self._native_task,
         }
         handler = dispatch.get(tool_name)
         if handler is None:
@@ -576,139 +576,69 @@ class Controller:
         except Exception as e:
             return {"query": query, "error": str(e), "isError": True}
 
-    def _native_task(self, args: dict) -> dict:
-        """Spawn a subagent to execute a task.
+    # --- Dispatch enforcement ---
 
-        Owns the full subagent lifecycle:
-        1. Enforcement - check spawn permissions
-        2. Context injection - assemble briefing
-        3. Execution - run via claude_agent_sdk
-        4. Result processing - extract output
+    def _prepare_dispatch(self, args: dict) -> dict:
+        """Prepare an agent for dispatch. Called by hook before Task() proceeds.
 
-        Controller reads: prompt, subagent_type, description, run_in_background.
-        All other args passed through to ClaudeAgentOptions.
+        Handles: validation, ID generation, permission registration,
+        briefing assembly, state recording.
+        Does NOT handle execution — the caller does Task().
         """
-        import asyncio
-        import threading
-        from claude_agent_sdk import query, AssistantMessage, TextBlock, ResultMessage
-        from claude_agent_sdk.types import ClaudeAgentOptions
-        import shutil
+        agent_type = args.get("agent_type") or args.get("subagent_type")
+        if not agent_type:
+            raise RouterError("prepare_dispatch requires agent_type")
 
-        prompt = args.get("prompt", "")
-        subagent_type = args.get("subagent_type", "")
         description = args.get("description", "")
-        run_in_background = args.get("run_in_background", False)
 
-        if not prompt or not subagent_type:
-            return {"error": "prompt and subagent_type are required", "isError": True}
-
-        # 1. Enforcement - check if spawning is allowed
-        with self._state_lock:
-            iterate_state = self._workflow_state.get("iterate")
-        if iterate_state and iterate_state.get("phase") == "orchestrate":
-            if subagent_type != "implementer" and "implementer" not in subagent_type:
-                return {
-                    "error": (
-                        f"[ITERATE/ORCHESTRATE] Only implementer agents allowed "
-                        f"during orchestrate phase. Attempted: {subagent_type}"
-                    ),
-                    "isError": True,
-                }
-
-        # 2. Generate agent_id and register in both state and permissions
+        # Generate agent ID
         agent_id = f"sub-{uuid.uuid4().hex[:8]}"
-        role = subagent_type.split(":")[-1] if ":" in subagent_type else subagent_type
-        with self._state_lock:
-            self._agent_state[agent_id] = {
-                "type": subagent_type,
-                "status": "running",
-                "started_at": datetime.now(timezone.utc).isoformat(),
-                "description": description,
-            }
-        # Register in permissions system so router can resolve agent_type
+
+        # Extract role from agent_type (e.g., "agent-swarm:implementer" -> "implementer")
+        role = agent_type.split(":")[-1] if ":" in agent_type else agent_type
+
+        # Register in permissions system
         self.permissions.register_agent(agent_id, role)
 
-        # 3. Assemble briefing context
-        wf_override = "iterate" if role == "implementer" else None
+        # Assemble role-specific briefing (only default to iterate if no workflow active)
+        active_wf, _ = get_workflow_state()
+        wf_override = "iterate" if role == "implementer" and not active_wf else None
         briefing = assemble_subagent_briefing(role, workflow_override=wf_override)
         caller_header = (
             f"## Your Agent Identity\n"
             f"Agent ID: `{agent_id}`\n"
-            f"Use `--caller-id={agent_id}` with ALL mcp-call invocations.\n"
+            f"Use `--caller-id={agent_id}` with ALL mcp-call invocations.\n\n"
         )
-        if "SUBAGENT OPERATING PROTOCOL" not in prompt:
-            enriched_prompt = f"# SUBAGENT OPERATING PROTOCOL\n\n{caller_header}\n{briefing}\n\n# TASK\n\n{prompt}"
-        else:
-            enriched_prompt = prompt
+        full_briefing = caller_header + briefing
 
-        # 4. Build SDK options - pass through all args to ClaudeAgentOptions
-        system_cli = shutil.which("claude")
-        options = ClaudeAgentOptions(
-            permission_mode="bypassPermissions",
-            **({"cli_path": system_cli} if system_cli else {}),
-        )
-        for key, value in args.items():
-            if hasattr(options, key):
-                setattr(options, key, value)
-
-        # 5. Define execution helpers
-        async def run_query():
-            messages = []
-            async for message in query(prompt=enriched_prompt, options=options):
-                messages.append(message)
-            return messages
-
-        def process_messages(messages):
-            output_text = []
-            num_turns = 0
-            for message in messages:
-                if isinstance(message, AssistantMessage):
-                    for block in message.content:
-                        if isinstance(block, TextBlock):
-                            output_text.append(block.text)
-                elif isinstance(message, ResultMessage):
-                    num_turns = message.num_turns
-            return output_text, num_turns
-
-        def run_and_update():
-            try:
-                messages = asyncio.run(run_query())
-                output_text, num_turns = process_messages(messages)
-                with self._state_lock:
-                    if agent_id in self._agent_state:
-                        self._agent_state[agent_id]["status"] = "completed"
-                        self._agent_state[agent_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
-                        self._agent_state[agent_id]["output"] = "\n".join(output_text)
-                        self._agent_state[agent_id]["num_turns"] = num_turns
-            except Exception as e:
-                with self._state_lock:
-                    if agent_id in self._agent_state:
-                        self._agent_state[agent_id]["status"] = "failed"
-                        self._agent_state[agent_id]["error"] = str(e)
-            finally:
-                self.permissions.remove_agent(agent_id)
-
-        # 6. Execute - background or foreground
-        if run_in_background:
-            thread = threading.Thread(target=run_and_update, daemon=True)
-            thread.start()
-            return {
-                "agent_id": agent_id,
-                "status": "running",
-                "message": "Agent spawned in background. Check status via workflow__agent_get_state.",
+        # Record agent state
+        with self._state_lock:
+            # Record agent state
+            self._agent_state[agent_id] = {
+                "type": agent_type,
+                "status": "pending",
+                "started_at": datetime.now(timezone.utc).isoformat(),
+                "description": description,
             }
 
-        # Foreground - block and return results
-        run_and_update()
+        return {"success": True, "agent_id": agent_id, "briefing": full_briefing, "agent_type": role}
+
+    def _get_agent_briefing(self, args: dict) -> dict:
+        """Return main agent briefing. Subagents get briefing via dispatch hook additionalContext."""
+        return {"briefing": assemble_agent_briefing()}
+
+    def _complete_dispatch(self, args: dict) -> dict:
+        """Mark an agent as completed/failed. Called after Task() finishes."""
+        agent_id = args.get("agent_id")
+        status = args.get("status", "completed")
+        if not agent_id:
+            raise RouterError("complete_dispatch requires agent_id")
         with self._state_lock:
-            state = self._agent_state.get(agent_id, {})
-        if state.get("status") == "failed":
-            return {"error": state.get("error", "Unknown error"), "isError": True}
-        return {
-            "agent_id": agent_id,
-            "output": state.get("output", ""),
-            "num_turns": state.get("num_turns", 0),
-        }
+            if agent_id in self._agent_state:
+                self._agent_state[agent_id]["status"] = status
+                self._agent_state[agent_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
+        self.permissions.remove_agent(agent_id)
+        return {"success": True, "agent_id": agent_id}
 
     # --- Router operations ---
 
@@ -789,8 +719,14 @@ class Controller:
         if tool_name == "import_dashboard":
             return self.run_dashboard_import()
 
+        if tool_name == "prepare_dispatch":
+            return self._prepare_dispatch(args)
+
+        if tool_name == "complete_dispatch":
+            return self._complete_dispatch(args)
+
         if tool_name == "get_agent_briefing":
-            return {"briefing": assemble_agent_briefing()}
+            return self._get_agent_briefing(args)
 
         raise RouterError(f"Unknown router tool: {tool_name}")
 

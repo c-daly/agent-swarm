@@ -145,32 +145,6 @@ TOOL_SCHEMAS = {
         },
         "required": ["command"]
     },
-    "task": {
-        "type": "object",
-        "properties": {
-            "prompt": {
-                "type": "string",
-                "description": "The task for the agent to perform"
-            },
-            "subagent_type": {
-                "type": "string",
-                "description": "Type of subagent (e.g. 'implementer', 'explorer', 'researcher')"
-            },
-            "system_prompt": {
-                "type": "string",
-                "description": "Optional override system prompt"
-            },
-            "max_turns": {
-                "type": "integer",
-                "description": "Maximum number of agent turns (default: 50)"
-            },
-            "cwd": {
-                "type": "string",
-                "description": "Working directory for the agent"
-            }
-        },
-        "required": ["prompt"]
-    }
 }
 
 TOOL_DESCRIPTIONS = {
@@ -180,7 +154,6 @@ TOOL_DESCRIPTIONS = {
     "glob": "Find files matching a glob pattern. Supports recursive patterns with **.",
     "grep": "Search for a pattern in files. Returns matching file paths or content lines.",
     "bash": "Execute a shell command and return output. Supports timeout and working directory.",
-    "task": "Spawn an SDK subprocess agent with router-mediated tool access."
 }
 
 
@@ -475,7 +448,6 @@ class MCPNativeServer:
             "glob": self._handle_glob,
             "grep": self._handle_grep,
             "bash": self._handle_bash,
-            "task": self._handle_task,
         }
 
     @property
@@ -756,14 +728,6 @@ class MCPNativeServer:
             cwd=args.get("cwd", self._working_dir)
         )
 
-    def _handle_task(self, args: dict) -> dict:
-        """Handle task tool. Passthrough — actual execution handled by controller."""
-        prompt = args.get("prompt")
-        if not prompt:
-            return {"success": False, "error": "Missing required parameter: prompt"}
-        # Return args as-is; the controller intercepts native__task
-        # before it reaches this handler.
-        return {"success": True, "content": "task dispatched to controller"}
 
 
 # === stdio Server ===

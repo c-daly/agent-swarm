@@ -1,0 +1,60 @@
+name: experiment
+description: "Autonomous experiment workflow with eval gates and journal memory"
+initial_phase: read
+terminal_phase: done
+max_iterations: 10
+max_agents: 4
+
+phases:
+  - name: read
+    allowed_tool_categories: [FILE_READ, FILE_SEARCH, CODE_QUERY]
+    blocked_tools: [native__write_file, native__edit_file, native__bash]
+    eligible_agents: [pm]
+    checkpoint: false
+
+  - name: plan
+    allowed_tool_categories: [FILE_READ, FILE_SEARCH, CODE_QUERY, WEB_RESEARCH]
+    blocked_tools: [native__write_file, native__edit_file, native__bash]
+    eligible_agents: [pm, researcher]
+    checkpoint: false
+
+  - name: work
+    allowed_tool_categories: [FILE_READ, FILE_WRITE, CODE_QUERY, CODE_EDIT, FILE_SEARCH, SHELL_SAFE, WEB_RESEARCH]
+    blocked_tools: []
+    blocked_file_patterns: ["experiments/*/eval/**"]
+    eligible_agents: [implementer, researcher]
+    checkpoint: false
+
+  - name: eval
+    allowed_tool_categories: [FILE_READ, SHELL_SAFE]
+    blocked_tools: [native__write_file, native__edit_file]
+    blocked_file_patterns: ["experiments/*/eval/**"]
+    eligible_agents: [implementer]
+    checkpoint: false
+
+  - name: journal
+    allowed_tool_categories: [FILE_READ, FILE_WRITE]
+    blocked_tools: [native__bash]
+    allowed_file_patterns: ["experiments/*/journal/**"]
+    eligible_agents: [pm, implementer]
+    checkpoint: false
+
+  - name: decide
+    allowed_tool_categories: [FILE_READ]
+    blocked_tools: [native__write_file, native__edit_file, native__bash]
+    eligible_agents: [pm]
+    checkpoint: false
+
+  - name: done
+    allowed_tool_categories: []
+    blocked_tools: []
+    eligible_agents: []
+    checkpoint: false
+
+transitions:
+  read: [plan]
+  plan: [work]
+  work: [eval]
+  eval: [journal, work]
+  journal: [decide]
+  decide: [plan, done]

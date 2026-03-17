@@ -256,12 +256,16 @@ def list_serena_memories() -> list[str]:
 
 
 def get_agent_briefing() -> str:
-    """Get agent protocol briefing from router."""
-    result = call_router("get_agent_briefing")
+    """Get agent protocol briefing from router.
+
+    For the main agent only — subagents receive their briefing via
+    additionalContext from the dispatch hook.
+    """
+    result = call_router("get_agent_briefing", {})
     if result and "briefing" in result:
         return result["briefing"]
-    
-    # Fallback: try direct import if router unavailable
+
+    # Fallback: direct import if router unavailable
     try:
         from protocol_assembly import UNIVERSAL_PROTOCOL, AGENT_PROTOCOL
         return f"{UNIVERSAL_PROTOCOL}\n{AGENT_PROTOCOL}"

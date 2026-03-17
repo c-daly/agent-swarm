@@ -3,7 +3,7 @@
 Assembles protocol briefings from universal, context-specific, and role-specific
 components. Queries controller for workflow/phase state to build complete briefings.
 
-Used by both session-start (main agent) and native__task (subagents).
+Used by both session-start (main agent) and prepare_dispatch (subagents).
 """
 
 from pathlib import Path
