@@ -81,8 +81,8 @@ def main():
 
     tool_name = input_data.get("toolName", "")
 
-    # Only intercept Task tool calls
-    if tool_name != "Task":
+    # Only intercept Task and Agent tool calls
+    if tool_name not in ("Task", "Agent"):
         print(json.dumps(allow()))
         return
 

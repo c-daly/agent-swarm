@@ -47,6 +47,7 @@ PROTECTED_KEYS = frozenset({
 # summarizing them destroys the contract.
 _ROUTER_NO_SUMMARIZE = frozenset({
     "get_full", "register_agent", "update_agent_phase",
+    "prepare_dispatch", "complete_dispatch",
     "get_allowed_tools", "ping", "list_tools",
 })
 

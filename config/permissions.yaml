@@ -18,7 +18,7 @@ global:
 roles:
   # All socket callers are subagents — block workflow state modification
   subagent:
-    blocked: [workflow__workflow_start, workflow__workflow_stop, workflow__workflow_update, workflow__workflow_set_state, workflow__workflow_set_value]
+    blocked: [workflow__workflow_start, workflow__workflow_stop, workflow__workflow_update, workflow__workflow_set_state, workflow__workflow_set_value, Bash(mcp-native*)]
 
   # Read-only access for research agents
   read_only:

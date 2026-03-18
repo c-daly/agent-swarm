@@ -7,7 +7,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${AGENT_SWARM_ROOT}/hooks/agent-dispatch.py",
+            "command": "python3 /home/fearsidhe/.claude/plugins/cache/fearsidhe-plugins/agent-swarm/1.0.0/hooks/agent-dispatch.py",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/fearsidhe/.claude/plugins/cache/fearsidhe-plugins/agent-swarm/1.0.0/hooks/agent-dispatch.py",
             "timeout": 5
           }
         ]
@@ -17,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${AGENT_SWARM_ROOT}/hooks/native-tool-blocking.py",
+            "command": "python3 /home/fearsidhe/.claude/plugins/cache/fearsidhe-plugins/agent-swarm/1.0.0/hooks/native-tool-blocking.py",
             "timeout": 3
           }
         ]
@@ -29,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${AGENT_SWARM_ROOT}/hooks/pre-compacting.py",
+            "command": "python3 /home/fearsidhe/.claude/plugins/cache/fearsidhe-plugins/agent-swarm/1.0.0/hooks/pre-compacting.py",
             "timeout": 5
           }
         ]
@@ -40,7 +50,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${AGENT_SWARM_ROOT}/hooks/session-start.py",
+            "command": "python3 /home/fearsidhe/.claude/plugins/cache/fearsidhe-plugins/agent-swarm/1.0.0/hooks/session-start.py",
             "timeout": 10
           }
         ]
@@ -51,7 +61,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${AGENT_SWARM_ROOT}/hooks/session-end.py",
+            "command": "python3 /home/fearsidhe/.claude/plugins/cache/fearsidhe-plugins/agent-swarm/1.0.0/hooks/session-end.py",
             "timeout": 30
           }
         ]
