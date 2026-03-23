@@ -3,6 +3,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
+import glob
+import os
+import yaml
 
 
 @dataclass
@@ -38,3 +41,66 @@ def parse_batch_goal(data: dict[str, Any]) -> BatchGoal:
         on_failure=on_failure,
         constraints=data.get("constraints", {}),
     )
+
+
+def resolve_tasks(goal: BatchGoal, run_dir: str) -> list[dict]:
+    """Resolve batch goal into per-task directories with goal.yaml files.
+
+    Returns list of resolved task dicts with 'id' and 'dir' keys.
+    """
+    raw_tasks: list[dict] = list(goal.tasks)
+
+    # Resolve dir: queries
+    if goal.query and goal.query.startswith("dir:"):
+        pattern = goal.query[4:]
+        for goal_path in sorted(glob.glob(pattern)):
+            with open(goal_path) as f:
+                task_data = yaml.safe_load(f)
+            if task_data:
+                raw_tasks.append(task_data)
+
+    # Note: GitHub query resolution is handled by the skill at runtime
+    # (requires MCP tools not available in library code).
+
+    # Deduplicate by target or issue number
+    seen: set[str] = set()
+    unique_tasks: list[dict] = []
+    for task in raw_tasks:
+        key = task.get("target") or str(task.get("issue", id(task)))
+        if key not in seen:
+            seen.add(key)
+            unique_tasks.append(task)
+
+    # Create per-task directories and goal.yaml files
+    resolved: list[dict] = []
+    tasks_dir = os.path.join(run_dir, "tasks")
+    os.makedirs(tasks_dir, exist_ok=True)
+
+    for i, task in enumerate(unique_tasks):
+        task_id = _task_id(task, i)
+        task_dir = os.path.join(tasks_dir, task_id)
+        os.makedirs(task_dir, exist_ok=True)
+
+        # Build task goal.yaml — inherit run-level defaults
+        task_goal = dict(task)
+        if "success_criteria" not in task_goal:
+            task_goal["success_criteria"] = goal.success_criteria
+        if "eval" not in task_goal:
+            task_goal["eval"] = "eval/"
+
+        with open(os.path.join(task_dir, "goal.yaml"), "w") as f:
+            yaml.dump(task_goal, f, default_flow_style=False)
+
+        resolved.append({"id": task_id, "dir": task_dir, **task})
+
+    return resolved
+
+
+def _task_id(task: dict, index: int) -> str:
+    """Generate a stable task ID from task definition."""
+    if "issue" in task:
+        return str(task["issue"])
+    if "target" in task:
+        name = os.path.basename(task["target"])
+        return os.path.splitext(name)[0]
+    return f"task_{index}"
