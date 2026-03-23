@@ -114,14 +114,25 @@ Globs for goal.yaml files, each becomes a task. This preserves backward compatib
 ### Flow
 
 ```
-resolve → plan → execute → journal → report
+resolve → execute tasks → gate: all task evals pass → integration eval → journal → report
 ```
 
-1. **Resolve**: Run query, build task list, deduplicate
-2. **Plan**: Determine execution order. Independent tasks run in parallel. Tasks with `depends_on` wait for prerequisites.
-3. **Execute**: For each task, run the experiment workflow (read → plan → work → eval → review → journal → decide). Tasks share the run directory unless they need isolation (conflicting target files → worktrees).
-4. **Journal**: Append run-level journal entries. Each task's result is recorded: task ID, hypothesis, outcome, metrics.
-5. **Report**: Summary of all tasks — passed, failed, skipped.
+1. **Resolve**: Run query, build task list, deduplicate, create per-task goal.yaml files.
+2. **Execute tasks**: For each task, run the experiment workflow (read → plan → work → eval → review). Independent tasks run in parallel. Tasks share the run directory unless they need isolation (conflicting target files → worktrees).
+3. **Task eval gate**: ALL task-level evals must pass before proceeding. If any task eval fails, kickback to that task — do not attempt integration. This is a hard gate, not a soft check.
+4. **Integration eval**: Run the run-level eval (`eval/` in the run directory). These are integration tests that verify tasks work together. Only runs once every task is individually green.
+5. **Integration kickback**: If integration eval fails, identify which task's interface is the likely cause (from the traceback/error) and kickback to the earliest dependency in the chain.
+6. **Journal**: Append run-level journal entries. Each task's result is recorded: task ID, hypothesis, outcome, metrics.
+7. **Report**: Summary of all tasks — passed, failed, skipped.
+
+### Eval hierarchy
+
+```
+tasks/<id>/eval/   →  unit tests per task (must ALL pass first)
+eval/              →  integration tests across tasks (runs last)
+```
+
+Task evals gate integration eval. Integration eval is optional — runs without one are complete when all task evals pass.
 
 ### Parallelism
 
