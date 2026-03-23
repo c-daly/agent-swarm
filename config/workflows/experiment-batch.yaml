@@ -1,0 +1,52 @@
+name: experiment-batch
+description: "Multi-task experiment batch with eval hierarchy"
+initial_phase: resolve
+terminal_phase: done
+max_iterations: 20
+max_agents: 8
+
+phases:
+  - name: resolve
+    allowed_tool_categories: [FILE_READ, FILE_SEARCH, CODE_QUERY, WEB_RESEARCH]
+    blocked_tools: [native__write_file, native__edit_file, native__bash]
+    eligible_agents: [pm]
+    checkpoint: false
+
+  - name: execute
+    allowed_tool_categories: [FILE_READ, FILE_WRITE, CODE_QUERY, CODE_EDIT, FILE_SEARCH, SHELL_SAFE, WEB_RESEARCH]
+    blocked_tools: []
+    blocked_file_patterns: ["experiments/*/eval/**"]
+    eligible_agents: [implementer, reviewer, researcher]
+    checkpoint: false
+
+  - name: gate
+    allowed_tool_categories: [FILE_READ, SHELL_SAFE]
+    blocked_tools: [native__write_file, native__edit_file]
+    eligible_agents: [pm]
+    checkpoint: false
+
+  - name: integration
+    allowed_tool_categories: [FILE_READ, SHELL_SAFE]
+    blocked_tools: [native__write_file, native__edit_file]
+    eligible_agents: [pm]
+    checkpoint: false
+
+  - name: report
+    allowed_tool_categories: [FILE_READ, FILE_WRITE]
+    blocked_tools: [native__bash]
+    allowed_file_patterns: ["experiments/*/journal/**"]
+    eligible_agents: [pm]
+    checkpoint: false
+
+  - name: done
+    allowed_tool_categories: []
+    blocked_tools: []
+    eligible_agents: []
+    checkpoint: false
+
+transitions:
+  resolve: [execute]
+  execute: [gate]
+  gate: [integration, execute, report]
+  integration: [report, execute]
+  report: [done]
