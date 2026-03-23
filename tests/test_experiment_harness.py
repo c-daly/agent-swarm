@@ -4,8 +4,8 @@ import yaml
 from pathlib import Path
 
 from experiment_harness import (
-    Goal, load_goal,
-    Constraints, load_constraints,
+    Goal, load_goal, validate_goal,
+    Constraints, load_constraints, normalize_escalation,
     Journal,
     EvalResult, run_eval, _parse_metrics, _parse_pytest_summary,
     CriteriaResult, check_criteria,
@@ -117,6 +117,82 @@ class TestLoadConstraints:
         assert result.do_not_do == []
         assert result.escalate_if == []
         assert result.max_hours_per_run is None
+
+
+
+class TestLoadConstraintsDictEscalation:
+    def test_loads_dict_escalate_if(self, tmp_experiment):
+        (tmp_experiment / "constraints.yaml").write_text(yaml.dump({
+            "escalate_if": [
+                {"condition": "Phase transition: plan to work", "reason": "routine_checkpoint"},
+                "Cannot load weights",
+            ],
+        }))
+        c = load_constraints(tmp_experiment)
+        assert len(c.escalate_if) == 2
+        assert c.escalate_if[0] == {"condition": "Phase transition: plan to work", "reason": "routine_checkpoint"}
+        assert c.escalate_if[1] == "Cannot load weights"
+
+
+class TestNormalizeEscalation:
+    def test_string_entry(self):
+        result = normalize_escalation("Cannot load weights")
+        assert result == {"condition": "Cannot load weights", "reason": "error"}
+
+    def test_dict_entry(self):
+        result = normalize_escalation({"condition": "Phase transition", "reason": "routine_checkpoint"})
+        assert result == {"condition": "Phase transition", "reason": "routine_checkpoint"}
+
+    def test_dict_missing_reason_defaults_to_error(self):
+        result = normalize_escalation({"condition": "Something bad"})
+        assert result == {"condition": "Something bad", "reason": "error"}
+
+
+class TestValidateGoal:
+    def test_valid_goal_returns_empty_list(self, tmp_experiment):
+        write_goal(tmp_experiment, {
+            "objective": "Build a thing",
+            "success_criteria": [{"metric": "test_pass_rate", "threshold": 1.0, "primary": True}],
+        })
+        goal = load_goal(tmp_experiment)
+        errors = validate_goal(goal)
+        assert errors == []
+
+    def test_empty_objective(self, tmp_experiment):
+        write_goal(tmp_experiment, {
+            "objective": "",
+            "success_criteria": [{"metric": "test_pass_rate", "threshold": 1.0}],
+        })
+        goal = load_goal(tmp_experiment)
+        errors = validate_goal(goal)
+        assert any("objective" in e.lower() for e in errors)
+
+    def test_missing_success_criteria(self, tmp_experiment):
+        write_goal(tmp_experiment, {
+            "objective": "Build a thing",
+            "success_criteria": [],
+        })
+        goal = load_goal(tmp_experiment)
+        errors = validate_goal(goal)
+        assert any("success_criteria" in e.lower() for e in errors)
+
+    def test_criterion_missing_metric(self, tmp_experiment):
+        write_goal(tmp_experiment, {
+            "objective": "Build a thing",
+            "success_criteria": [{"threshold": 1.0}],
+        })
+        goal = load_goal(tmp_experiment)
+        errors = validate_goal(goal)
+        assert any("metric" in e.lower() for e in errors)
+
+    def test_criterion_missing_threshold(self, tmp_experiment):
+        write_goal(tmp_experiment, {
+            "objective": "Build a thing",
+            "success_criteria": [{"metric": "test_pass_rate"}],
+        })
+        goal = load_goal(tmp_experiment)
+        errors = validate_goal(goal)
+        assert any("threshold" in e.lower() for e in errors)
 
 
 # ---------------------------------------------------------------------------

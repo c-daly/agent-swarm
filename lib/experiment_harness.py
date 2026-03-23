@@ -76,6 +76,21 @@ def load_goal(exp_dir: Path) -> Goal:
     )
 
 
+def validate_goal(goal: Goal) -> list[str]:
+    """Validate a Goal object. Returns list of error strings (empty = valid)."""
+    errors = []
+    if not goal.objective or not goal.objective.strip():
+        errors.append("objective is empty or missing")
+    if not goal.success_criteria:
+        errors.append("success_criteria is empty or missing")
+    for i, c in enumerate(goal.success_criteria):
+        if "metric" not in c:
+            errors.append(f"success_criteria[{i}] missing 'metric'")
+        if "threshold" not in c:
+            errors.append(f"success_criteria[{i}] missing 'threshold'")
+    return errors
+
+
 # ---------------------------------------------------------------------------
 # Constraints
 # ---------------------------------------------------------------------------
@@ -86,7 +101,7 @@ class Constraints:
     max_hours_per_run: Optional[float] = None
     max_total_gpu_hours: Optional[float] = None
     do_not_do: list[str] = field(default_factory=list)
-    escalate_if: list[str] = field(default_factory=list)
+    escalate_if: list = field(default_factory=list)
     known_findings: list[str] = field(default_factory=list)
     _raw: dict = field(default_factory=dict, repr=False)
 
@@ -106,6 +121,15 @@ def load_constraints(exp_dir: Path) -> Constraints:
         known_findings=raw.get("known_findings", []),
         _raw=raw,
     )
+
+
+def normalize_escalation(entry) -> dict:
+    """Normalize an escalate_if entry to {condition, reason} dict."""
+    if isinstance(entry, str):
+        return {"condition": entry, "reason": "error"}
+    if isinstance(entry, dict):
+        return {"condition": entry.get("condition", ""), "reason": entry.get("reason", "error")}
+    return {"condition": str(entry), "reason": "error"}
 
 
 # ---------------------------------------------------------------------------
