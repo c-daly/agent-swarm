@@ -139,7 +139,7 @@ Task evals gate integration eval. Integration eval is optional — runs without 
 When a run completes (all tasks pass + integration eval passes, or `on_failure: stop` triggered):
 
 1. Agent comments on each GitHub issue with results (if tasks came from GitHub)
-2. Agent closes passing issues (if configured)
+2. Agents do NOT close issues or merge code — humans decide what ships
 3. Run directory is renamed to signal completion:
    ```
    experiments/sprint-1/  →  experiments/sprint-1.done/
