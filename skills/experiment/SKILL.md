@@ -11,11 +11,13 @@ Ticket-driven autonomous experiment workflow. Read a ticket, plan an approach, e
 ## Phase Flow
 
 ```
-read -> plan -> work -> eval -> journal -> decide
-                 ^                           |
-                 +-------- kickback ---------+
-                                             |
-                                             +-> done
+read -> plan -> work -> eval -> review -> journal -> decide
+                 ^                |                    |
+                 +--- kickback ---+                    |
+                 ^                                     |
+                 +------------- kickback --------------+
+                                                       |
+                                                       +-> done
 ```
 
 | Phase | Purpose | Allowed | Blocked |
@@ -24,6 +26,7 @@ read -> plan -> work -> eval -> journal -> decide
 | plan | Form hypothesis, decide approach | Read, Glob, Grep, Web | Write, Edit, Bash |
 | work | Execute plan (solo or team) | Read, Write, Edit, Bash | eval/** files |
 | eval | Run eval, parse metrics | Read, Bash(pytest/python) | Write, Edit |
+| review | Code quality and security review | Read, Glob, Grep, Bash(pytest/ruff) | Write, Edit |
 | journal | Record results and learnings | Read, Write(journal/) | Bash |
 | decide | Check criteria, kickback or done | Read | Write, Edit, Bash |
 
@@ -61,7 +64,15 @@ read -> plan -> work -> eval -> journal -> decide
 - Store results: `workflow_set_value(wf_id, "last_eval_metrics", ...)`
 - If eval crashes (not failure — error): kickback to work to fix
 
-### 5. Journal
+### 5. Review
+- Spawn the `reviewer` agent on the changes made during work phase
+- Reviewer runs `pytest` and `ruff check .`, checks for side-effects, security issues, test coverage
+- Reviewer outputs a verdict: **APPROVED** or **CHANGES_REQUESTED** with issues list
+- Store verdict: `workflow_set_value(wf_id, "review_verdict", ...)`
+- **APPROVED** -> advance to journal
+- **CHANGES_REQUESTED** -> kickback to work with review findings as context
+
+### 6. Journal
 - Write a journal entry recording:
   - Hypothesis tested
   - Changes made
@@ -71,7 +82,7 @@ read -> plan -> work -> eval -> journal -> decide
 - Journal entries are append-only, numbered, never modified
 - For fan-out: journal ALL approaches tested, not just the best one
 
-### 6. Decide
+### 7. Decide
 - Coordinator checks metrics against success criteria from goal.yaml
 - **Primary criterion met** -> advance to done
 - **Not met** -> kickback to plan with accumulated journal context
@@ -83,6 +94,7 @@ read -> plan -> work -> eval -> journal -> decide
 | From | To | Condition |
 |------|----|-----------|
 | eval | work | Eval crashed (import error, script error) |
+| review | work | Verdict is CHANGES_REQUESTED |
 | decide | plan | Success criteria not met |
 | decide | done | Primary success criterion met |
 
@@ -113,6 +125,7 @@ Fan-out pattern for parallel hypothesis testing:
 coordinator (plan): identifies N approaches worth trying
 coordinator (work): spawns N agents, each in own worktree
 coordinator (eval): runs eval on each agent's result
+coordinator (review): reviewer checks code quality
 coordinator (journal): journals ALL results
 coordinator (decide): picks best, or kickback to plan with all learnings
 ```

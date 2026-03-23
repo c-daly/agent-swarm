@@ -32,6 +32,13 @@ phases:
     eligible_agents: [implementer]
     checkpoint: false
 
+
+  - name: review
+    allowed_tool_categories: [FILE_READ, FILE_SEARCH, CODE_QUERY, SHELL_SAFE]
+    blocked_tools: [native__write_file, native__edit_file]
+    eligible_agents: [reviewer]
+    checkpoint: false
+
   - name: journal
     allowed_tool_categories: [FILE_READ, FILE_WRITE]
     blocked_tools: [native__bash]
@@ -55,6 +62,7 @@ transitions:
   read: [plan]
   plan: [work]
   work: [eval]
-  eval: [journal, work]
+  eval: [review, work]
+  review: [journal, work]
   journal: [decide]
   decide: [plan, done]

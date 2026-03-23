@@ -30,9 +30,11 @@ sys.path.insert(0, os.path.join(script_dir, '..', 'lib'))
 from daemon_client import DaemonClient
 
 
-def call_tool(name, arguments):
+def call_tool(name, arguments, caller_id=None):
     """Call a tool via the router daemon."""
     with DaemonClient() as dc:
+        if caller_id:
+            dc.register(caller_id, "subagent", "cli", "")
         return dc.call_tool(name, arguments)
 
 
@@ -122,7 +124,7 @@ def main():
                 call_args["cwd"] = cwd
             if caller_id:
                 call_args["_caller"] = caller_id
-            result = call_tool("native__bash", call_args)
+            result = call_tool("native__bash", call_args, caller_id=caller_id)
             if isinstance(result, (dict, list)):
                 print(json.dumps(result, indent=2))
             else:
@@ -153,7 +155,7 @@ def main():
 
     # Call the tool via router
     try:
-        result = call_tool(tool_name, tool_args)
+        result = call_tool(tool_name, tool_args, caller_id=caller_id)
 
         # Output as JSON for easy parsing
         if isinstance(result, (dict, list)):
