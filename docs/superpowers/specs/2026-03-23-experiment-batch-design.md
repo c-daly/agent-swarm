@@ -139,12 +139,14 @@ Task evals gate integration eval. Integration eval is optional — runs without 
 When a run completes (all tasks pass + integration eval passes, or `on_failure: stop` triggered):
 
 1. Agent comments on each GitHub issue with results (if tasks came from GitHub)
-2. Agents do NOT close issues or merge code — humans decide what ships
-3. Run directory is renamed to signal completion:
+2. Agents do NOT close issues, merge code, or archive the run directory — humans decide what ships
+3. When the human is satisfied, they rename/archive the run directory:
    ```
    experiments/sprint-1/  →  experiments/sprint-1.done/
    ```
    This prevents re-processing on subsequent runs. The directory retains its journal and results for reference until manually deleted.
+
+The agent's job ends at reporting results. Archiving is a human action.
 
 ### Parallelism
 
