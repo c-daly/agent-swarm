@@ -73,16 +73,19 @@ Query results are merged with explicit tasks. Duplicates (same issue number or s
 
 ```
 experiments/<run-name>/
-  goal.yaml          # batch definition (query and/or task list)
-  constraints.yaml   # optional, applies to all tasks in the run
+  goal.yaml          # batch definition: query/task list + run-level defaults
+  constraints.yaml   # optional, run-level defaults
   journal/           # run-level journal (append-only, numbered entries)
-  tasks/             # per-task subdirs, only when needed
+  tasks/             # per-task subdirs, always created during resolve
     <task-id>/
-      eval/          # custom eval scripts for this task
-      constraints.yaml  # task-specific constraints (merged with run-level)
+      goal.yaml      # this task's objective, target, success_criteria, eval
+      eval/          # eval scripts for this task (if needed)
+      constraints.yaml  # task-specific constraints (if needed)
 ```
 
-Per-task subdirectories are created only when a task needs custom eval scripts or task-specific constraints. Tasks without subdirectories use the run-level success criteria.
+The run-level goal.yaml stays small — just the query and defaults. During the resolve phase, each task gets its own `tasks/<id>/goal.yaml` generated from the GitHub issue or inline definition. This keeps the run-level file from growing with task count.
+
+Per-task goal.yaml inherits run-level defaults (success_criteria, constraints) and can override them. Per-task eval/ and constraints.yaml are optional — tasks without them use the run-level defaults.
 
 ## Task Resolution
 
@@ -90,9 +93,9 @@ Per-task subdirectories are created only when a task needs custom eval scripts o
 
 The agent calls `search_issues` with the query, then for each issue:
 1. Reads issue fields (the agora-task template maps 1:1 to goal.yaml fields)
-2. Extracts: objective, target, success_criteria, eval, environment
-3. If the issue has an `eval` field pointing to a local path, checks for `tasks/<issue-number>/eval/`
-4. If no custom eval exists, uses the run-level success criteria
+2. Creates `tasks/<issue-number>/goal.yaml` with: objective, target, success_criteria, eval, environment
+3. If the issue has custom eval scripts, places them in `tasks/<issue-number>/eval/`
+4. Fields not specified in the task goal.yaml inherit from the run-level goal.yaml
 
 ### From explicit tasks
 
