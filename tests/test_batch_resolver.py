@@ -7,7 +7,7 @@ import yaml
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'lib'))
 
-from batch_resolver import parse_batch_goal, BatchGoal, resolve_tasks, _task_id
+from batch_resolver import parse_batch_goal, BatchGoal, resolve_tasks, _task_id, sort_by_dependencies
 
 
 def test_parse_query_based():
@@ -151,3 +151,31 @@ def test_task_id_from_target():
 
 def test_task_id_fallback():
     assert _task_id({"objective": "something"}, 3) == "task_3"
+
+
+def test_sort_independent_tasks():
+    tasks = [
+        {"id": "a", "dir": "/tmp/a"},
+        {"id": "b", "dir": "/tmp/b"},
+    ]
+    sorted_tasks = sort_by_dependencies(tasks)
+    assert len(sorted_tasks) == 2
+
+
+def test_sort_with_dependency():
+    tasks = [
+        {"id": "yield_curve", "dir": "/tmp/yc", "depends_on": ["treasury_adapter"]},
+        {"id": "treasury_adapter", "dir": "/tmp/ta"},
+    ]
+    sorted_tasks = sort_by_dependencies(tasks)
+    ids = [t["id"] for t in sorted_tasks]
+    assert ids.index("treasury_adapter") < ids.index("yield_curve")
+
+
+def test_sort_circular_dependency_raises():
+    tasks = [
+        {"id": "a", "dir": "/tmp/a", "depends_on": ["b"]},
+        {"id": "b", "dir": "/tmp/b", "depends_on": ["a"]},
+    ]
+    with pytest.raises(ValueError, match="[Cc]ircular"):
+        sort_by_dependencies(tasks)

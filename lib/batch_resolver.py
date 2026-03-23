@@ -104,3 +104,31 @@ def _task_id(task: dict, index: int) -> str:
         name = os.path.basename(task["target"])
         return os.path.splitext(name)[0]
     return f"task_{index}"
+
+
+def sort_by_dependencies(tasks: list[dict]) -> list[dict]:
+    """Topologically sort tasks by depends_on. Independent tasks retain original order."""
+    task_map = {t["id"]: t for t in tasks}
+    visited: set[str] = set()
+    in_stack: set[str] = set()
+    result: list[dict] = []
+
+    def visit(task_id: str) -> None:
+        if task_id in in_stack:
+            raise ValueError(f"Circular dependency involving '{task_id}'")
+        if task_id in visited:
+            return
+        in_stack.add(task_id)
+        task = task_map.get(task_id)
+        if task:
+            for dep in task.get("depends_on", []):
+                visit(dep)
+        in_stack.discard(task_id)
+        visited.add(task_id)
+        if task:
+            result.append(task)
+
+    for t in tasks:
+        visit(t["id"])
+
+    return result
