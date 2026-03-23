@@ -134,6 +134,18 @@ eval/              →  integration tests across tasks (runs last)
 
 Task evals gate integration eval. Integration eval is optional — runs without one are complete when all task evals pass.
 
+### Run completion
+
+When a run completes (all tasks pass + integration eval passes, or `on_failure: stop` triggered):
+
+1. Agent comments on each GitHub issue with results (if tasks came from GitHub)
+2. Agent closes passing issues (if configured)
+3. Run directory is renamed to signal completion:
+   ```
+   experiments/sprint-1/  →  experiments/sprint-1.done/
+   ```
+   This prevents re-processing on subsequent runs. The directory retains its journal and results for reference until manually deleted.
+
 ### Parallelism
 
 Tasks are independent by default. The agent spawns parallel experiment runners for independent tasks. Tasks that modify the same target file are serialized automatically.
