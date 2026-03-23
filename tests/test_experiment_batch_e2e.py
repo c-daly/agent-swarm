@@ -8,7 +8,6 @@ import sys
 import tempfile
 
 import yaml
-import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'lib'))
 
@@ -130,11 +129,13 @@ def test_e2e_success_criteria_inheritance():
         resolved = resolve_tasks(goal, run_dir)
 
         # Task A should inherit run-level criteria
-        with open(os.path.join(run_dir, "tasks", "a", "goal.yaml")) as f:
+        a_task = next(t for t in resolved if t["target"] == "a.py")
+        with open(os.path.join(a_task["dir"], "goal.yaml")) as f:
             a_goal = yaml.safe_load(f)
         assert a_goal["success_criteria"][0]["metric"] == "test_pass_rate"
 
         # Task B should keep its own criteria
-        with open(os.path.join(run_dir, "tasks", "b", "goal.yaml")) as f:
+        b_task = next(t for t in resolved if t["target"] == "b.py")
+        with open(os.path.join(b_task["dir"], "goal.yaml")) as f:
             b_goal = yaml.safe_load(f)
         assert b_goal["success_criteria"][0]["metric"] == "custom"

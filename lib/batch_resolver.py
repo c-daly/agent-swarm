@@ -1,11 +1,15 @@
 """Batch resolver — parse batch goal.yaml and resolve tasks."""
 from __future__ import annotations
 
+import glob
+import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any
-import glob
-import os
+
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -54,19 +58,29 @@ def resolve_tasks(goal: BatchGoal, run_dir: str) -> list[dict]:
     if goal.query and goal.query.startswith("dir:"):
         pattern = goal.query[4:]
         for goal_path in sorted(glob.glob(pattern)):
-            with open(goal_path) as f:
-                task_data = yaml.safe_load(f)
+            try:
+                with open(goal_path) as f:
+                    task_data = yaml.safe_load(f)
+            except (yaml.YAMLError, OSError) as exc:
+                logger.warning("Failed to load %s: %s", goal_path, exc)
+                continue
             if task_data:
                 raw_tasks.append(task_data)
 
     # Note: GitHub query resolution is handled by the skill at runtime
     # (requires MCP tools not available in library code).
 
-    # Deduplicate by target or issue number
+    # Deduplicate by target or issue number (namespaced to avoid collisions)
     seen: set[str] = set()
     unique_tasks: list[dict] = []
     for task in raw_tasks:
-        key = task.get("target") or str(task.get("issue", id(task)))
+        if "target" in task:
+            key = f"target:{task['target']}"
+        elif "issue" in task:
+            key = f"issue:{task['issue']}"
+        else:
+            # Anonymous tasks are never deduplicated
+            key = f"anon:{id(task)}"
         if key not in seen:
             seen.add(key)
             unique_tasks.append(task)
@@ -76,8 +90,15 @@ def resolve_tasks(goal: BatchGoal, run_dir: str) -> list[dict]:
     tasks_dir = os.path.join(run_dir, "tasks")
     os.makedirs(tasks_dir, exist_ok=True)
 
+    seen_ids: set[str] = set()
     for i, task in enumerate(unique_tasks):
-        task_id = _task_id(task, i)
+        task_id = task.get("id") or _task_id(task, i)
+
+        # Ensure unique directory names
+        if task_id in seen_ids:
+            task_id = f"{task_id}_{i}"
+        seen_ids.add(task_id)
+
         task_dir = os.path.join(tasks_dir, task_id)
         os.makedirs(task_dir, exist_ok=True)
 
@@ -88,10 +109,19 @@ def resolve_tasks(goal: BatchGoal, run_dir: str) -> list[dict]:
         if "eval" not in task_goal:
             task_goal["eval"] = "eval/"
 
+        # Propagate run-level constraints if task doesn't have its own
+        if goal.constraints and "constraints" not in task_goal:
+            task_goal["constraints"] = goal.constraints
+
         with open(os.path.join(task_dir, "goal.yaml"), "w") as f:
             yaml.dump(task_goal, f, default_flow_style=False)
 
-        resolved.append({"id": task_id, "dir": task_dir, **task})
+        # Build resolved entry — task_id is authoritative, not **task
+        resolved.append({
+            **task,
+            "id": task_id,
+            "dir": task_dir,
+        })
 
     return resolved
 
@@ -101,8 +131,10 @@ def _task_id(task: dict, index: int) -> str:
     if "issue" in task:
         return str(task["issue"])
     if "target" in task:
-        name = os.path.basename(task["target"])
-        return os.path.splitext(name)[0]
+        # Use full path (minus extension) to avoid collisions
+        # e.g., agora/adapters/foo.py -> agora_adapters_foo
+        path = os.path.splitext(task["target"])[0]
+        return path.replace("/", "_").replace("\\", "_")
     return f"task_{index}"
 
 
@@ -118,15 +150,15 @@ def sort_by_dependencies(tasks: list[dict]) -> list[dict]:
             raise ValueError(f"Circular dependency involving '{task_id}'")
         if task_id in visited:
             return
+        if task_id not in task_map:
+            raise ValueError(f"Unknown dependency '{task_id}' — check depends_on for typos")
         in_stack.add(task_id)
-        task = task_map.get(task_id)
-        if task:
-            for dep in task.get("depends_on", []):
-                visit(dep)
+        task = task_map[task_id]
+        for dep in task.get("depends_on", []):
+            visit(dep)
         in_stack.discard(task_id)
         visited.add(task_id)
-        if task:
-            result.append(task)
+        result.append(task)
 
     for t in tasks:
         visit(t["id"])
