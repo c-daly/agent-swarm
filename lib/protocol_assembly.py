@@ -256,6 +256,38 @@ Phases: intake -> design -> orchestrate
 - Task queue in workflow state, orchestrator owns exclusively
 - Subagents run iterate workflow independently
 """,
+    "experiment": """## Experiment Workflow
+Phases: read -> plan -> work -> eval -> review -> journal -> decide
+
+### read
+Load goal.yaml, constraints.yaml, journal entries. Understand the objective.
+
+### plan
+Form hypothesis. Review journal for failed approaches — never repeat without a new hypothesis.
+Store hypothesis: `mcp-call workflow__workflow_set_value '{"workflow_id": "experiment", "key": "current_hypothesis", "value": "..."}'`
+
+### work
+Implement the hypothesis. Write code at the target path.
+Eval scripts (experiments/*/eval/**) are NEVER writable.
+When ready: `mcp-call workflow__workflow_advance_phase '{"workflow_id": "experiment", "target_phase": "eval"}'`
+
+### eval
+Run: `mcp-call pytest -v <eval_path>`
+Parse [METRIC] from output. Store results.
+All pass -> advance to review. Crash -> back to work.
+
+### review
+Reviewer checks code quality, security, conventions.
+APPROVED -> advance to journal. CHANGES_REQUESTED -> back to work.
+
+### journal
+Write numbered entry to experiments/<name>/journal/.
+Record: hypothesis, changes, results, diagnosis.
+
+### decide
+Check metrics against success criteria.
+Met -> done. Not met -> back to plan with journal context.
+""",
     "develop": """## Develop Workflow
 PR-based SE team: intake -> research -> design -> branch -> test_writing -> implement -> test -> review -> merge -> acceptance -> complete
 
@@ -356,7 +388,7 @@ PHASE_PROTOCOLS = {
 # =============================================================================
 
 # Known workflow IDs to check (matches permission_query._KNOWN_WORKFLOWS)
-_KNOWN_WORKFLOWS = ["iterate", "debug", "pr_comment", "implementer", "develop"]
+_KNOWN_WORKFLOWS = ["iterate", "debug", "pr_comment", "implementer", "develop", "experiment"]
 
 
 def get_workflow_state():
