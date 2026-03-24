@@ -160,12 +160,10 @@ ROLE_PROTOCOLS = {
 - Minimal changes only -- no speculative features or refactoring beyond scope
 - Follow existing patterns in the codebase
 
-### Direct MCP Tools
-You have DIRECT access to these tools (no mcp-call needed):
-- `mcp__plugin_agent-swarm_router__native__write_file` -- write files (avoids JSON escaping)
-- `mcp__plugin_agent-swarm_router__native__read_file` -- read files
-
-Use these for creating/reading files. Use `mcp-call` for running commands (pytest, ruff, git).
+### Writing Files
+To avoid JSON escaping issues when writing multi-line files via mcp-call:
+1. Write content to a temp file: `mcp-call native__bash '{"command": "cat > /tmp/myfile.py << '\''HEREDOC'\''\n...content...\nHEREDOC"}'`
+2. Move it into place: `mcp-call native__bash '{"command": "mv /tmp/myfile.py /target/path.py"}'`
 """,
     "explorer": """## Explorer Role
 - Read-only -- no file writes or edits

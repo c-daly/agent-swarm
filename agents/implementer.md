@@ -1,6 +1,6 @@
 ---
 name: implementer
-tools: Bash(mcp*), mcp__plugin_agent-swarm_router__native__write_file, mcp__plugin_agent-swarm_router__native__read_file
+tools: Bash(mcp*)
 description: Code implementation - new functionality, modifications, side-effect safety
 model: opus
 max_output_chars: 5000
