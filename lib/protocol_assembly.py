@@ -159,6 +159,13 @@ ROLE_PROTOCOLS = {
 - Can commit (git add, git commit) -- do NOT push
 - Minimal changes only -- no speculative features or refactoring beyond scope
 - Follow existing patterns in the codebase
+
+### Direct MCP Tools
+You have DIRECT access to these tools (no mcp-call needed):
+- `mcp__plugin_agent-swarm_router__native__write_file` -- write files (avoids JSON escaping)
+- `mcp__plugin_agent-swarm_router__native__read_file` -- read files
+
+Use these for creating/reading files. Use `mcp-call` for running commands (pytest, ruff, git).
 """,
     "explorer": """## Explorer Role
 - Read-only -- no file writes or edits
