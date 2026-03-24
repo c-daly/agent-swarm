@@ -1,6 +1,6 @@
 """Experiment workflow — autonomous experiment execution with eval gates.
 
-Flow: read -> plan -> work -> eval -> journal -> decide -> [plan | done]
+Flow: read -> plan -> work -> eval -> review -> journal -> decide -> [plan | done]
 State persisted via DaemonClient. Phase transitions validated by daemon
 against config/workflows/experiment.yaml.
 """
@@ -14,6 +14,7 @@ if str(lib_dir) not in sys.path:
     sys.path.insert(0, str(lib_dir))
 
 from daemon_client import DaemonClient, DaemonError, is_daemon_only_key  # noqa: E402
+from experiment_harness import load_constraints, check_escalations  # noqa: E402
 
 WORKFLOW_ID = "experiment"
 
@@ -129,6 +130,34 @@ def advance_phase(target: str) -> dict:
                 f"Max iterations ({max_iter}) reached"
             )
 
+    # Business logic: check escalation conditions in decide phase
+    if current == "decide":
+        triggered = state.get("triggered_escalations", [])
+        exp_dir = state.get("experiment_dir")
+        if triggered and exp_dir:
+            constraints = load_constraints(Path(exp_dir))
+            result = check_escalations(constraints, triggered)
+            if result.should_stop:
+                state["active"] = False
+                state["exit_reason"] = "escalation"
+                state["escalation_details"] = [e["condition"] for e in result.errors]
+                state["phase"] = "done"
+                try:
+                    _set_state(state, advance_to="done")
+                except DaemonError as e:
+                    raise ExperimentWorkflowError(str(e)) from e
+                _stop_daemon_workflow()
+                conditions = ", ".join(e["condition"] for e in result.errors)
+                raise ExperimentWorkflowError(
+                    f"Escalation triggered: {conditions}"
+                )
+            if result.checkpoints:
+                state["pending_checkpoints"] = [c["condition"] for c in result.checkpoints]
+                _set_state(state)
+        # Clear triggered escalations after processing
+        if "triggered_escalations" in state:
+            state["triggered_escalations"] = []
+
     state["phase"] = target
 
     if target == "done":
@@ -179,6 +208,17 @@ def record_hypothesis(hypothesis: str, result: str) -> None:
         "iteration": state.get("iteration", 0),
     })
     state["hypotheses_tested"] = tested
+    _set_state(state)
+
+
+def report_escalations(conditions: list[str]) -> None:
+    """Report escalation conditions as triggered.
+
+    Called by the coordinator during the decide phase. The conditions
+    are checked against constraints.escalate_if on the next advance_phase().
+    """
+    state = _get_state()
+    state["triggered_escalations"] = conditions
     _set_state(state)
 
 

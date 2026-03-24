@@ -132,6 +132,47 @@ def normalize_escalation(entry) -> dict:
     return {"condition": str(entry), "reason": "error"}
 
 
+@dataclass
+class EscalationResult:
+    """Result of checking escalation conditions."""
+    should_stop: bool
+    triggered: list[dict] = field(default_factory=list)
+    errors: list[dict] = field(default_factory=list)
+    checkpoints: list[dict] = field(default_factory=list)
+
+
+def check_escalations(constraints: Constraints, triggered_conditions: list[str]) -> EscalationResult:
+    """Check which escalation conditions have been triggered.
+
+    Args:
+        constraints: Loaded constraints with escalate_if entries.
+        triggered_conditions: Condition strings the agent reports as met.
+
+    Returns:
+        EscalationResult with categorized triggered escalations.
+    """
+    triggered = []
+    errors = []
+    checkpoints = []
+    triggered_set = set(triggered_conditions)
+
+    for entry in constraints.escalate_if:
+        normalized = normalize_escalation(entry)
+        if normalized["condition"] in triggered_set:
+            triggered.append(normalized)
+            if normalized["reason"] == "routine_checkpoint":
+                checkpoints.append(normalized)
+            else:
+                errors.append(normalized)
+
+    return EscalationResult(
+        should_stop=len(errors) > 0,
+        triggered=triggered,
+        errors=errors,
+        checkpoints=checkpoints,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Journal
 # ---------------------------------------------------------------------------
@@ -264,10 +305,13 @@ def run_eval(exp_dir: Path, eval_path: str = "eval/",
                               timeout=timeout, cwd=str(exp_dir), env=env)
         output = proc.stdout + proc.stderr
         total, passed, failed = _parse_pytest_summary(output)
+        metrics = _parse_metrics(output)
+        if total > 0 and "test_pass_rate" not in metrics:
+            metrics["test_pass_rate"] = passed / total
         return EvalResult(
             passed=(proc.returncode == 0), tests_run=total,
             tests_passed=passed, tests_failed=failed,
-            metrics=_parse_metrics(output),
+            metrics=metrics,
             stdout=proc.stdout, stderr=proc.stderr,
             return_code=proc.returncode,
         )
@@ -279,9 +323,13 @@ def run_eval(exp_dir: Path, eval_path: str = "eval/",
         if isinstance(stderr, bytes):
             stderr = stderr.decode("utf-8", errors="replace")
         output = stdout + stderr
+        metrics = _parse_metrics(output)
+        total, passed, _ = _parse_pytest_summary(output)
+        if total > 0 and "test_pass_rate" not in metrics:
+            metrics["test_pass_rate"] = passed / total
         return EvalResult(passed=False, timed_out=True,
                           stdout=stdout, stderr=stderr,
-                          metrics=_parse_metrics(output))
+                          metrics=metrics)
 
 
 # ---------------------------------------------------------------------------

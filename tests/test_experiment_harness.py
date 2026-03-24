@@ -6,6 +6,7 @@ from pathlib import Path
 from experiment_harness import (
     Goal, load_goal, validate_goal,
     Constraints, load_constraints, normalize_escalation,
+    EscalationResult, check_escalations,
     Journal,
     EvalResult, run_eval, _parse_metrics, _parse_pytest_summary,
     CriteriaResult, check_criteria,
@@ -364,3 +365,104 @@ class TestCheckCriteria:
             result = check_criteria(criteria, {"score": 0.6})
         assert result.passed  # falls back to >= which passes
         assert "Unknown comparison operator" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Escalation checking
+# ---------------------------------------------------------------------------
+
+class TestCheckEscalations:
+    def test_no_escalations_when_nothing_triggered(self):
+        constraints = Constraints(escalate_if=["Cannot load weights", "OOM detected"])
+        result = check_escalations(constraints, [])
+        assert not result.should_stop
+        assert result.triggered == []
+
+    def test_error_escalation_stops(self):
+        constraints = Constraints(escalate_if=["Cannot load weights", "OOM detected"])
+        result = check_escalations(constraints, ["Cannot load weights"])
+        assert result.should_stop
+        assert len(result.errors) == 1
+        assert result.errors[0]["condition"] == "Cannot load weights"
+        assert result.errors[0]["reason"] == "error"
+
+    def test_checkpoint_does_not_stop(self):
+        constraints = Constraints(escalate_if=[
+            {"condition": "Phase transition", "reason": "routine_checkpoint"},
+        ])
+        result = check_escalations(constraints, ["Phase transition"])
+        assert not result.should_stop
+        assert len(result.checkpoints) == 1
+        assert result.checkpoints[0]["condition"] == "Phase transition"
+
+    def test_mixed_error_and_checkpoint(self):
+        constraints = Constraints(escalate_if=[
+            "Cannot load weights",
+            {"condition": "Phase transition", "reason": "routine_checkpoint"},
+        ])
+        result = check_escalations(constraints, ["Cannot load weights", "Phase transition"])
+        assert result.should_stop  # error takes precedence
+        assert len(result.errors) == 1
+        assert len(result.checkpoints) == 1
+        assert len(result.triggered) == 2
+
+    def test_untriggered_conditions_ignored(self):
+        constraints = Constraints(escalate_if=["A", "B", "C"])
+        result = check_escalations(constraints, ["B"])
+        assert result.should_stop
+        assert len(result.triggered) == 1
+        assert result.triggered[0]["condition"] == "B"
+
+    def test_empty_constraints(self):
+        constraints = Constraints(escalate_if=[])
+        result = check_escalations(constraints, ["anything"])
+        assert not result.should_stop
+        assert result.triggered == []
+
+
+# ---------------------------------------------------------------------------
+# test_pass_rate synthesis
+# ---------------------------------------------------------------------------
+
+class TestPassRateSynthesis:
+    def test_pass_rate_synthesized_from_pytest(self, tmp_experiment):
+        eval_dir = tmp_experiment / "eval"
+        eval_dir.mkdir()
+        (eval_dir / "test_simple.py").write_text(
+            "def test_a(): assert True\ndef test_b(): assert True\n"
+        )
+        result = run_eval(tmp_experiment, eval_path="eval/")
+        assert result.passed
+        assert "test_pass_rate" in result.metrics
+        assert result.metrics["test_pass_rate"] == 1.0
+
+    def test_pass_rate_partial(self, tmp_experiment):
+        eval_dir = tmp_experiment / "eval"
+        eval_dir.mkdir()
+        (eval_dir / "test_mixed.py").write_text(
+            "def test_pass(): assert True\ndef test_fail(): assert False\n"
+        )
+        result = run_eval(tmp_experiment, eval_path="eval/")
+        assert not result.passed
+        assert "test_pass_rate" in result.metrics
+        assert result.metrics["test_pass_rate"] == 0.5
+
+    def test_explicit_metric_not_overridden(self, tmp_experiment):
+        eval_dir = tmp_experiment / "eval"
+        eval_dir.mkdir()
+        (eval_dir / "test_custom.py").write_text(
+            'def test_ok():\n'
+            '    print("[METRIC] test_pass_rate=0.99")\n'
+            '    assert True\n'
+        )
+        result = run_eval(tmp_experiment, eval_path="eval/")
+        assert result.metrics["test_pass_rate"] == 0.99  # not overridden
+
+    def test_pass_rate_works_with_check_criteria(self, tmp_experiment):
+        eval_dir = tmp_experiment / "eval"
+        eval_dir.mkdir()
+        (eval_dir / "test_simple.py").write_text("def test_ok(): assert True\n")
+        result = run_eval(tmp_experiment, eval_path="eval/")
+        criteria = [{"metric": "test_pass_rate", "threshold": 1.0, "primary": True}]
+        cr = check_criteria(criteria, result.metrics)
+        assert cr.passed
