@@ -159,11 +159,6 @@ ROLE_PROTOCOLS = {
 - Can commit (git add, git commit) -- do NOT push
 - Minimal changes only -- no speculative features or refactoring beyond scope
 - Follow existing patterns in the codebase
-
-### Writing Files
-To avoid JSON escaping issues when writing multi-line files via mcp-call:
-1. Write content to a temp file: `mcp-call native__bash '{"command": "cat > /tmp/myfile.py << '\''HEREDOC'\''\n...content...\nHEREDOC"}'`
-2. Move it into place: `mcp-call native__bash '{"command": "mv /tmp/myfile.py /target/path.py"}'`
 """,
     "explorer": """## Explorer Role
 - Read-only -- no file writes or edits
