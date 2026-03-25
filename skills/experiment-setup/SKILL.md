@@ -30,6 +30,20 @@ Use the harness `validate_goal()` function if available, or check manually.
 - Human-driven: report issues, prompt for correction
 - Agent-driven: report issues and STOP
 
+## Step 1.5 — Spec coverage check (if spec exists)
+
+If goal.yaml has a `spec:` field pointing to a spec document, or if a spec file exists at a conventional location (e.g., `docs/*-spec.md`):
+
+1. Parse the spec's component inventory (adapters, analysis, visualizations, app shell, glossary)
+2. For each spec component, check if there is a matching task in goal.yaml
+3. Flag any spec requirements with no corresponding task as **COVERAGE GAPS**
+4. Report gaps to the user before proceeding
+
+**Human-driven:** show gaps and ask whether to proceed or add missing tasks
+**Agent-driven:** report gaps in output. If gaps exceed 20% of spec components, STOP and escalate.
+
+This prevents building 25 of 67 spec components and discovering the gap after all work is done.
+
 ## Step 2 — Read project context
 
 Determine the **component type** from the `target` path:
