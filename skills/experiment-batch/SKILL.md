@@ -49,11 +49,25 @@ Report resolved task list to user.
 
 For each task (respecting dependency order, parallelizing independent tasks):
 
-1. Run `/experiment-setup` on the task directory (validate goal, generate constraints + eval if missing)
-2. Run `/experiment` on the task directory (read → plan → work → eval → review → journal → decide)
-3. Record result in run journal
+1. Start an experiment workflow for the task: `workflow_start("experiment", {task_id, ...})`
+2. Advance through ALL phases — the daemon enforces transitions:
+   - `read` → `plan` → `work` (dispatch registered implementer)
+   - `work` → `eval` (run tests, verify ruff passes)
+   - `eval` → `review` (dispatch registered reviewer with goal.yaml objective)
+   - `review` requires checkpoint: reviewer must store verdict via `workflow_set_value`
+   - `review` → `journal` ONLY after `workflow_pass_checkpoint` with APPROVED verdict
+   - `journal` → `decide` → next task or done
+3. A task is NOT complete until its workflow reaches the `done` phase
+4. The orchestrator CANNOT skip phases, declare tasks done early, or bypass the workflow
 
-If a task fails and `on_failure: continue`, skip it and proceed to next independent task. If `on_failure: stop`, halt the batch.
+**Hard rules:**
+- Every implementer must be registered via `prepare_dispatch`
+- Every reviewer must be registered via `prepare_dispatch`
+- The reviewer prompt must include the task objective and constraints for spec compliance checking
+- `workflow_pass_checkpoint` will REJECT if no verdict is stored or verdict is CHANGES_REQUESTED
+- Ruff must pass — the reviewer checks this and flags F821/F811 as CRITICAL
+
+If a task fails review and `on_failure: continue`, skip it and proceed. If `on_failure: stop`, halt the batch.
 
 ### 4. Task Eval Gate
 
