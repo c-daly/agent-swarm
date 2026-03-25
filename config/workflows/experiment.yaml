@@ -37,7 +37,7 @@ phases:
     allowed_tool_categories: [FILE_READ, FILE_SEARCH, CODE_QUERY, SHELL_SAFE]
     blocked_tools: [native__write_file, native__edit_file]
     eligible_agents: [reviewer]
-    checkpoint: false
+    checkpoint: true
 
   - name: journal
     allowed_tool_categories: [FILE_READ, FILE_WRITE]
