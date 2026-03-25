@@ -1,0 +1,94 @@
+interface_contracts:
+  module: agora.api.routes
+  endpoints:
+    - path: /api/yields
+      method: GET
+      query_params:
+        - name: maturities
+          type: str
+          required: false
+          description: "Comma-separated maturity labels (e.g. 10yr,2yr)"
+        - name: start_date
+          type: str
+          required: false
+          description: "ISO date string"
+        - name: end_date
+          type: str
+          required: false
+          description: "ISO date string"
+      response: "list of TimeSeries-shaped JSON objects"
+
+    - path: /api/yields/curve
+      method: GET
+      query_params: []
+      response: "Latest yield curve: list of {maturity, yield} objects"
+
+    - path: /api/yields/spread
+      method: GET
+      query_params:
+        - name: long
+          type: str
+          required: false
+          description: "Long maturity (default 10yr)"
+        - name: short
+          type: str
+          required: false
+          description: "Short maturity (default 2yr)"
+        - name: start_date
+          type: str
+          required: false
+        - name: end_date
+          type: str
+          required: false
+      response: "list of {date, spread} objects"
+
+    - path: /api/yields/inversions
+      method: GET
+      query_params: []
+      response: "list of inversion periods with start/end dates"
+
+    - path: /api/ftd
+      method: GET
+      query_params:
+        - name: symbol
+          type: str
+          required: true
+        - name: start_date
+          type: str
+          required: false
+        - name: end_date
+          type: str
+          required: false
+      response: "list of ShortData-shaped JSON objects"
+
+    - path: /api/fred
+      method: GET
+      query_params:
+        - name: series_id
+          type: str
+          required: true
+        - name: start_date
+          type: str
+          required: false
+      response: "list of TimeSeries-shaped JSON objects"
+
+    - path: /api/glossary
+      method: GET
+      query_params: []
+      response: "dict mapping term keys to glossary entries"
+
+    - path: "/api/glossary/{term}"
+      method: GET
+      path_params:
+        - name: term
+          type: str
+      response: "single glossary entry or 404"
+
+do_not_do:
+  - "Do not hardcode API keys in route handlers"
+  - "Do not return HTML — all responses must be JSON"
+  - "Do not swallow exceptions silently — return proper HTTP error codes with JSON error bodies"
+
+escalate_if: []
+
+known_findings: []

@@ -1,0 +1,82 @@
+interface_contracts:
+  target: webapp/
+  build_tool: vite
+  framework: react-18
+  charting_library: recharts
+
+  components:
+    - name: App
+      file: src/App.tsx
+      description: "Root application component. Renders the main layout and chart panels."
+
+    - name: YieldCurveChart
+      file: src/components/YieldCurveChart.tsx
+      props:
+        data: "YieldCurvePoint[]"
+        loading: "boolean"
+      description: >
+        Displays the current yield curve (maturity on x-axis, yield on y-axis).
+        Uses Recharts LineChart or AreaChart. Handles empty data and loading state gracefully.
+
+    - name: SpreadChart
+      file: src/components/SpreadChart.tsx
+      props:
+        data: "SpreadPoint[]"
+        loading: "boolean"
+      description: >
+        Displays the 10yr-2yr spread over time. Highlights inversions (spread < 0)
+        with a red fill or color change. Uses Recharts LineChart or AreaChart.
+
+    - name: DateSlider
+      file: src/components/DateSlider.tsx
+      props:
+        dates: "string[]"
+        selectedDate: "string"
+        onChange: "(date: string) => void"
+      description: >
+        A slider or date picker allowing the user to select which date's yield
+        curve to display. Controls the date fed to YieldCurveChart.
+
+  data_shapes:
+    - name: YieldCurvePoint
+      description: "A single point on the yield curve"
+      fields:
+        maturity: "string   # e.g. '1mo', '3mo', '2yr', '10yr', '30yr'"
+        yield_pct: "number  # yield as a percentage"
+
+    - name: SpreadPoint
+      description: "One day's 10yr-2yr spread value"
+      fields:
+        date: "string       # ISO date string"
+        spread: "number     # 10yr yield minus 2yr yield"
+        inverted: "boolean  # true when spread < 0"
+
+  api_endpoints_consumed:
+    - "GET /api/yields/curve           -> YieldCurvePoint[]"
+    - "GET /api/yields/spread          -> SpreadPoint[]"
+    - "GET /api/yields/inversions      -> object"
+
+  package_json_requirements:
+    dependencies:
+      - react
+      - react-dom
+      - recharts
+    devDependencies:
+      - vite
+      - "@vitejs/plugin-react"
+      - vitest
+      - "@testing-library/react"
+      - "@testing-library/jest-dom"
+      - jsdom
+
+do_not_do:
+  - "Do not use class components -- use functional components with hooks"
+  - "Do not bundle a backend server -- the webapp proxies /api to localhost:8000"
+  - "Do not use heavyweight UI frameworks (Material UI, Ant Design) -- keep it minimal CSS"
+  - "Do not hardcode API URLs -- use relative paths (/api/...) so the Vite proxy works"
+
+escalate_if:
+  - "Recharts cannot render the required chart types"
+  - "Vite proxy configuration for /api fails to connect to FastAPI backend"
+
+known_findings: []

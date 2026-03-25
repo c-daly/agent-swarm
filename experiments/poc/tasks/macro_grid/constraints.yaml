@@ -1,0 +1,40 @@
+interface_contracts:
+  component: MacroGrid
+  file: webapp/src/components/MacroGrid.tsx
+  test_file: webapp/src/components/MacroGrid.test.tsx
+  props: []
+  api_endpoint: "GET /api/fred?series_id={series_id}&start_date={start_date}"
+  api_response_shape: |
+    Array<{
+      date: string;         // ISO date
+      value: number;
+      metadata: {
+        source: "FRED";
+        unit: string | null;
+        frequency: string | null;
+      };
+    }>
+  series_ids:
+    - GDP
+    - CPIAUCSL
+    - UNRATE
+    - FEDFUNDS
+  rendering:
+    - "Grid layout of indicator cards"
+    - "Each card: indicator name, current value, sparkline of last 12 data points"
+    - "Use Recharts sparkline (LineChart or AreaChart, small, no axes)"
+    - "Loading state: skeleton or spinner per card"
+    - "Error state: per-card error message (one failing series should not break others)"
+  imports_required:
+    - "React (from 'react')"
+    - "Recharts (LineChart or AreaChart for sparklines)"
+
+do_not_do:
+  - "Do not fetch all series in a single request -- one fetch per series_id"
+  - "Do not let one failed series crash the entire grid"
+  - "Do not hardcode data values for display"
+
+escalate_if:
+  - "API response shape from /api/fred differs from TimeSeries schema"
+
+known_findings: []

@@ -1,0 +1,17 @@
+interface_contracts:
+  module: agora.analysis.yield_curve
+  functions:
+    - name: current_curve
+      signature: "(series: list[TimeSeries]) -> dict[str, float]"
+    - name: compute_spread
+      signature: "(series: list[TimeSeries], long_maturity: str, short_maturity: str) -> list[TimeSeries]"
+    - name: detect_inversions
+      signature: "(series: list[TimeSeries]) -> list[dict]"
+
+do_not_do:
+  - "Do not fetch data — this module operates on already-fetched TimeSeries"
+  - "Do not import any adapter modules"
+
+escalate_if: []
+
+known_findings: []

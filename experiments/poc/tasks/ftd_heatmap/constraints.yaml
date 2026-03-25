@@ -1,0 +1,36 @@
+interface_contracts:
+  component: FtdHeatmap
+  file: webapp/src/components/FtdHeatmap.tsx
+  test_file: webapp/src/components/FtdHeatmap.test.tsx
+  props:
+    - name: symbol
+      type: "string | undefined"
+      description: "Optional initial symbol filter"
+  api_endpoint: "GET /api/ftd?symbol={symbol}&start_date={start_date}&end_date={end_date}"
+  api_response_shape: |
+    Array<{
+      symbol: string;
+      date: string;         // ISO date
+      data_type: "ftd";
+      value: number;        // FTD quantity
+      total_for_ratio: number | null;
+      source: string;
+    }>
+  rendering:
+    - "Heatmap grid: rows = symbols, columns = dates, cell color intensity = FTD quantity"
+    - "Search/filter input for symbol"
+    - "Empty data state: display a user-visible message, never a blank grid"
+    - "Use Recharts or HTML table with colored cells"
+  imports_required:
+    - "React (from 'react')"
+    - "Recharts or equivalent for visualization"
+
+do_not_do:
+  - "Do not hardcode symbol lists -- always derive from fetched data"
+  - "Do not silently swallow API errors -- show error state to user"
+  - "Do not render a blank component when data is empty"
+
+escalate_if:
+  - "API response shape from /api/ftd differs from ShortData schema"
+
+known_findings: []

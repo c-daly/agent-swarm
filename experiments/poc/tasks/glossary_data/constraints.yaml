@@ -1,0 +1,36 @@
+interface_contracts:
+  file: agora/glossary/terms.yaml
+  format: yaml
+  schema:
+    type: mapping
+    key: term_key (snake_case string)
+    value:
+      required_fields:
+        - term          # display name (string, non-empty)
+        - description   # plain-English definition (string, non-empty)
+        - interpretation # what high/low means, what to watch for (string, non-empty)
+        - caveats       # known limitations or common misreadings (string, non-empty)
+  minimum_entries: 15
+  required_topics:
+    - yield_curve
+    - inversion
+    - spread
+    - ftd
+    - short_interest
+    - short_volume_ratio
+    - gdp
+    - cpi
+    - unemployment_rate
+    - federal_funds_rate
+    - treasury_yields
+    - maturity
+
+do_not_do:
+  - "Do not use nested or deeply structured YAML — keep it a flat mapping of term keys to definition objects"
+  - "Do not leave any field empty or null"
+  - "Do not use jargon-heavy language — write for a retail investor audience"
+  - "Do not include executable code or logic — this is a static data file only"
+
+escalate_if: []
+
+known_findings: []

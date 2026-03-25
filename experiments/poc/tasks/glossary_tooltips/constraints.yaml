@@ -1,0 +1,44 @@
+interface_contracts:
+  component: GlossaryTooltip
+  file: webapp/src/components/GlossaryTooltip.tsx
+  test_file: webapp/src/components/GlossaryTooltip.test.tsx
+  props:
+    - name: term
+      type: "string"
+      description: "The glossary term key to look up"
+    - name: children
+      type: "React.ReactNode"
+      description: "The wrapped content that triggers the tooltip on hover"
+  api_endpoint: "GET /api/glossary"
+  api_response_shape: |
+    Record<string, {
+      term: string;
+      description: string;
+      interpretation: string;
+      caveats: string;
+    }>
+  rendering:
+    - "Wraps any child text/element; shows tooltip on hover"
+    - "Tooltip displays: term name, description, interpretation"
+    - "Client-side cache: fetch glossary once, reuse across all tooltip instances"
+    - "Integrate into: yield curve chart axis labels, macro grid headers, FTD heatmap column headers"
+  imports_required:
+    - "React (from 'react')"
+  integration_points:
+    - component: YieldCurveChart
+      usage: "Wrap maturity axis labels"
+    - component: MacroGrid
+      usage: "Wrap indicator name headers"
+    - component: FtdHeatmap
+      usage: "Wrap date/symbol column headers"
+
+do_not_do:
+  - "Do not fetch glossary data on every tooltip mount -- cache at module or context level"
+  - "Do not block rendering while glossary loads -- show children immediately, tooltip when ready"
+  - "Do not fail silently if term is not found -- render children without tooltip"
+
+escalate_if:
+  - "Glossary API response shape differs from terms.yaml structure"
+  - "More than 3 integration points require structural changes to host components"
+
+known_findings: []
