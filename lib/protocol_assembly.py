@@ -167,6 +167,20 @@ ROLE_PROTOCOLS = {
 - Can commit (git add, git commit) -- do NOT push
 - Minimal changes only -- no speculative features or refactoring beyond scope
 - Follow existing patterns in the codebase
+
+### Writing Files
+Use Python dict syntax (single quotes) instead of JSON to avoid escaping issues:
+```
+mcp-call serena__create_text_file "{'relative_path': 'src/foo.py', 'content': 'def hello():\n    return 42\n'}"
+```
+Or use `native__write_file` with dict syntax:
+```
+mcp-call native__write_file "{'file_path': '/abs/path/foo.py', 'content': 'code here'}"
+```
+For large files, write a Python helper script to /tmp and execute it:
+```
+mcp-call native__bash '{"command": "python3 /tmp/write_helper.py", "cwd": "/project"}'
+```
 """,
     "explorer": """## Explorer Role
 - Read-only -- no file writes or edits
