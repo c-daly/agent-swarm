@@ -904,6 +904,19 @@ class Controller:
                     raise WorkflowError(
                         f"Phase '{current}' does not have a checkpoint"
                     )
+            # Review phase requires a stored verdict before checkpoint can pass
+            if current == "review":
+                verdict = state.get("review_verdict")
+                if not verdict:
+                    raise WorkflowError(
+                        "Review phase checkpoint requires a review verdict. "
+                        "Store one with workflow_set_value(wf_id, 'review_verdict', 'APPROVED'|'CHANGES_REQUESTED') first."
+                    )
+                if verdict == "CHANGES_REQUESTED":
+                    raise WorkflowError(
+                        "Review verdict is CHANGES_REQUESTED. "
+                        "Fix issues and get a new review before passing checkpoint."
+                    )
             state[f"{current}_checkpoint_passed"] = datetime.now(timezone.utc).isoformat()
             return {"status": "checkpoint_passed", "phase": current}
 

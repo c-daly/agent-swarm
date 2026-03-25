@@ -99,11 +99,19 @@ mcp-call native__read_file '{"file_path": "/path"}'
 mcp-call native__write_file '{"file_path": "/path", "content": "..."}'
 mcp-call native__grep '{"pattern": "...", "path": "/dir"}'
 mcp-call native__glob '{"pattern": "**/*.py", "path": "/dir"}'
-mcp-call native__bash '{"command": "..."}'
+mcp-call native__bash '{"command": "...", "cwd": "/working/dir"}'
 mcp-call native__web_fetch '{"url": "https://..."}'
 mcp-call native__web_search '{"query": "..."}'
 mcp-call serena__find_symbol '{"name_path_pattern": "ClassName"}'
 mcp-call serena__read_file '{"relative_path": "src/foo.py"}'
+```
+
+**Working directory:** Always pass `"cwd"` to `native__bash` when running
+commands that need a specific directory (pytest, npm, git). Do NOT use
+`cd /path &&` inside the command string -- use the cwd parameter instead:
+```
+mcp-call native__bash '{"command": "pytest -v tests/", "cwd": "/path/to/project"}'
+mcp-call native__bash '{"command": "npx vitest run", "cwd": "/path/to/webapp"}'
 ```
 
 ### Editing Files
