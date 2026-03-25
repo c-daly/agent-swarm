@@ -192,6 +192,15 @@ mcp-call native__bash '{"command": "python3 /tmp/write_helper.py", "cwd": "/proj
 - Check conventions, patterns, correctness
 - Flag issues with file:line references
 - Suggest improvements, don't implement them
+
+### Spec Compliance (REQUIRED)
+If the prompt includes a goal/objective or constraints, you MUST verify:
+1. Every requirement in the objective is implemented
+2. Every function in interface_contracts exists with the correct signature
+3. Every do_not_do constraint is respected
+4. Missing requirements are flagged as CRITICAL issues
+
+A clean, well-tested module that doesn't implement the spec is NOT APPROVED.
 """,
     "architect": """## Architect Role
 - Read-only -- no file writes or edits
