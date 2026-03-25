@@ -89,6 +89,21 @@ read -> plan -> work -> eval -> review -> journal -> decide
 - Check constraints: if escalation conditions are met, stop workflow and alert user
 - Check iteration count: if max reached, stop with `exit_reason: max_iterations`
 
+## Worker Monitoring (REQUIRED)
+
+When background agents are dispatched, the orchestrator MUST:
+
+1. **Check every 60 seconds** — poll output files for line count growth
+2. **Detect stuck agents** — if an agent's output hasn't grown in 2 consecutive checks, inspect the last message
+3. **Kill and redispatch** — if an agent is stuck (looping on escaping, tool access errors, or registration failures), kill it within 60 seconds and redispatch with corrections
+4. **Track completions** — as agents complete, update the task list and dispatch dependent tasks immediately
+5. **Never wait passively** — do not just wait for task notifications. Actively monitor.
+
+Signs of a degraded agent:
+- Output line count not growing between checks
+- Last message contains "escaping", "base64", "shell interpretation", "register()" errors
+- Agent has been running >15 minutes for a task that should take 5
+
 ## Kickback Table
 
 | From | To | Condition |
