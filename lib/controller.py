@@ -600,8 +600,13 @@ class Controller:
         # Register in permissions system
         self.permissions.register_agent(agent_id, role)
 
-        # Assemble role-specific briefing (only default to iterate if no workflow active)
+        # Require active workflow for implementer/reviewer roles
         active_wf, _ = get_workflow_state()
+        if role in ("implementer", "reviewer") and not active_wf:
+            raise RouterError(
+                f"Cannot dispatch {role} without an active workflow. "
+                f"Start a workflow first (e.g., workflow_start('experiment', ...))."
+            )
         wf_override = "iterate" if role == "implementer" and not active_wf else None
         briefing = assemble_subagent_briefing(role, workflow_override=wf_override)
         caller_header = (
