@@ -31,6 +31,7 @@ DATA_DIR = _BASE_DIR / "data"
 class PhaseConfig:
     """Per-phase configuration loaded from YAML."""
     checkpoint: bool = False
+    conditions: tuple[dict, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -59,7 +60,15 @@ def load_workflow_configs(config_dir: Path) -> dict[str, WorkflowConfig]:
         name = data["name"]
         phases = {}
         for p in data.get("phases", []):
-            phases[p["name"]] = PhaseConfig(checkpoint=p.get("checkpoint", False))
+            raw_conditions = p.get("conditions", [])
+            conditions = []
+            for c in raw_conditions:
+                if isinstance(c, str):
+                    conditions.append({"name": c})
+                elif isinstance(c, dict):
+                    conditions.append(c)
+            has_checkpoint = p.get("checkpoint", False) or bool(conditions)
+            phases[p["name"]] = PhaseConfig(checkpoint=has_checkpoint, conditions=tuple(conditions))
         transitions = {}
         for src, targets in data.get("transitions", {}).items():
             transitions[src] = set(targets) if isinstance(targets, list) else {targets}

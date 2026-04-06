@@ -164,3 +164,78 @@ def sort_by_dependencies(tasks: list[dict]) -> list[dict]:
         visit(t["id"])
 
     return result
+
+
+# --- Task Grouping ---
+
+COMPONENT_ORDER = {
+    "adapter": 0, "glossary": 0,
+    "analysis": 1, "quant": 1,
+    "api": 2,
+    "frontend": 3, "app-shell": 3,
+}
+
+
+def _get_component(task: dict) -> str:
+    """Extract component type from task labels."""
+    for label in task.get("labels", []):
+        if isinstance(label, str) and label.startswith("component:"):
+            return label.split(":")[1]
+        if isinstance(label, dict) and label.get("name", "").startswith("component:"):
+            return label["name"].split(":")[1]
+    return "unknown"
+
+
+def _get_group_key(task: dict) -> str:
+    """Extract group key from task (epic label, explicit group, or default)."""
+    # Check explicit group field
+    if "group" in task:
+        return task["group"]
+
+    # Check for epic label
+    for label in task.get("labels", []):
+        name = label if isinstance(label, str) else label.get("name", "")
+        if name.startswith("epic:"):
+            return name.split(":")[1]
+        if name == "epic":
+            continue  # Skip bare "epic" label (that's the epic issue itself)
+
+    return "_ungrouped"
+
+
+def group_tasks(tasks: list[dict], strategy: str = "auto") -> dict[str, list[dict]]:
+    """Group tasks into execution units.
+
+    Strategies:
+        auto: Use epic labels if present, fall back to flat.
+        epic: Group by epic labels. Ungrouped tasks go to "_ungrouped".
+        explicit: Group by task["group"] field.
+        flat: No grouping — each task is its own group.
+
+    Within each group, tasks are sorted by component type
+    (adapter -> analysis -> api -> frontend).
+    """
+    if strategy == "flat":
+        return {task.get("id", str(i)): [task] for i, task in enumerate(tasks)}
+
+    groups: dict[str, list[dict]] = {}
+
+    for task in tasks:
+        if strategy == "explicit":
+            key = task.get("group", "_ungrouped")
+        elif strategy == "epic":
+            key = _get_group_key(task)
+        else:  # auto
+            key = _get_group_key(task)
+
+        groups.setdefault(key, []).append(task)
+
+    # If auto and everything ended up ungrouped, fall back to flat
+    if strategy == "auto" and list(groups.keys()) == ["_ungrouped"]:
+        return {task.get("id", str(i)): [task] for i, task in enumerate(tasks)}
+
+    # Sort tasks within each group by component order
+    for key in groups:
+        groups[key].sort(key=lambda t: COMPONENT_ORDER.get(_get_component(t), 99))
+
+    return groups

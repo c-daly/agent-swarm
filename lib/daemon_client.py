@@ -26,7 +26,7 @@ MAX_RESPONSE_SIZE = 10 * 1024 * 1024  # 10 MB — matches daemon MAX_MESSAGE_SIZ
 # but are currently managed in Python. They'll need migration to daemon APIs
 # (workflow_start, workflow_pass_checkpoint) for full production compatibility.
 DAEMON_ONLY_KEYS = frozenset({
-    "phase", "active_agents", "completed_at",
+    "phase", "active_agents", "completed_at", "started_at",
     "agent_id", "agent_type", "session_id", "workflow_id",
 })
 

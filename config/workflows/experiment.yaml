@@ -16,7 +16,8 @@ phases:
     allowed_tool_categories: [FILE_READ, FILE_SEARCH, CODE_QUERY, WEB_RESEARCH]
     blocked_tools: [native__write_file, native__edit_file, native__bash]
     eligible_agents: [pm, researcher]
-    checkpoint: false
+    conditions:
+      - tests_written
 
   - name: work
     allowed_tool_categories: [FILE_READ, FILE_WRITE, CODE_QUERY, CODE_EDIT, FILE_SEARCH, SHELL_SAFE, WEB_RESEARCH]
@@ -31,7 +32,6 @@ phases:
     blocked_file_patterns: ["experiments/*/eval/**"]
     eligible_agents: [implementer]
     checkpoint: false
-
 
   - name: review
     allowed_tool_categories: [FILE_READ, FILE_SEARCH, CODE_QUERY, SHELL_SAFE]

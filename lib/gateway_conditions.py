@@ -128,6 +128,65 @@ def commit_exists(*, branch: str, cwd: str, **kwargs: Any) -> tuple[bool, str]:
         return False, f"Error checking commits: {e}"
 
 
+
+
+
+def eval_tests_exist(
+    *, eval_dir: str, cwd: str, **kwargs: Any
+) -> tuple[bool, str]:
+    """Check if eval test files exist in the task eval directory."""
+    import os
+
+    full_path = os.path.join(cwd, eval_dir) if not os.path.isabs(eval_dir) else eval_dir
+    if not os.path.isdir(full_path):
+        return False, f"Eval directory does not exist: {eval_dir}"
+
+    test_files = [
+        f for f in os.listdir(full_path)
+        if f.startswith("test_") and f.endswith(".py")
+    ]
+    if not test_files:
+        return False, f"No eval test files (test_*.py) found in {eval_dir}"
+    return True, f"Found {len(test_files)} eval test file(s) in {eval_dir}"
+
+
+def agent_registered(
+    *, agent_id: str, cwd: str, **kwargs: Any
+) -> tuple[bool, str]:
+    """Check if an agent ID is registered with the daemon."""
+    import re
+
+    if not re.match(r"sub-[0-9a-f]{8}", agent_id):
+        return False, f"Invalid agent ID format: {agent_id}"
+    try:
+        from daemon_client import DaemonClient
+        with DaemonClient() as dc:
+            state = dc.agent_get_state(agent_id)
+            if state:
+                return True, f"Agent {agent_id} is registered"
+            return False, f"Agent {agent_id} not found in daemon"
+    except Exception as e:
+        return False, f"Error checking agent registration: {e}"
+
+
+def workflow_phase_is(
+    *, workflow_id: str, expected_phase: str, cwd: str, **kwargs: Any
+) -> tuple[bool, str]:
+    """Check if a workflow is in the expected phase."""
+    try:
+        from daemon_client import DaemonClient
+        with DaemonClient() as dc:
+            state = dc.workflow_get_state(workflow_id)
+            if not state:
+                return False, f"Workflow {workflow_id} not found"
+            actual = state.get("phase", "unknown")
+            if actual == expected_phase:
+                return True, f"Workflow is in phase '{expected_phase}'"
+            return False, f"Workflow is in phase '{actual}', expected '{expected_phase}'"
+    except Exception as e:
+        return False, f"Error checking workflow phase: {e}"
+
+
 GATEWAY_CONDITIONS: dict[str, callable] = {
     "branch_exists": branch_exists,
     "tests_written": tests_written,
@@ -135,4 +194,7 @@ GATEWAY_CONDITIONS: dict[str, callable] = {
     "all_branches_merged": all_branches_merged,
     "full_suite_passes": full_suite_passes,
     "commit_exists": commit_exists,
+    "eval_tests_exist": eval_tests_exist,
+    "agent_registered": agent_registered,
+    "workflow_phase_is": workflow_phase_is,
 }

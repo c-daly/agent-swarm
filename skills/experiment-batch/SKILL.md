@@ -1,12 +1,12 @@
 ---
 name: experiment-batch
-description: "Discover and run multiple experiment tasks from a query or manifest"
+description: Discover and run multiple experiment tasks from a query or manifest
 user_invocable: true
 ---
 
 # Experiment Batch
 
-Discover multiple tasks, resolve them into per-task goal.yaml files, run experiments, gate integration eval on all task evals passing.
+Discover multiple tasks, group them into execution units, generate eval tests per group, run experiments, gate on eval pass.
 
 ## Usage
 
@@ -41,74 +41,95 @@ Merge query results with explicit tasks. Deduplicate by target path or issue num
 
 Call `batch_resolver.resolve_tasks()` to create per-task directories with goal.yaml files.
 
-Sort by dependencies via `batch_resolver.sort_by_dependencies()`.
+### 3. Group
 
-Report resolved task list to user.
+Call `batch_resolver.group_tasks()` to organize tasks into execution units.
 
-### 3. Execute Tasks
+Grouping strategies (auto-detected):
+- **Epic labels** on GitHub issues → group by epic
+- **Explicit `group` field** in task definitions → group by field
+- **No grouping available** → flat (each task is its own unit)
 
-For each task (respecting dependency order, parallelizing independent tasks):
+Within each group, tasks are ordered by component dependency:
+`adapter/glossary → analysis/quant → api → frontend/app-shell`
+
+Report the group structure to the user.
+
+### 4. Execute Groups
+
+For each group (can pipeline — generate eval for next group while current executes):
+
+#### 4a. Generate eval tests for the group
+
+Run experiment-setup (Steps 2-5) for each task in the group:
+- Generate per-task eval tests from the spec and interface contracts
+- Generate group-level integration eval that tests the vertical slice (adapter → analysis → API flow)
+- Store in `tasks/<id>/eval/` and `groups/<name>/eval/`
+
+The gateway condition `eval_tests_exist` blocks advancing to work phase without eval tests.
+
+#### 4b. Execute tasks within the group
+
+Respecting component dependency order within the group, parallelizing independent tasks:
 
 1. Start an experiment workflow for the task: `workflow_start("experiment", {task_id, ...})`
 2. Advance through ALL phases — the daemon enforces transitions:
    - `read` → `plan` → `work` (dispatch registered implementer)
-   - `work` → `eval` (run tests, verify ruff passes)
+   - `work` → `eval` (run eval tests, verify ruff passes)
    - `eval` → `review` (dispatch registered reviewer with goal.yaml objective)
    - `review` requires checkpoint: reviewer must store verdict via `workflow_set_value`
    - `review` → `journal` ONLY after `workflow_pass_checkpoint` with APPROVED verdict
    - `journal` → `decide` → next task or done
 3. A task is NOT complete until its workflow reaches the `done` phase
-4. The orchestrator CANNOT skip phases, declare tasks done early, or bypass the workflow
 
 **Hard rules:**
 - Every implementer must be registered via `prepare_dispatch`
 - Every reviewer must be registered via `prepare_dispatch`
+- Use `agent-swarm:reviewer` agent type for reviews (requires Bash access)
 - The reviewer prompt must include the task objective and constraints for spec compliance checking
 - `workflow_pass_checkpoint` will REJECT if no verdict is stored or verdict is CHANGES_REQUESTED
 - Ruff must pass — the reviewer checks this and flags F821/F811 as CRITICAL
 
-If a task fails review and `on_failure: continue`, skip it and proceed. If `on_failure: stop`, halt the batch.
+#### 4c. Group eval gate
 
-### 4. Task Eval Gate
+After all tasks in a group complete:
+- Run group-level integration eval (if exists)
+- If any task failed and `on_failure: continue`, note it and proceed
+- If `on_failure: stop`, halt the batch
 
-After all tasks have been attempted:
-- Check that ALL task evals passed
-- If any failed, report which tasks failed and stop — do not run integration eval
-- This is a hard gate, not a soft check
+### 5. Integration Eval
 
-### 5. Integration Eval (optional)
-
-If `<run-dir>/eval/` exists:
-- Run: `python -m pytest <run-dir>/eval/ -v -s`
+After all groups have been executed:
+- Run `<run-dir>/eval/` integration tests (if exists)
 - Parse [METRIC] from output
-- If integration fails, identify the likely task from the traceback and kickback to earliest dependency
-
-If no run-level eval/ exists, skip this step.
+- If integration fails, identify the likely group/task from the traceback
 
 ### 6. Report
 
 Summary table:
 
-| Task | Status | Tests | Notes |
-|------|--------|-------|-------|
-| #42 sec_ftd | PASS | 18/18 | |
-| #43 treasury | PASS | 21/21 | |
-| Integration | PASS | 5/5 | |
+| Group | Task | Status | Tests | Notes |
+|-------|------|--------|-------|-------|
+| short-intel | #9 yahoo_quotes | PASS | 8/8 | |
+| short-intel | #13 short_composite | PASS | 12/12 | |
+| short-intel | Integration | PASS | 3/3 | |
+| Full Integration | | PASS | 5/5 | |
 
-The agent's job ends at reporting. It does NOT close issues, merge code, or archive the directory. Archiving is a human action.
+The agent's job ends at reporting. It does NOT close issues, merge code, or archive the directory.
 
 ## Eval Hierarchy
 
 ```
-tasks/<id>/eval/   →  unit tests per task (must ALL pass first)
-eval/              →  integration tests across tasks (runs last, optional)
+tasks/<id>/eval/       →  per-task tests (interface contract)
+groups/<name>/eval/    →  group integration tests (vertical slice)
+eval/                  →  full integration tests (all groups)
 ```
 
-Task evals gate integration eval.
+Each level gates the next.
 
 ## Run Completion
 
 When the run finishes:
 1. Agent comments on each GitHub issue with results (if tasks came from GitHub)
 2. Agents do NOT close issues, merge code, or archive the run directory
-3. When the human is satisfied, they rename the directory (e.g., `sprint-1` → `sprint-1.done/`)
+3. When the human is satisfied, they rename the directory (e.g., `run-2` → `run-2.done/`)

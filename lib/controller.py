@@ -22,6 +22,7 @@ from typing import Any
 
 from lib.backends import BackendManager
 from lib.cache import Cache
+from lib.gateway_conditions import GATEWAY_CONDITIONS
 from lib.datastore import DataStore
 from lib.protocol_assembly import assemble_agent_briefing, assemble_subagent_briefing, get_workflow_state
 from lib.errors import (
@@ -922,6 +923,28 @@ class Controller:
                         "Review verdict is CHANGES_REQUESTED. "
                         "Fix issues and get a new review before passing checkpoint."
                     )
+            # Check config-defined conditions for this phase
+            if config:
+                phase_config = config.phases.get(current)
+                if phase_config:
+                    for condition in phase_config.conditions:
+                        cond_name = condition["name"]
+                        fn = GATEWAY_CONDITIONS.get(cond_name)
+                        if fn is None:
+                            raise WorkflowError(
+                                f"Unknown condition '{cond_name}' on phase '{current}'"
+                            )
+                        # Build context: condition params + workflow state
+                        context = dict(condition)
+                        context.pop("name", None)
+                        context.setdefault("cwd", state.get("experiment_dir", "."))
+                        context.setdefault("test_dir", state.get("eval_dir", "eval/"))
+                        context.setdefault("min_tests", 1)
+                        ok, msg = fn(**context)
+                        if not ok:
+                            raise WorkflowError(
+                                f"Condition '{cond_name}' not met: {msg}"
+                            )
             state[f"{current}_checkpoint_passed"] = datetime.now(timezone.utc).isoformat()
             return {"status": "checkpoint_passed", "phase": current}
 

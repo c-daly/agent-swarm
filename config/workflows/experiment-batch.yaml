@@ -16,7 +16,7 @@ phases:
     allowed_tool_categories: [FILE_READ, FILE_WRITE, CODE_QUERY, CODE_EDIT, FILE_SEARCH, SHELL_SAFE, WEB_RESEARCH]
     blocked_tools: []
     blocked_file_patterns: ["experiments/*/eval/**"]
-    eligible_agents: [implementer, reviewer, researcher]
+    eligible_agents: [implementer, reviewer, researcher, supervisor]
     checkpoint: false
 
   - name: gate

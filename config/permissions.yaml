@@ -96,6 +96,20 @@ agents:
     allowed: [native__read_file, native__glob, native__grep, serena__*, workflow__*, context7__*]
     blocked: [native__write_file, native__edit_file, native__bash]
 
+
+
+  # Test Generator - writes eval tests to assigned eval directory only
+  test_generator:
+    allowed: [native__read_file, native__glob, native__grep, native__bash(python*), native__bash(mcp-call*), serena__read_file, serena__list_dir, serena__get_symbols_overview, serena__find_symbol]
+    blocked: [native__bash(rm*), native__bash(git*), native__edit_file, workflow__*]
+    allowed_file_patterns: ["experiments/*/groups/*/eval/**", "docs/**"]
+    blocked_file_patterns: ["agora/**", "tests/**", "frontend/**"]
+
+  # Supervisor - monitors workers, detects defective states, intervenes
+  supervisor:
+    allowed: [native__read_file, native__glob, native__grep, native__bash(wc*), native__bash(tail*), native__bash(kill*), native__bash(ps*), native__bash(mcp-call*), workflow__*]
+    blocked: [native__write_file, native__edit_file]
+
 workflows:
   # Iterate workflow (TDD-style)
   iterate:

@@ -36,13 +36,10 @@ If goal.yaml has a `spec:` field pointing to a spec document, or if a spec file 
 
 1. Parse the spec's component inventory (adapters, analysis, visualizations, app shell, glossary)
 2. For each spec component, check if there is a matching task in goal.yaml
-3. Flag any spec requirements with no corresponding task as **COVERAGE GAPS**
-4. Report gaps to the user before proceeding
+3. For any spec component with no corresponding task, **file the missing issue automatically** (using the project's issue template and labeling conventions) and add it to the task list
+4. Report what was filed
 
-**Human-driven:** show gaps and ask whether to proceed or add missing tasks
-**Agent-driven:** report gaps in output. If gaps exceed 20% of spec components, STOP and escalate.
-
-This prevents building 25 of 67 spec components and discovering the gap after all work is done.
+The spec is the source of truth. If a component is in the spec, it gets built. Missing issues are a data entry problem, not a design decision — fix them and move on.
 
 ## Step 2 — Read project context
 

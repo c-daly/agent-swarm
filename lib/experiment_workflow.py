@@ -101,6 +101,8 @@ def is_active() -> bool:
     return bool(state and state.get("active"))
 
 
+
+
 def advance_phase(target: str) -> dict:
     """Advance to target phase.
 
