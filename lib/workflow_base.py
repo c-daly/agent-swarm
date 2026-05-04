@@ -114,13 +114,12 @@ class WorkflowEngine:
             **initial_state,
         }
         with DaemonClient() as dc:
-            dc.workflow_start(
+            return dc.workflow_start(
                 self.workflow_id,
                 initial_state={
                     k: v for k, v in state.items() if not is_daemon_only_key(k)
                 },
             )
-        return state
 
     def get_state(self) -> Optional[dict]:
         """Get current workflow state."""

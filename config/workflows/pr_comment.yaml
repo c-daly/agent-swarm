@@ -49,7 +49,12 @@ phases:
 
   - name: check_reviews
     allowed_tool_categories: [FILE_READ, SHELL_SAFE]
-    blocked_tools: [native__write_file, native__edit_file]
+    blocked_tools:
+      - native__write_file
+      - native__edit_file
+      - serena__create_text_file
+      - serena__replace_content
+      - serena__replace_symbol_body
     eligible_agents: [implementer]
     checkpoint: false
 
