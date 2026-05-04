@@ -1,0 +1,72 @@
+name: pr_comment
+description: "PR review comment workflow — understanding before fixing"
+initial_phase: understand
+terminal_phase: done
+max_iterations: 3
+max_agents: 2
+
+# Note: this YAML is a structural mirror of PR_COMMENT_DEFINITION in
+# lib/pr_comment_workflow.py. The daemon enforces phase existence and
+# transition validity from this file. The richer behavioral logic
+# (adversary_gate, required_outputs, conditional kickback) lives in the
+# Python WorkflowEngine and runs at the engine layer, not the daemon.
+
+phases:
+  - name: understand
+    allowed_tool_categories: [FILE_READ, FILE_SEARCH, CODE_QUERY]
+    blocked_tools:
+      - native__write_file
+      - native__edit_file
+      - native__bash
+      - serena__create_text_file
+      - serena__replace_content
+      - serena__replace_symbol_body
+    eligible_agents: [implementer]
+    checkpoint: true
+
+  - name: fix
+    allowed_tool_categories: [FILE_READ, FILE_WRITE, FILE_SEARCH, CODE_QUERY, CODE_EDIT, SHELL_SAFE]
+    blocked_tools: []
+    eligible_agents: [implementer]
+    checkpoint: true
+
+  - name: verify
+    allowed_tool_categories: [FILE_READ, FILE_SEARCH, CODE_QUERY, SHELL_SAFE]
+    blocked_tools:
+      - native__write_file
+      - native__edit_file
+      - serena__create_text_file
+      - serena__replace_content
+      - serena__replace_symbol_body
+    eligible_agents: [implementer]
+    checkpoint: false
+
+  - name: push
+    allowed_tool_categories: [SHELL_SAFE]
+    blocked_tools: []
+    eligible_agents: [implementer]
+    checkpoint: false
+
+  - name: check_reviews
+    allowed_tool_categories: [FILE_READ, SHELL_SAFE]
+    blocked_tools:
+      - native__write_file
+      - native__edit_file
+      - serena__create_text_file
+      - serena__replace_content
+      - serena__replace_symbol_body
+    eligible_agents: [implementer]
+    checkpoint: false
+
+  - name: done
+    allowed_tool_categories: []
+    blocked_tools: []
+    eligible_agents: []
+    checkpoint: false
+
+transitions:
+  understand: [fix]
+  fix: [verify]
+  verify: [push, fix]
+  push: [check_reviews]
+  check_reviews: [done, understand]

@@ -96,7 +96,13 @@ class WorkflowEngine:
         self._pending_objections: list = []
 
     def start(self, task: str, **initial_state) -> dict:
-        """Start the workflow."""
+        """Start the workflow.
+
+        Calls daemon's workflow_start to create the workflow_state entry
+        on the daemon side, then sets non-daemon-managed values. Subsequent
+        state updates use _save_state which routes phase changes through
+        workflow_advance_phase (which requires the workflow to already exist).
+        """
         state = {
             "workflow_type": self.definition.name,
             "workflow_id": self.workflow_id,
@@ -107,8 +113,13 @@ class WorkflowEngine:
             "max_iterations": self.definition.max_iterations,
             **initial_state,
         }
-        self._save_state(state)
-        return state
+        with DaemonClient() as dc:
+            return dc.workflow_start(
+                self.workflow_id,
+                initial_state={
+                    k: v for k, v in state.items() if not is_daemon_only_key(k)
+                },
+            )
 
     def get_state(self) -> Optional[dict]:
         """Get current workflow state."""
