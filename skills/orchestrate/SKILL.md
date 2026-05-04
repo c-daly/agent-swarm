@@ -165,16 +165,21 @@ Preferred → fallback:
 ### PR Lifecycle
 - Group complete → push branch: `git push origin <branch>`
 - Open PR: `gh pr create --base main --head <branch>`
-- Poll comments: `gh api repos/<owner>/<repo>/pulls/<n>/comments`
-- Each comment → new task (same group, depends on original)
+- Poll review threads: `gh api graphql -f query='{ repository(owner:"<owner>", name:"<repo>") { pullRequest(number:<n>) { reviewThreads(first:100) { pageInfo { hasNextPage endCursor } nodes { id isResolved comments(first:100) { nodes { body author { login } } } } } } } }'`
+  - `comments(first:100)` captures full thread context (later replies, clarifications), not just the opening comment
+  - If `pageInfo.hasNextPage` is true (PR has >100 review threads — rare), paginate using `reviewThreads(first:100, after:"<endCursor>")` until exhausted before evaluating stop condition #3
+- Each unresolved thread → new task (same group, depends on original)
+- Task description MUST include the comment text AND the directive: "After addressing, mark the review thread resolved via `gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "<thread-id>"}) { thread { isResolved } } }'`"
 - Append to queue → dispatch when unblocked
+- Subagent's definition-of-done for a comment-task: code change pushed AND review thread marked resolved (both required)
+- Bot/automated review comments (Copilot, etc.) get the same treatment — respond with code change OR a reply explaining why no change, then mark resolved
 
 ## Stop Condition
 
 ALL true simultaneously:
 1. queue empty (all complete)
 2. no agents in flight
-3. no unaddressed PR review comments
+3. **all PR review threads marked `isResolved: true`** (not just addressed in code — explicitly resolved on GitHub)
 4. working tree clean
 5. every group has PR
 
