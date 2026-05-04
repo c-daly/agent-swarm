@@ -174,6 +174,19 @@ Preferred → fallback:
 - Subagent's definition-of-done for a comment-task: code change pushed AND review thread marked resolved (both required)
 - Bot/automated review comments (Copilot, etc.) get the same treatment — respond with code change OR a reply explaining why no change, then mark resolved
 
+#### Polling discipline (required)
+
+After PR creation, automated reviewers (Copilot, gemini-code-assist, greptile, etc.) take 1–5 minutes to post review threads. Querying once immediately after PR creation will return zero threads and falsely satisfy stop condition #3.
+
+Poll with this discipline:
+- Query the reviewThreads endpoint at **30-second intervals** starting at PR creation.
+- Track thread count between polls.
+- Continue polling until **either**:
+  - (a) thread count is **stable for 5 consecutive minutes** (no new threads appearing), OR
+  - (b) **15 minutes have elapsed** since PR creation (hard cap).
+- Only after the polling phase ends should you evaluate stop condition #3.
+- During polling, dispatch comment-resolution tasks for any unresolved threads as they appear — don't batch until the end.
+
 ## Stop Condition
 
 ALL true simultaneously:
