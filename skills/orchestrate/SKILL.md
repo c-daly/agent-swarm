@@ -165,7 +165,9 @@ Preferred → fallback:
 ### PR Lifecycle
 - Group complete → push branch: `git push origin <branch>`
 - Open PR: `gh pr create --base main --head <branch>`
-- Poll review threads: `gh api graphql -f query='{ repository(owner:"<owner>", name:"<repo>") { pullRequest(number:<n>) { reviewThreads(first:100) { nodes { id isResolved comments(first:1) { nodes { body author { login } } } } } } } }'`
+- Poll review threads: `gh api graphql -f query='{ repository(owner:"<owner>", name:"<repo>") { pullRequest(number:<n>) { reviewThreads(first:100) { pageInfo { hasNextPage endCursor } nodes { id isResolved comments(first:100) { nodes { body author { login } } } } } } } }'`
+  - `comments(first:100)` captures full thread context (later replies, clarifications), not just the opening comment
+  - If `pageInfo.hasNextPage` is true (PR has >100 review threads — rare), paginate using `reviewThreads(first:100, after:"<endCursor>")` until exhausted before evaluating stop condition #3
 - Each unresolved thread → new task (same group, depends on original)
 - Task description MUST include the comment text AND the directive: "After addressing, mark the review thread resolved via `gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "<thread-id>"}) { thread { isResolved } } }'`"
 - Append to queue → dispatch when unblocked
