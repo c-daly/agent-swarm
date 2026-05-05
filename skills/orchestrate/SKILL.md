@@ -165,7 +165,11 @@ Preferred → fallback:
 ### PR Lifecycle
 - Group complete → push branch: `git push origin <branch>`
 - Open PR: `gh pr create --base main --head <branch>`
-- Poll review threads: `gh api graphql -f query='{ repository(owner:"<owner>", name:"<repo>") { pullRequest(number:<n>) { reviewThreads(first:100) { pageInfo { hasNextPage endCursor } nodes { id isResolved comments(first:100) { nodes { body author { login } } } } } } } }'`
+- Poll review threads using `gh api graphql -f query='...' --jq '...'`:
+  ```
+  gh api graphql -f query='{ repository(owner:"<owner>", name:"<repo>") { pullRequest(number:<n>) { reviewThreads(first:100) { pageInfo { hasNextPage endCursor } nodes { id isResolved comments(first:100) { nodes { body author { login } } } } } } } }' --jq '.data.repository.pullRequest.reviewThreads.nodes[] | {id, isResolved}'
+  ```
+  - **Use `gh api ... --jq` (gh's built-in --jq), not a separate `jq` pipe.** Bot review bodies frequently contain markdown with literal newline characters; `gh api graphql` emits these unescaped in JSON string values (technically invalid per JSON spec). External `jq` rejects it with "control characters must be escaped"; gh's internal parser is lenient and accepts it. Piping `gh api graphql ... | jq ...` will silently return zero results when bot reviews are present.
   - `comments(first:100)` captures full thread context (later replies, clarifications), not just the opening comment
   - If `pageInfo.hasNextPage` is true (PR has >100 review threads — rare), paginate using `reviewThreads(first:100, after:"<endCursor>")` until exhausted before evaluating stop condition #3
 - Each unresolved thread → new task (same group, depends on original)

@@ -77,27 +77,44 @@ sync_all() {
 sync_selective() {
     # Copy each given file from dev to cache, preserving relative path.
     # No --delete; cache-only files (which shouldn't exist, but might) are untouched.
-    local file rel dst
+    #
+    # Path handling: each input is canonicalized with `realpath -m` (handles
+    # both absolute and cwd-relative inputs, normalizes .. segments). The
+    # canonical path is then checked against SOURCE_DIR — string-prefix
+    # match on canonical paths cannot be defeated by .. since the canonical
+    # form has no .. segments.
+    #
+    # SYNCED_RELS is set as a side effect: a newline-separated list of
+    # repo-relative paths that were copied. Used by the caller to drive
+    # needs_daemon_restart with canonical paths instead of the raw $@
+    # (which can be cwd-relative and miss path-prefix matches).
+    local file abs rel dst
+    SYNCED_RELS=""
     for file in "$@"; do
-        # Resolve to absolute path; require it to be inside SOURCE_DIR
-        if [[ "$file" = /* ]]; then
-            local abs="$file"
-        else
-            local abs="$SOURCE_DIR/$file"
+        # Existence check first — must reference a real file (relative to cwd or absolute)
+        if [ ! -e "$file" ]; then
+            die "File not found: $file"
         fi
+        # Canonicalize: -m tolerates non-existent leaves (we already checked above; -m
+        # just keeps us from failing on edge cases like trailing slashes).
+        abs="$(realpath -m "$file")"
         if [ ! -f "$abs" ]; then
-            die "File not found in dev: $abs"
+            die "Not a regular file: $file ($abs)"
         fi
-        case "$abs" in
-            "$SOURCE_DIR"/*) rel="${abs#$SOURCE_DIR/}" ;;
-            *) die "File outside dev path (refusing): $abs" ;;
-        esac
+        # Boundary check: canonical path must be inside SOURCE_DIR.
+        # Append /  to SOURCE_DIR in the comparison to prevent a path like
+        # /home/.../agent-swarm-evil from matching /home/.../agent-swarm.
+        if [[ "$abs" != "$SOURCE_DIR"/* ]]; then
+            die "File outside dev path (refusing): $file → $abs"
+        fi
+        rel="${abs#$SOURCE_DIR/}"
         dst="$CACHE_DIR/$rel"
         mkdir -p "$(dirname "$dst")"
         cp -p "$abs" "$dst"
         echo "  $rel"
+        SYNCED_RELS+="$rel"$'\n'
     done
-    echo "Synced (selective, ${#@} files): $SOURCE_DIR → $CACHE_DIR"
+    echo "Synced (selective, $# files): $SOURCE_DIR → $CACHE_DIR"
 }
 
 rewrite_paths() {
@@ -129,9 +146,12 @@ needs_daemon_restart() {
 }
 
 prompt_restart() {
+    # Caller decides when to invoke this:
+    #   - selective mode: only when needs_daemon_restart returns true
+    #   - full-sync mode: unconditionally (full sync writes every daemon-loaded file)
     echo ""
-    echo "==> Changed files include daemon-loaded paths (lib/, config/workflows/, etc.)."
-    echo "    Daemon restart is required for changes to take effect."
+    echo "==> Daemon restart is required for changes to lib/, config/workflows/,"
+    echo "    config/permissions.yaml, or hooks/hooks.json to take effect."
     if [ -t 0 ]; then
         read -p "    Restart now? [y/N] " ans
         if [[ "$ans" =~ ^[Yy]$ ]]; then
@@ -161,15 +181,19 @@ fi
 
 if [ $# -gt 0 ]; then
     # Selective-file sync mode
-    sync_selective "$@"
+    sync_selective "$@"   # sets SYNCED_RELS
     rewrite_paths
-    if needs_daemon_restart "$@"; then
+    # Pass canonical relative paths to the daemon-restart heuristic, NOT raw $@
+    # (raw $@ can be cwd-relative and miss path-prefix matches).
+    if [ -n "$SYNCED_RELS" ] && needs_daemon_restart $SYNCED_RELS; then
         prompt_restart
     fi
     echo "Done."
 else
-    # Full sync mode (default)
+    # Full sync mode (default) — by definition writes every daemon-loaded file,
+    # so the restart prompt is always warranted.
     sync_all
     rewrite_paths
-    echo "Done. Restart Claude Code if hooks.json changed."
+    prompt_restart
+    echo "Done."
 fi
