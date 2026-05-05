@@ -165,7 +165,11 @@ Preferred → fallback:
 ### PR Lifecycle
 - Group complete → push branch: `git push origin <branch>`
 - Open PR: `gh pr create --base main --head <branch>`
-- Poll review threads: `gh api graphql -f query='{ repository(owner:"<owner>", name:"<repo>") { pullRequest(number:<n>) { reviewThreads(first:100) { pageInfo { hasNextPage endCursor } nodes { id isResolved comments(first:100) { nodes { body author { login } } } } } } } }'`
+- Poll review threads using `gh api graphql -f query='...' --jq '...'`:
+  ```
+  gh api graphql -f query='{ repository(owner:"<owner>", name:"<repo>") { pullRequest(number:<n>) { reviewThreads(first:100) { pageInfo { hasNextPage endCursor } nodes { id isResolved comments(first:100) { nodes { body author { login } } } } } } } }' --jq '.data.repository.pullRequest.reviewThreads.nodes[] | {id, isResolved}'
+  ```
+  - **Use `gh api ... --jq` (gh's built-in --jq), not a separate `jq` pipe.** Bot review bodies frequently contain markdown with literal newline characters; `gh api graphql` emits these unescaped in JSON string values (technically invalid per JSON spec). External `jq` rejects it with "control characters must be escaped"; gh's internal parser is lenient and accepts it. Piping `gh api graphql ... | jq ...` will silently return zero results when bot reviews are present.
   - `comments(first:100)` captures full thread context (later replies, clarifications), not just the opening comment
   - If `pageInfo.hasNextPage` is true (PR has >100 review threads — rare), paginate using `reviewThreads(first:100, after:"<endCursor>")` until exhausted before evaluating stop condition #3
 - Each unresolved thread → new task (same group, depends on original)
@@ -173,6 +177,19 @@ Preferred → fallback:
 - Append to queue → dispatch when unblocked
 - Subagent's definition-of-done for a comment-task: code change pushed AND review thread marked resolved (both required)
 - Bot/automated review comments (Copilot, etc.) get the same treatment — respond with code change OR a reply explaining why no change, then mark resolved
+
+#### Polling discipline (required)
+
+After PR creation, automated reviewers (Copilot, gemini-code-assist, greptile, etc.) take 1–5 minutes to post review threads. Querying once immediately after PR creation will return zero threads and falsely satisfy stop condition #3.
+
+Poll with this discipline:
+- Query the reviewThreads endpoint at **30-second intervals** starting at PR creation.
+- Track thread count between polls.
+- Continue polling until **either**:
+  - (a) thread count is **stable for 5 consecutive minutes** (no new threads appearing), OR
+  - (b) **15 minutes have elapsed** since PR creation (hard cap).
+- Only after the polling phase ends should you evaluate stop condition #3.
+- During polling, dispatch comment-resolution tasks for any unresolved threads as they appear — don't batch until the end.
 
 ## Stop Condition
 

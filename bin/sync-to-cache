@@ -1,16 +1,30 @@
 #!/usr/bin/env bash
 # sync-to-cache — Copy plugin source to Claude Code's cache directory.
 #
-# Usage:
-#   bin/sync-to-cache          # sync all plugin files
-#   bin/sync-to-cache --undo   # restore cache from symlink state
+# DEV/CACHE DISCIPLINE — read before changing this script.
 #
-# Call this after editing source files to push changes to the cache
-# where Claude Code actually reads hooks, skills, settings, etc.
+#   The dev path (~/.claude/plugins/agent-swarm/) is the only place edits
+#   happen. The cache path (~/.claude/plugins/cache/.../1.0.0/) is NEVER
+#   edited directly — it's a build output. Sync goes dev → cache only.
+#   It is NEVER bidirectional.
+#
+#   If you discover cache-vs-dev divergence, that means someone edited
+#   cache directly (bug). Treat as a one-time manual backport (cache → dev,
+#   commit to git), then re-establish dev as canonical. Do NOT add a
+#   --from-cache mode or any feature that legitimizes cache-side edits.
+#
+# Usage:
+#   bin/sync-to-cache                       # sync ALL plugin files (rsync --delete)
+#   bin/sync-to-cache <file> [<file> ...]   # sync only the given files (no --delete)
+#   bin/sync-to-cache --undo                # restore cache from symlink state
 #
 # After syncing, rewrites ${AGENT_SWARM_ROOT} references in cached
 # hooks.json and .mcp.json to absolute paths so they work regardless
 # of whether the env var is set.
+#
+# When changes touch lib/ or config/workflows/, the script prompts
+# whether to restart the daemon (those paths require daemon restart;
+# skills/, hooks/, agents/ etc. take effect on next session).
 
 set -euo pipefail
 
@@ -28,7 +42,7 @@ undo_symlink() {
     fi
 }
 
-sync_files() {
+sync_all() {
     mkdir -p "$CACHE_DIR"
 
     rsync -a --delete \
@@ -57,7 +71,50 @@ sync_files() {
         --exclude='.claude/settings.local.json' \
         "$SOURCE_DIR/" "$CACHE_DIR/"
 
-    echo "Synced: $SOURCE_DIR → $CACHE_DIR"
+    echo "Synced (full): $SOURCE_DIR → $CACHE_DIR"
+}
+
+sync_selective() {
+    # Copy each given file from dev to cache, preserving relative path.
+    # No --delete; cache-only files (which shouldn't exist, but might) are untouched.
+    #
+    # Path handling: each input is canonicalized with `realpath -m` (handles
+    # both absolute and cwd-relative inputs, normalizes .. segments). The
+    # canonical path is then checked against SOURCE_DIR — string-prefix
+    # match on canonical paths cannot be defeated by .. since the canonical
+    # form has no .. segments.
+    #
+    # SYNCED_RELS is set as a side effect: a newline-separated list of
+    # repo-relative paths that were copied. Used by the caller to drive
+    # needs_daemon_restart with canonical paths instead of the raw $@
+    # (which can be cwd-relative and miss path-prefix matches).
+    local file abs rel dst
+    SYNCED_RELS=""
+    for file in "$@"; do
+        # Existence check first — must reference a real file (relative to cwd or absolute)
+        if [ ! -e "$file" ]; then
+            die "File not found: $file"
+        fi
+        # Canonicalize: -m tolerates non-existent leaves (we already checked above; -m
+        # just keeps us from failing on edge cases like trailing slashes).
+        abs="$(realpath -m "$file")"
+        if [ ! -f "$abs" ]; then
+            die "Not a regular file: $file ($abs)"
+        fi
+        # Boundary check: canonical path must be inside SOURCE_DIR.
+        # Append /  to SOURCE_DIR in the comparison to prevent a path like
+        # /home/.../agent-swarm-evil from matching /home/.../agent-swarm.
+        if [[ "$abs" != "$SOURCE_DIR"/* ]]; then
+            die "File outside dev path (refusing): $file → $abs"
+        fi
+        rel="${abs#$SOURCE_DIR/}"
+        dst="$CACHE_DIR/$rel"
+        mkdir -p "$(dirname "$dst")"
+        cp -p "$abs" "$dst"
+        echo "  $rel"
+        SYNCED_RELS+="$rel"$'\n'
+    done
+    echo "Synced (selective, $# files): $SOURCE_DIR → $CACHE_DIR"
 }
 
 rewrite_paths() {
@@ -72,11 +129,46 @@ rewrite_paths() {
     done
 }
 
+needs_daemon_restart() {
+    # Returns 0 (true) if any of the given paths suggest daemon restart is needed.
+    # Daemon-loaded paths: lib/, config/workflows/, config/permissions.yaml, hooks/hooks.json
+    # Hot-loaded paths: skills/, agents/, README.md, CLAUDE.md, hooks/*.md, hooks/*.py (per-call)
+    local f
+    for f in "$@"; do
+        case "$f" in
+            lib/*|*/lib/*) return 0 ;;
+            config/workflows/*|*/config/workflows/*) return 0 ;;
+            config/permissions.yaml|*/config/permissions.yaml) return 0 ;;
+            hooks/hooks.json|*/hooks/hooks.json) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+prompt_restart() {
+    # Caller decides when to invoke this:
+    #   - selective mode: only when needs_daemon_restart returns true
+    #   - full-sync mode: unconditionally (full sync writes every daemon-loaded file)
+    echo ""
+    echo "==> Daemon restart is required for changes to lib/, config/workflows/,"
+    echo "    config/permissions.yaml, or hooks/hooks.json to take effect."
+    if [ -t 0 ]; then
+        read -p "    Restart now? [y/N] " ans
+        if [[ "$ans" =~ ^[Yy]$ ]]; then
+            "$SOURCE_DIR/bin/start-daemon" --restart 2>&1 || echo "    (start-daemon --restart failed; restart manually)"
+        else
+            echo "    Skipped. Restart manually with: $SOURCE_DIR/bin/start-daemon --restart"
+        fi
+    else
+        echo "    Non-interactive shell; restart manually with: $SOURCE_DIR/bin/start-daemon --restart"
+    fi
+}
+
 # --- main ---
 
 if [ "${1:-}" = "--undo" ]; then
     undo_symlink
-    sync_files
+    sync_all
     rewrite_paths
     echo "Cache restored. Restart Claude Code to pick up changes."
     exit 0
@@ -87,6 +179,21 @@ if [ -L "$CACHE_DIR" ]; then
     undo_symlink
 fi
 
-sync_files
-rewrite_paths
-echo "Done. Restart Claude Code if hooks.json changed."
+if [ $# -gt 0 ]; then
+    # Selective-file sync mode
+    sync_selective "$@"   # sets SYNCED_RELS
+    rewrite_paths
+    # Pass canonical relative paths to the daemon-restart heuristic, NOT raw $@
+    # (raw $@ can be cwd-relative and miss path-prefix matches).
+    if [ -n "$SYNCED_RELS" ] && needs_daemon_restart $SYNCED_RELS; then
+        prompt_restart
+    fi
+    echo "Done."
+else
+    # Full sync mode (default) — by definition writes every daemon-loaded file,
+    # so the restart prompt is always warranted.
+    sync_all
+    rewrite_paths
+    prompt_restart
+    echo "Done."
+fi
