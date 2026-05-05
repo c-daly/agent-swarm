@@ -247,6 +247,51 @@ def discover_handoffs() -> str:
         return ""
 
 
+def discover_resume_brief() -> str:
+    """Call continuity's resume-brief CLI when available and cwd matches a project.
+
+    Looks for `~/.claude/plugins/continuity/bin/continuity` on disk. If not
+    present, returns empty string (graceful degradation — continuity is an
+    optional peer plugin).
+
+    Determines current project name from cwd basename. If the current vault
+    has no `10-projects/<basename>/` directory, continuity returns a 'not
+    found' message which we surface as-is (it's still useful — tells the user
+    why no brief is appearing).
+
+    Vault path is read from CONTINUITY_VAULT_DIR / VAULT_DIR env vars by
+    continuity itself; this hook does not need to know the vault location.
+    """
+    try:
+        continuity_bin = Path.home() / ".claude" / "plugins" / "continuity" / "bin" / "continuity"
+        if not continuity_bin.is_file():
+            return ""
+
+        cwd = Path.cwd()
+        # Project name = cwd basename (matches the CLAUDE.md continuity convention)
+        project = cwd.name
+        if not project:
+            return ""
+
+        import subprocess
+        result = subprocess.run(
+            [str(continuity_bin), "resume-brief", project],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return ""
+        brief = result.stdout.strip()
+        # Truncate if very long (mirrors handoff truncation pattern)
+        if len(brief) > 4000:
+            brief = brief[:4000] + "\n... (truncated)"
+        return brief
+    except Exception as e:
+        log_warning(f"Continuity resume-brief discovery failed: {e}")
+        return ""
+
+
 def list_serena_memories() -> list[str]:
     """List available Serena memories."""
     memories_dir = plugin_dir / ".serena" / "memories"
@@ -342,6 +387,10 @@ def main():
         # 7. Agent briefing (from router)
         briefing = get_agent_briefing()
 
+        # 8. Continuity resume brief (vault-driven, when continuity is installed
+        #    and cwd resolves to a known vault project)
+        resume_brief = discover_resume_brief()
+
         # Build output
         messages = []
         
@@ -353,6 +402,8 @@ def main():
             messages.append(otel_msg)
         if permission_context:
             messages.append(f"Workflow Permissions:\n{permission_context}")
+        if resume_brief:
+            messages.append(resume_brief)
         if handoff_context:
             messages.append(handoff_context)
         if memories:
