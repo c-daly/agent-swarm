@@ -72,13 +72,21 @@ class TestAutoStartSwap:
         fake_dc = MagicMock()
         fake_dc.__enter__ = MagicMock(return_value=fake_dc)
         fake_dc.__exit__ = MagicMock(return_value=False)
-        fake_dc.workflow_is_active = MagicMock(return_value=False)
         fake_dc.workflow_start = MagicMock(return_value={})
 
-        with patch.dict("sys.modules", {"daemon_client": MagicMock(DaemonClient=lambda: fake_dc)}):
+        fake_pq = MagicMock()
+        fake_pq.get_active_workflow_id = MagicMock(return_value=None)
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "daemon_client": MagicMock(DaemonClient=lambda: fake_dc),
+                "permission_query": fake_pq,
+            },
+        ):
             mod.auto_start_workflow()
 
-        fake_dc.workflow_is_active.assert_called_once_with("simple")
+        fake_pq.get_active_workflow_id.assert_called_once_with()
         fake_dc.workflow_start.assert_called_once_with(
             "simple", initial_state={"task": "Auto-started simple workflow"}
         )
@@ -94,11 +102,20 @@ class TestAutoStartSwap:
         fake_dc = MagicMock()
         fake_dc.__enter__ = MagicMock(return_value=fake_dc)
         fake_dc.__exit__ = MagicMock(return_value=False)
-        fake_dc.workflow_is_active = MagicMock(return_value=True)
         fake_dc.workflow_start = MagicMock(return_value={})
 
-        with patch.dict("sys.modules", {"daemon_client": MagicMock(DaemonClient=lambda: fake_dc)}):
+        fake_pq = MagicMock()
+        fake_pq.get_active_workflow_id = MagicMock(return_value="iterate")
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "daemon_client": MagicMock(DaemonClient=lambda: fake_dc),
+                "permission_query": fake_pq,
+            },
+        ):
             mod.auto_start_workflow()
 
-        fake_dc.workflow_is_active.assert_called_once_with("simple")
+        fake_pq.get_active_workflow_id.assert_called_once_with()
         fake_dc.workflow_start.assert_not_called()
+        fake_dc.__enter__.assert_not_called()

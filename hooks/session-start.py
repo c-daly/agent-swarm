@@ -167,12 +167,14 @@ def reset_enforcement_counters(agent_id: str | None = None):
 
 
 def auto_start_workflow():
-    """Auto-start simple workflow if none active."""
+    """Auto-start simple workflow if no workflow is currently active."""
     try:
         from daemon_client import DaemonClient
+        from permission_query import get_active_workflow_id
+        if get_active_workflow_id() is not None:
+            return
         with DaemonClient() as dc:
-            if not dc.workflow_is_active("simple"):
-                dc.workflow_start("simple", initial_state={"task": "Auto-started simple workflow"})
+            dc.workflow_start("simple", initial_state={"task": "Auto-started simple workflow"})
     except Exception as e:
         log_debug(f"Auto-start workflow failed: {e}")
 

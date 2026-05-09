@@ -2,8 +2,6 @@ name: simple
 description: "Lightweight default workflow — plan before writing, narrow verification gate"
 initial_phase: plan
 terminal_phase: done
-max_iterations: 10
-max_agents: 1
 
 phases:
   - name: plan
@@ -29,6 +27,7 @@ phases:
     blocked_tools:
       - native__write_file
       - native__edit_file
+      - native__bash
       - serena__create_text_file
       - serena__replace_content
       - serena__replace_symbol_body
