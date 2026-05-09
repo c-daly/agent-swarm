@@ -1,0 +1,46 @@
+name: simple
+description: "Lightweight default workflow — plan before writing, narrow verification gate"
+initial_phase: plan
+terminal_phase: done
+
+phases:
+  - name: plan
+    allowed_tool_categories: [FILE_READ, FILE_SEARCH, CODE_QUERY]
+    blocked_tools:
+      - native__write_file
+      - native__edit_file
+      - native__bash
+      - serena__create_text_file
+      - serena__replace_content
+      - serena__replace_symbol_body
+    eligible_agents: [implementer]
+    checkpoint: true
+
+  - name: work
+    allowed_tool_categories: [FILE_READ, FILE_WRITE, FILE_SEARCH, CODE_QUERY, CODE_EDIT, SHELL_SAFE]
+    blocked_tools: []
+    eligible_agents: [implementer]
+    checkpoint: false
+
+  - name: verify
+    allowed_tool_categories: [FILE_READ, FILE_SEARCH, CODE_QUERY, SHELL_SAFE]
+    blocked_tools:
+      - native__write_file
+      - native__edit_file
+      - native__bash
+      - serena__create_text_file
+      - serena__replace_content
+      - serena__replace_symbol_body
+    eligible_agents: [implementer]
+    checkpoint: true
+
+  - name: done
+    allowed_tool_categories: []
+    blocked_tools: []
+    eligible_agents: []
+    checkpoint: false
+
+transitions:
+  plan: [work]
+  work: [verify]
+  verify: [done, work]
