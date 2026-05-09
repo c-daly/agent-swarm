@@ -167,12 +167,12 @@ def reset_enforcement_counters(agent_id: str | None = None):
 
 
 def auto_start_workflow():
-    """Auto-start implementer workflow if none active."""
+    """Auto-start simple workflow if none active."""
     try:
-        from implementer_workflow import ImplementerWorkflow
-        wf = ImplementerWorkflow()
-        if not wf.is_active():
-            wf.start("Auto-started implementer workflow")
+        from daemon_client import DaemonClient
+        with DaemonClient() as dc:
+            if not dc.workflow_is_active("simple"):
+                dc.workflow_start("simple", initial_state={"task": "Auto-started simple workflow"})
     except Exception as e:
         log_debug(f"Auto-start workflow failed: {e}")
 
