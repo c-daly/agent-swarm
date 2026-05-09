@@ -204,3 +204,18 @@ workflows:
     decide:
       allowed: [native__read_file, native__glob, native__grep]
       blocked: [native__write_file, native__edit_file, native__bash]
+
+  # Simple workflow — lightweight default
+  simple:
+    plan:
+      allowed: [native__read_file, native__glob, native__grep, serena__read_file, serena__find_file, serena__search_for_pattern, serena__list_dir, serena__get_symbols_overview, serena__find_symbol, workflow__*]
+      blocked: [native__write_file, native__edit_file, native__bash, serena__create_text_file, serena__replace_content, serena__replace_symbol_body]
+    work:
+      allowed: [native__write_file, native__edit_file, native__read_file, native__glob, native__grep, native__bash, serena__*]
+      blocked: []
+    verify:
+      allowed: [native__read_file, native__glob, native__grep, native__bash(pytest*), native__bash(python*), native__bash(ruff*), native__bash(git*), serena__read_file, serena__find_file, serena__search_for_pattern]
+      blocked: [native__write_file, native__edit_file, serena__create_text_file, serena__replace_content, serena__replace_symbol_body]
+    done:
+      allowed: []
+      blocked: []
