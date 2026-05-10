@@ -10,7 +10,7 @@ Claude Code plugin that enforces phase-gated workflows for AI-assisted developme
 2. `<vault>/10-projects/agent-swarm/open-recommendations.md` — outstanding follow-ups with status flags
 3. `<vault>/10-projects/agent-swarm/experiments/workflow-runs.md` — measured experiment record (append-only dated runs)
 4. `<vault>/10-projects/agent-swarm/experiments/run-context/` — per-run context snapshots
-5. `~/.claude/projects/-Users-cdaly-projects-agent-swarm/memory/MEMORY.md` — auto-memory index
+5. `~/.claude/projects/-Users-cdaly-projects-agent-swarm/memory/MEMORY.md` — auto-memory index *(machine-specific path; encodes this dev tree's cwd)*
 
 ## Memory topics (use these in observation captures)
 
@@ -37,7 +37,7 @@ Trigger: every session, before responding to the first user message.
 
 1. `tail -120 <vault>/10-projects/agent-swarm/narrative.md` — read the latest 1-2 dated entries.
 2. Skim `<vault>/10-projects/agent-swarm/open-recommendations.md` for `[~]` (in progress) and `[ ]` (open) items related to the cwd / area the user is asking about.
-3. Read `~/.claude/projects/-Users-cdaly-projects-agent-swarm/memory/MEMORY.md` — the auto-memory index, not bodies. Pull a body only when the index entry is relevant.
+3. Read `~/.claude/projects/-Users-cdaly-projects-agent-swarm/memory/MEMORY.md` — the auto-memory index, not bodies. Pull a body only when the index entry is relevant. *(Path encodes the cwd of this dev tree — `-Users-cdaly-projects-agent-swarm` for this machine. If you're on a different machine, derive the equivalent: `~/.claude/projects/<encoded-cwd>/memory/MEMORY.md`.)*
 4. Briefly acknowledge what state is being picked up from in the first response (e.g., "picking up from the simple-workflow PR93 merge; bin/ infra follow-ups still open").
 
 ## Task completion protocol
@@ -49,7 +49,7 @@ Trigger: when the user signals stopping ("this is done", "good for now", "wrappi
 1. Append a dated narrative entry to `<vault>/10-projects/agent-swarm/narrative.md` summarizing what shipped — commits, PRs, decisions, validation steps.
 2. Update `<vault>/10-projects/agent-swarm/open-recommendations.md`: mark resolved items with `[x] *Done <date>*`; append new follow-ups discovered.
 3. Save feedback / project memories per the auto-memory rules already in the system prompt (don't duplicate vault entries — memories are for *cross-conversation* signals like preferences and decisions; vault entries are project narrative).
-4. **Sync the vault.** `cd <vault> && git add 10-projects/agent-swarm/{narrative,open-recommendations}.md && git commit && git push`. Don't skip — the vault is the durable record across sessions and machines.
+4. **Sync the vault.** `cd <vault> && git add 10-projects/agent-swarm/{narrative,open-recommendations}.md && git commit -m "agent-swarm: <one-line summary of what shipped>" && git push`. Always provide `-m` (Claude's shell is non-interactive — no `-m` will hang at the editor). Don't skip the sync — the vault is the durable record across sessions and machines.
 
 ## Local CLAUDE.md files
 

@@ -25,7 +25,7 @@ When you add a new YAML here, you MUST also:
 2. Add a peer block under `workflows:` in `config/permissions.yaml` defining per-phase `allowed`/`blocked` tool lists.
 3. Restart the daemon (`bin/start-daemon` is idempotent — kill + restart). The daemon loads workflow configs once at startup; no hot-reload.
 
-PR #93 fix `75be6c2` closed the `_KNOWN_WORKFLOWS` gap for `simple`. **The same gap still applies to `develop`, `experiment`, `orchestrate`, `pr_review`** — tracked in `<vault>/10-projects/agent-swarm/open-recommendations.md`. Better long-term fix: derive `_KNOWN_WORKFLOWS` dynamically from the daemon's loaded configs.
+PR #93 fix `75be6c2` closed the `_KNOWN_WORKFLOWS` gap for `simple`. **The same gap still applies to `develop`, `experiment`, `orchestrate`** — tracked in `<vault>/10-projects/agent-swarm/open-recommendations.md`. Better long-term fix: derive `_KNOWN_WORKFLOWS` dynamically from the daemon's loaded configs.
 
 ## Existing workflows (for reference)
 
