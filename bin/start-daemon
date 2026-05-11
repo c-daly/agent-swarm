@@ -16,6 +16,37 @@ DAEMON_SCRIPT = ROOT / "lib" / "daemon.py"
 LOG_DIR = ROOT / "logs"
 
 
+def resolve_interpreter() -> str:
+    """Resolve a Python interpreter that has project deps installed.
+
+    Order:
+      1. ROOT/.venv/bin/python (poetry default venv-in-project)
+      2. `poetry env info --executable` (out-of-tree venvs)
+      3. sys.executable (final fallback)
+
+    sys.executable can be a bare system Python without PyYAML etc.,
+    which makes the daemon fail to start. Prefer the project venv.
+    """
+    venv_python = ROOT / ".venv" / "bin" / "python"
+    if venv_python.is_file():
+        return str(venv_python)
+    try:
+        result = subprocess.run(
+            ["poetry", "env", "info", "--executable"],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            path = result.stdout.strip()
+            if path and Path(path).is_file():
+                return path
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return sys.executable
+
+
 def main() -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -38,7 +69,7 @@ def main() -> None:
 
     with open(log_out, "a") as out, open(log_err, "a") as err:
         subprocess.Popen(
-            [sys.executable, str(DAEMON_SCRIPT)],
+            [resolve_interpreter(), str(DAEMON_SCRIPT)],
             stdout=out,
             stderr=err,
             start_new_session=True,
