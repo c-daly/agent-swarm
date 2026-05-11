@@ -6,6 +6,7 @@ or manually by the user. Starts lib/daemon.py as a detached process.
 """
 
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -48,32 +49,80 @@ def resolve_interpreter() -> str:
     return sys.executable
 
 
+def _port_in_use(port: int, connect_timeout: float = 1.0) -> bool:
+    """Return True if something is listening on 127.0.0.1:port."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(connect_timeout)
+            s.connect(("127.0.0.1", port))
+        return True
+    except (ConnectionRefusedError, OSError):
+        return False
+
+
+def _wait_for_port_free(port: int, timeout: float, poll_interval: float = 0.2) -> bool:
+    """Poll until the port is free or `timeout` seconds elapse.
+
+    Returns True if the port became free, False if the timeout elapsed.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not _port_in_use(port, connect_timeout=0.5):
+            return True
+        time.sleep(poll_interval)
+    return False
+
+
+def _pkill(signal: str, pattern: str) -> bool:
+    """Send `signal` to processes matching `pattern` via pkill.
+
+    Returns True if pkill ran (regardless of whether anything matched),
+    False if pkill itself is not available on this system.
+    """
+    try:
+        subprocess.run(["pkill", signal, "-f", pattern], check=False)
+        return True
+    except FileNotFoundError:
+        return False
+
+
 def kill_running_daemon(port: int, timeout: float = 5.0) -> bool:
     """Kill any running daemon (identified by listening on port).
 
     Returns True if a daemon was killed, False if nothing was running.
-    Tries SIGTERM first; falls back to SIGKILL after `timeout` seconds.
+    Tries SIGTERM first; escalates to SIGKILL after `timeout` seconds,
+    then verifies the port is released so the caller's respawn doesn't
+    race the OS tearing down the socket.
     """
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(1.0)
-        s.connect(("127.0.0.1", port))
-        s.close()
-    except (ConnectionRefusedError, OSError):
+    if not _port_in_use(port):
         return False  # nothing running
-    subprocess.run(["pkill", "-TERM", "-f", str(DAEMON_SCRIPT)], check=False)
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.5)
-            s.connect(("127.0.0.1", port))
-            s.close()
-            time.sleep(0.2)
-        except (ConnectionRefusedError, OSError):
-            return True
-    subprocess.run(["pkill", "-KILL", "-f", str(DAEMON_SCRIPT)], check=False)
-    time.sleep(0.5)
+
+    # pkill -f treats its pattern as an extended regex; the daemon path
+    # may contain metacharacters (+, [, etc.), so escape before passing.
+    pattern = re.escape(str(DAEMON_SCRIPT))
+
+    if not _pkill("-TERM", pattern):
+        print(
+            f"ERROR: pkill not found on PATH; cannot signal daemon on port {port}",
+            file=sys.stderr,
+        )
+        return False
+
+    if _wait_for_port_free(port, timeout):
+        return True
+
+    # SIGTERM didn't free the port within the timeout; escalate.
+    _pkill("-KILL", pattern)
+
+    # Verify the port has actually been released. Without this, the caller's
+    # immediate respawn can race kernel socket teardown and fail to bind
+    # silently (the error goes to the log file, not the user).
+    if not _wait_for_port_free(port, 2.0):
+        print(
+            f"WARNING: port {port} still in use after SIGKILL; "
+            f"replacement daemon may fail to bind.",
+            file=sys.stderr,
+        )
     return True
 
 
@@ -88,15 +137,9 @@ def main() -> None:
             print("Killed running daemon")
     else:
         # Check if already running via TCP probe (avoid importing daemon module)
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(1.0)
-            s.connect(("127.0.0.1", port))
-            s.close()
+        if _port_in_use(port):
             print("Daemon is already running")
             return
-        except (ConnectionRefusedError, OSError):
-            pass
 
     # Start daemon as a detached background process
     log_out = LOG_DIR / "daemon-stdout.log"
