@@ -9,6 +9,7 @@ import os
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -47,21 +48,55 @@ def resolve_interpreter() -> str:
     return sys.executable
 
 
-def main() -> None:
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
+def kill_running_daemon(port: int, timeout: float = 5.0) -> bool:
+    """Kill any running daemon (identified by listening on port).
 
-    port = int(os.environ.get("DAEMON_PORT", "7523"))
-
-    # Check if already running via TCP probe (avoid importing daemon module)
+    Returns True if a daemon was killed, False if nothing was running.
+    Tries SIGTERM first; falls back to SIGKILL after `timeout` seconds.
+    """
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(1.0)
         s.connect(("127.0.0.1", port))
         s.close()
-        print("Daemon is already running")
-        return
     except (ConnectionRefusedError, OSError):
-        pass
+        return False  # nothing running
+    subprocess.run(["pkill", "-TERM", "-f", str(DAEMON_SCRIPT)], check=False)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.5)
+            s.connect(("127.0.0.1", port))
+            s.close()
+            time.sleep(0.2)
+        except (ConnectionRefusedError, OSError):
+            return True
+    subprocess.run(["pkill", "-KILL", "-f", str(DAEMON_SCRIPT)], check=False)
+    time.sleep(0.5)
+    return True
+
+
+def main() -> None:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+    port = int(os.environ.get("DAEMON_PORT", "7523"))
+    restart = "--restart" in sys.argv
+
+    if restart:
+        if kill_running_daemon(port):
+            print("Killed running daemon")
+    else:
+        # Check if already running via TCP probe (avoid importing daemon module)
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(1.0)
+            s.connect(("127.0.0.1", port))
+            s.close()
+            print("Daemon is already running")
+            return
+        except (ConnectionRefusedError, OSError):
+            pass
 
     # Start daemon as a detached background process
     log_out = LOG_DIR / "daemon-stdout.log"
