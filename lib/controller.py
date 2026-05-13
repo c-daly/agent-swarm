@@ -956,7 +956,14 @@ class Controller:
     # --- Agent resolution ---
 
     def _resolve_agent(self, caller: str | None) -> AgentInfo | None:
-        """Resolve caller identifier to AgentInfo."""
+        """Resolve caller identifier to AgentInfo.
+
+        A null or missing caller is treated as the main agent (agent_id="").
+        The main agent's mcp-router does not have AGENT_SWARM_CALLER_ID set,
+        so its tool calls arrive without a _caller field. Mapping that to
+        the empty string lets the same registry lookup work for both main
+        and subagent callers.
+        """
         if caller is None:
-            return None
+            caller = ""
         return self.permissions.get_agent(caller)
