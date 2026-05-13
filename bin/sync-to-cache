@@ -35,6 +35,21 @@ CACHE_DIR="$HOME/.claude/plugins/cache/fearsidhe-plugins/agent-swarm/1.0.0"
 
 die() { echo "ERROR: $1" >&2; exit 1; }
 
+canonicalize_path() {
+    # Portable equivalent of GNU `realpath -m`. Tries Linux GNU first,
+    # then macOS+coreutils `grealpath`, finally a Python fallback that
+    # tolerates non-existent leaves the same way `-m` does.
+    local p="$1"
+    if realpath -m "$p" 2>/dev/null; then
+        return 0
+    fi
+    if command -v grealpath >/dev/null 2>&1; then
+        grealpath -m "$p"
+        return 0
+    fi
+    python3 -c 'import os,sys; print(os.path.realpath(os.path.abspath(sys.argv[1])))' "$p"
+}
+
 undo_symlink() {
     if [ -L "$CACHE_DIR" ]; then
         echo "Cache is a symlink — removing..."
@@ -95,9 +110,9 @@ sync_selective() {
         if [ ! -e "$file" ]; then
             die "File not found: $file"
         fi
-        # Canonicalize: -m tolerates non-existent leaves (we already checked above; -m
-        # just keeps us from failing on edge cases like trailing slashes).
-        abs="$(realpath -m "$file")"
+        # Canonicalize via the portable shim (`realpath -m` is Linux-GNU-only;
+        # the shim handles macOS BSD realpath and a Python last-resort fallback).
+        abs="$(canonicalize_path "$file")"
         if [ ! -f "$abs" ]; then
             die "Not a regular file: $file ($abs)"
         fi
