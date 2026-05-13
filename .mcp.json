@@ -1,7 +1,10 @@
 {
   "mcpServers": {
     "router": {
-      "command": "${AGENT_SWARM_ROOT}/bin/mcp-router"
+      "command": "${AGENT_SWARM_ROOT}/bin/mcp-router",
+      "env": {
+        "AGENT_SWARM_CALLER_ID": ""
+      }
     }
   }
 }

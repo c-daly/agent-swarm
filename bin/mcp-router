@@ -211,7 +211,7 @@ def main():
       for line in sys.stdin:
           # Inject _caller into tools/call arguments so the daemon knows
           # which SDK agent is making the request.
-          if CALLER_ID:
+          if CALLER_ID is not None:
               try:
                   msg = json.loads(line)
                   if msg.get("method") == "tools/call":
