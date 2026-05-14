@@ -237,24 +237,20 @@ class Router:
     def _handle_tools_call(self, message: dict) -> dict:
         """Route a tool call to the Controller.
 
-        Defaults a missing `_caller` argument to "" (the main agent). The
-        mcp-router subprocess only injects `_caller` when AGENT_SWARM_CALLER_ID
-        is set in its env — subagents have it set by the SDK/dispatch hook;
-        the main session does not. Internal daemon-method traffic (workflow/*,
-        agent/*) goes through `_handle_daemon_method`, not here, so it keeps
-        `caller=None` and falls back to the global allowlist in the controller.
+        Identity is established at the source: `bin/mcp-router` always
+        stamps `_caller` (subagent id when AGENT_SWARM_CALLER_ID is set;
+        "" for the main session's mcp-router). Other consumers
+        (`DaemonClient.call_tool()` directly, `mcp-call` without
+        `--caller-id`) carry no `_caller` and resolve to `caller=None`
+        in the controller, falling back to the global allowlist.
         """
         msg_id = message.get("id")
         params = message.get("params", {})
         tool_name = params.get("name", "")
         args = params.get("arguments", {})
 
-        call_args = dict(args)
-        if "_caller" not in call_args:
-            call_args["_caller"] = ""
-
         try:
-            result = self._controller.handle_call(tool_name, call_args)
+            result = self._controller.handle_call(tool_name, dict(args))
         except PermissionDeniedError as e:
             return {
                 "jsonrpc": "2.0",
