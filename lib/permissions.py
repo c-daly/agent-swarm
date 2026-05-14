@@ -294,6 +294,21 @@ class PermissionChecker:
             agent.workflow = workflow
             agent.phase = phase
 
+    def propagate_phase(self, workflow: str, phase: str) -> int:
+        """Update bound phase for every agent registered against `workflow`.
+
+        Returns the number of agents updated. Called by the controller when a
+        workflow advances phase, so bound agents do not keep a stale phase
+        snapshot for the rest of the session.
+        """
+        updated = 0
+        with self._lock:
+            for agent in self._agents.values():
+                if agent.workflow == workflow:
+                    agent.phase = phase
+                    updated += 1
+        return updated
+
     def get_agent(self, agent_id: str) -> AgentInfo | None:
         """Return registered agent info, or None."""
         with self._lock:

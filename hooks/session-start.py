@@ -193,8 +193,9 @@ def register_main_agent():
     DaemonClient methods directly, because DaemonClient does not expose
     register_agent / update_agent_phase as bound methods.
     """
-    from daemon_client import DaemonClient
-    from permission_query import get_active_workflow_id
+    if DaemonClient is None:
+        log_debug("register_main_agent: DaemonClient unavailable; skipping")
+        return
 
     try:
         with DaemonClient() as dc:
