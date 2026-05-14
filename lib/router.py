@@ -235,7 +235,15 @@ class Router:
         }
 
     def _handle_tools_call(self, message: dict) -> dict:
-        """Route a tool call to the Controller."""
+        """Route a tool call to the Controller.
+
+        Identity is established at the source: `bin/mcp-router` always
+        stamps `_caller` (subagent id when AGENT_SWARM_CALLER_ID is set;
+        "" for the main session's mcp-router). Other consumers
+        (`DaemonClient.call_tool()` directly, `mcp-call` without
+        `--caller-id`) carry no `_caller` and resolve to `caller=None`
+        in the controller, falling back to the global allowlist.
+        """
         msg_id = message.get("id")
         params = message.get("params", {})
         tool_name = params.get("name", "")

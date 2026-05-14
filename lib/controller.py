@@ -882,6 +882,9 @@ class Controller:
                             "Call workflow_pass_checkpoint first."
                         )
             state["phase"] = target
+            # Propagate to any agents bound to this workflow so their phase
+            # snapshot does not go stale on mid-session transitions.
+            self.permissions.propagate_phase(wf_id, target)
             # Handle terminal phase
             if config and target == config.terminal_phase:
                 state["completed_at"] = datetime.now(timezone.utc).isoformat()
@@ -956,7 +959,17 @@ class Controller:
     # --- Agent resolution ---
 
     def _resolve_agent(self, caller: str | None) -> AgentInfo | None:
-        """Resolve caller identifier to AgentInfo."""
+        """Resolve caller identifier to AgentInfo.
+
+        `caller=None` means no caller identity — used by internal daemon-method
+        traffic (workflow/*, agent/*) routed through `Router._handle_daemon_method`,
+        which carries no `_caller` field. Returning None lets the permission
+        check fall back to the global allowlist for that infrastructure path.
+
+        `caller=""` is the main agent. `Router._handle_tools_call` defaults a
+        missing `_caller` to "" before reaching here, so model-side traffic
+        from the main session resolves against the main-agent registry entry.
+        """
         if caller is None:
             return None
         return self.permissions.get_agent(caller)

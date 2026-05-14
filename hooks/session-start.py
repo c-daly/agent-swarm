@@ -179,6 +179,60 @@ def auto_start_workflow():
         log_debug(f"Auto-start workflow failed: {e}")
 
 
+def register_main_agent():
+    """Register the main agent (caller_id="") and bind it to the active workflow.
+
+    The main agent is the conversation driver. Its tool calls arrive at the
+    daemon without a _caller field (its mcp-router has no AGENT_SWARM_CALLER_ID
+    set); controller._resolve_agent maps that to caller="". Registering an
+    AgentInfo under that key lets the permission resolver apply
+    workflow/phase rules. Without this, the main agent falls back to
+    global-only permissions.
+
+    Uses the router__* tool dispatch path (call_tool) rather than calling
+    DaemonClient methods directly, because DaemonClient does not expose
+    register_agent / update_agent_phase as bound methods.
+    """
+    if DaemonClient is None:
+        log_debug("register_main_agent: DaemonClient unavailable; skipping")
+        return
+
+    try:
+        with DaemonClient() as dc:
+            try:
+                dc.call_tool("router__register_agent", {
+                    "agent_id": "",
+                    "agent_type": "implementer",
+                    "roles": ["editor", "shell_full"],
+                })
+            except Exception as e:
+                log_warning(f"register_main_agent: register step failed: {e}")
+                return
+
+            try:
+                active_wf = get_active_workflow_id()
+                if not active_wf:
+                    log_debug("register_main_agent: no active workflow; agent registered but not phase-bound")
+                    return
+                state = dc.workflow_get_state(active_wf)
+                phase = state.get("phase") if isinstance(state, dict) else None
+                if not phase:
+                    log_debug(f"register_main_agent: workflow {active_wf} has no phase; registered without phase binding")
+                    return
+                dc.call_tool("router__update_agent_phase", {
+                    "agent_id": "",
+                    "workflow": active_wf,
+                    "phase": phase,
+                })
+            except Exception as e:
+                log_warning(
+                    f"register_main_agent: agent registered but phase binding failed "
+                    f"(agent will fall back to global-only until next session): {e}"
+                )
+    except Exception as e:
+        log_warning(f"register_main_agent: daemon connection failed: {e}")
+
+
 def cleanup_stale_outputs() -> str | None:
     """Clean up output files older than 48 hours."""
     try:
@@ -364,6 +418,9 @@ def main():
         
         # 2. Auto-start workflow
         auto_start_workflow()
+
+        # 2b. Register main agent with active workflow's phase
+        register_main_agent()
 
         # 3. Cleanup stale files
         cleanup_msg = cleanup_stale_outputs()

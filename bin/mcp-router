@@ -210,15 +210,21 @@ def main():
   try:
       for line in sys.stdin:
           # Inject _caller into tools/call arguments so the daemon knows
-          # which SDK agent is making the request.
-          if CALLER_ID:
-              try:
-                  msg = json.loads(line)
-                  if msg.get("method") == "tools/call":
-                      msg.setdefault("params", {}).setdefault("arguments", {})["_caller"] = CALLER_ID
-                      line = json.dumps(msg) + "\n"
-              except (json.JSONDecodeError, KeyError, TypeError):
-                  pass
+          # which agent is making the request. Subagent mcp-routers have
+          # AGENT_SWARM_CALLER_ID set by the SDK/dispatch hook; the main
+          # session's mcp-router does not, so we default to "" (the main
+          # agent's registry key). Only traffic through *this* subprocess
+          # gets stamped — direct DaemonClient.call_tool() and mcp-call
+          # without --caller-id stay anonymous and fall back to the
+          # daemon's global allowlist.
+          caller = CALLER_ID if CALLER_ID is not None else ""
+          try:
+              msg = json.loads(line)
+              if msg.get("method") == "tools/call":
+                  msg.setdefault("params", {}).setdefault("arguments", {})["_caller"] = caller
+                  line = json.dumps(msg) + "\n"
+          except (json.JSONDecodeError, KeyError, TypeError):
+              pass
           _track_request(line)
           if not connected.is_set():
               connected.wait(timeout=5.0)
