@@ -187,6 +187,25 @@ class TestAutoStartRetriesOnColdDaemon:
 class TestRegisterMainAgentRetriesOnColdDaemon:
     """register_main_agent must survive the same startup race."""
 
+    def test_warns_when_retries_exhausted(self):
+        mod = _load_session_start("session_start_register_warn")
+
+        dc_factory = MagicMock(side_effect=_connection_refused())
+
+        warnings: list[str] = []
+
+        with patch.dict(
+            "sys.modules",
+            {"daemon_client": MagicMock(DaemonClient=dc_factory)},
+        ), patch.object(mod, "get_active_workflow_id", lambda: "simple"), \
+                patch.object(mod.time, "sleep", lambda _s: None), \
+                patch.object(mod, "log_warning", lambda msg, **kw: warnings.append(msg)):
+            mod.register_main_agent()
+
+        assert any("register_main_agent" in w for w in warnings), (
+            f"register_main_agent swallowed exhaustion silently; warnings={warnings!r}"
+        )
+
     def test_retries_then_succeeds(self):
         mod = _load_session_start("session_start_register_retry")
 
