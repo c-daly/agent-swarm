@@ -166,17 +166,66 @@ def reset_enforcement_counters(agent_id: str | None = None):
         log_warning(f"Failed to reset enforcement counters: {e}")
 
 
+# Brief retry to absorb the cold-daemon race at session start: the daemon
+# is launched alongside the hook, and the socket may not be ready on the
+# first attempt. Five 200 ms tries (~1 s) is enough in practice without
+# slowing happy-path session starts (first attempt succeeds).
+_DAEMON_CONNECT_ATTEMPTS = 5
+_DAEMON_CONNECT_DELAY = 0.2
+
+
+def _open_daemon_client_with_retry(label: str):
+    """Open a DaemonClient, retrying briefly on cold-daemon ConnectionRefused.
+
+    Returns the opened client (already in `__enter__`'d state, caller is
+    responsible for closing) on success, or None when retries are exhausted.
+    Logs at WARNING (not DEBUG) on exhaustion so the failure is visible.
+
+    Imports `DaemonClient` lazily so tests can inject mocks via
+    `sys.modules["daemon_client"]`.
+    """
+    try:
+        from daemon_client import DaemonClient as _DC
+    except ImportError:
+        return None
+
+    last_exc: Exception | None = None
+    for attempt in range(_DAEMON_CONNECT_ATTEMPTS):
+        try:
+            dc = _DC()
+            dc.__enter__()
+            return dc
+        except (ConnectionRefusedError, ConnectionError, OSError) as e:
+            last_exc = e
+            if attempt < _DAEMON_CONNECT_ATTEMPTS - 1:
+                time.sleep(_DAEMON_CONNECT_DELAY)
+    log_warning(
+        f"{label}: daemon unreachable after "
+        f"{_DAEMON_CONNECT_ATTEMPTS} attempts: {last_exc}"
+    )
+    return None
+
+
 def auto_start_workflow():
     """Auto-start simple workflow if no workflow is currently active."""
     try:
-        from daemon_client import DaemonClient
         from permission_query import get_active_workflow_id
-        if get_active_workflow_id() is not None:
+        try:
+            if get_active_workflow_id() is not None:
+                return
+        except Exception:
+            # Likely a cold-daemon race on the query path; the retry below
+            # will surface a clear warning if the daemon is genuinely down.
+            pass
+        dc = _open_daemon_client_with_retry("auto_start_workflow")
+        if dc is None:
             return
-        with DaemonClient() as dc:
+        try:
             dc.workflow_start("simple", initial_state={"task": "Auto-started simple workflow"})
+        finally:
+            dc.__exit__(None, None, None)
     except Exception as e:
-        log_debug(f"Auto-start workflow failed: {e}")
+        log_warning(f"auto_start_workflow failed: {e}")
 
 
 def register_main_agent():
@@ -197,40 +246,46 @@ def register_main_agent():
         log_debug("register_main_agent: DaemonClient unavailable; skipping")
         return
 
-    try:
-        with DaemonClient() as dc:
-            try:
-                dc.call_tool("router__register_agent", {
-                    "agent_id": "",
-                    "agent_type": "implementer",
-                    "roles": ["editor", "shell_full"],
-                })
-            except Exception as e:
-                log_warning(f"register_main_agent: register step failed: {e}")
-                return
+    dc = _open_daemon_client_with_retry("register_main_agent")
+    if dc is None:
+        return
 
-            try:
-                active_wf = get_active_workflow_id()
-                if not active_wf:
-                    log_debug("register_main_agent: no active workflow; agent registered but not phase-bound")
-                    return
-                state = dc.workflow_get_state(active_wf)
-                phase = state.get("phase") if isinstance(state, dict) else None
-                if not phase:
-                    log_debug(f"register_main_agent: workflow {active_wf} has no phase; registered without phase binding")
-                    return
-                dc.call_tool("router__update_agent_phase", {
-                    "agent_id": "",
-                    "workflow": active_wf,
-                    "phase": phase,
-                })
-            except Exception as e:
-                log_warning(
-                    f"register_main_agent: agent registered but phase binding failed "
-                    f"(agent will fall back to global-only until next session): {e}"
-                )
-    except Exception as e:
-        log_warning(f"register_main_agent: daemon connection failed: {e}")
+    try:
+        try:
+            dc.call_tool("router__register_agent", {
+                "agent_id": "",
+                "agent_type": "implementer",
+                "roles": ["editor", "shell_full"],
+            })
+        except Exception as e:
+            log_warning(f"register_main_agent: register step failed: {e}")
+            return
+
+        try:
+            active_wf = get_active_workflow_id()
+            if not active_wf:
+                log_debug("register_main_agent: no active workflow; agent registered but not phase-bound")
+                return
+            state = dc.workflow_get_state(active_wf)
+            phase = state.get("phase") if isinstance(state, dict) else None
+            if not phase:
+                log_debug(f"register_main_agent: workflow {active_wf} has no phase; registered without phase binding")
+                return
+            dc.call_tool("router__update_agent_phase", {
+                "agent_id": "",
+                "workflow": active_wf,
+                "phase": phase,
+            })
+        except Exception as e:
+            log_warning(
+                f"register_main_agent: agent registered but phase binding failed "
+                f"(agent will fall back to global-only until next session): {e}"
+            )
+    finally:
+        try:
+            dc.__exit__(None, None, None)
+        except Exception:
+            pass
 
 
 def cleanup_stale_outputs() -> str | None:
