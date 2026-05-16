@@ -214,17 +214,31 @@ class DaemonClient:
     # Internal
     # ─────────────────────────────────────────────────────────────────
 
+    # Tools callable via `tools/call` before `register()` has run.
+    # These are the agent-bootstrap tools the session-start hook uses to
+    # register the main agent with its workflow. Keep this set narrow.
+    _NO_REGISTER_TOOLS = frozenset({
+        "router__register_agent",
+        "router__update_agent_phase",
+    })
+
     def _call(self, method: str, params: dict) -> Any:
         """Send JSON-RPC request, block for response, return result."""
         if self._sock is None:
             raise ConnectionError("Not connected")
         # Registration required for agent tool calls, not for workflow/agent
-        # state operations (infrastructure ops used by internal tooling).
+        # state operations (infrastructure ops used by internal tooling) or
+        # the narrow set of bootstrap tools the session-start hook needs.
         _NO_REGISTER = ("agent/register", "tools/list",
                         "initialize", "notifications/initialized")
+        is_bootstrap_tool = (
+            method == "tools/call"
+            and params.get("name") in self._NO_REGISTER_TOOLS
+        )
         if (not self._registered
                 and method not in _NO_REGISTER
-                and not method.startswith(("workflow/", "agent/"))):
+                and not method.startswith(("workflow/", "agent/"))
+                and not is_bootstrap_tool):
             raise RuntimeError("Must call register() before tool calls")
 
         self._request_id += 1

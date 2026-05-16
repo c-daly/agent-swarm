@@ -15,6 +15,7 @@ import json
 import socket
 import sys
 import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 import os
@@ -166,17 +167,75 @@ def reset_enforcement_counters(agent_id: str | None = None):
         log_warning(f"Failed to reset enforcement counters: {e}")
 
 
+# Brief retry to absorb the cold-daemon race at session start: the daemon
+# is launched alongside the hook, and the socket may not be ready on the
+# first attempt. Five 200 ms tries (~1 s) is enough in practice without
+# slowing happy-path session starts (first attempt succeeds).
+_DAEMON_CONNECT_ATTEMPTS = 5
+_DAEMON_CONNECT_DELAY = 0.2
+
+
+@contextmanager
+def _open_daemon_client_with_retry(label: str):
+    """Yield a connected DaemonClient, or None when retries are exhausted.
+
+    Retries `connect()` briefly on cold-daemon `ConnectionRefusedError` /
+    `OSError`. Always logs at WARNING (not DEBUG) on exhaustion so the
+    failure is visible. Closes the client on exit, including when the body
+    raised — surfaces close errors at WARNING (don't mask the original).
+
+    Imports `DaemonClient` lazily so tests can inject mocks via
+    `sys.modules["daemon_client"]`.
+    """
+    try:
+        from daemon_client import DaemonClient as _DC
+    except ImportError:
+        yield None
+        return
+
+    last_exc: Exception | None = None
+    for attempt in range(_DAEMON_CONNECT_ATTEMPTS):
+        try:
+            dc = _DC()
+            dc.connect()
+        except (ConnectionRefusedError, ConnectionError, OSError) as e:
+            last_exc = e
+            if attempt < _DAEMON_CONNECT_ATTEMPTS - 1:
+                time.sleep(_DAEMON_CONNECT_DELAY)
+            continue
+        try:
+            yield dc
+        finally:
+            try:
+                dc.close()
+            except Exception as close_exc:
+                log_warning(f"{label}: error closing daemon client: {close_exc}")
+        return
+
+    log_warning(
+        f"{label}: daemon unreachable after "
+        f"{_DAEMON_CONNECT_ATTEMPTS} attempts: {last_exc}"
+    )
+    yield None
+
+
 def auto_start_workflow():
     """Auto-start simple workflow if no workflow is currently active."""
     try:
-        from daemon_client import DaemonClient
         from permission_query import get_active_workflow_id
-        if get_active_workflow_id() is not None:
-            return
-        with DaemonClient() as dc:
+        try:
+            if get_active_workflow_id() is not None:
+                return
+        except Exception as e:
+            # Likely a cold-daemon race on the query path; the retry below
+            # will surface a clear warning if the daemon is genuinely down.
+            log_debug(f"auto_start_workflow: get_active_workflow_id check failed: {e}")
+        with _open_daemon_client_with_retry("auto_start_workflow") as dc:
+            if dc is None:
+                return
             dc.workflow_start("simple", initial_state={"task": "Auto-started simple workflow"})
     except Exception as e:
-        log_debug(f"Auto-start workflow failed: {e}")
+        log_warning(f"auto_start_workflow failed: {e}")
 
 
 def register_main_agent():
@@ -197,40 +256,40 @@ def register_main_agent():
         log_debug("register_main_agent: DaemonClient unavailable; skipping")
         return
 
-    try:
-        with DaemonClient() as dc:
-            try:
-                dc.call_tool("router__register_agent", {
-                    "agent_id": "",
-                    "agent_type": "implementer",
-                    "roles": ["editor", "shell_full"],
-                })
-            except Exception as e:
-                log_warning(f"register_main_agent: register step failed: {e}")
-                return
+    with _open_daemon_client_with_retry("register_main_agent") as dc:
+        if dc is None:
+            return
 
-            try:
-                active_wf = get_active_workflow_id()
-                if not active_wf:
-                    log_debug("register_main_agent: no active workflow; agent registered but not phase-bound")
-                    return
-                state = dc.workflow_get_state(active_wf)
-                phase = state.get("phase") if isinstance(state, dict) else None
-                if not phase:
-                    log_debug(f"register_main_agent: workflow {active_wf} has no phase; registered without phase binding")
-                    return
-                dc.call_tool("router__update_agent_phase", {
-                    "agent_id": "",
-                    "workflow": active_wf,
-                    "phase": phase,
-                })
-            except Exception as e:
-                log_warning(
-                    f"register_main_agent: agent registered but phase binding failed "
-                    f"(agent will fall back to global-only until next session): {e}"
-                )
-    except Exception as e:
-        log_warning(f"register_main_agent: daemon connection failed: {e}")
+        try:
+            dc.call_tool("router__register_agent", {
+                "agent_id": "",
+                "agent_type": "implementer",
+                "roles": ["editor", "shell_full"],
+            })
+        except Exception as e:
+            log_warning(f"register_main_agent: register step failed: {e}")
+            return
+
+        try:
+            active_wf = get_active_workflow_id()
+            if not active_wf:
+                log_debug("register_main_agent: no active workflow; agent registered but not phase-bound")
+                return
+            state = dc.workflow_get_state(active_wf)
+            phase = state.get("phase") if isinstance(state, dict) else None
+            if not phase:
+                log_debug(f"register_main_agent: workflow {active_wf} has no phase; registered without phase binding")
+                return
+            dc.call_tool("router__update_agent_phase", {
+                "agent_id": "",
+                "workflow": active_wf,
+                "phase": phase,
+            })
+        except Exception as e:
+            log_warning(
+                f"register_main_agent: agent registered but phase binding failed "
+                f"(agent will fall back to global-only until next session): {e}"
+            )
 
 
 def cleanup_stale_outputs() -> str | None:
