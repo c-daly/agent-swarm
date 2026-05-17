@@ -10,7 +10,7 @@ Claude Code plugin that enforces phase-gated workflows for AI-assisted developme
 2. `<vault>/10-projects/agent-swarm/open-recommendations.md` — outstanding follow-ups with status flags
 3. `<vault>/10-projects/agent-swarm/experiments/workflow-runs.md` — measured experiment record (append-only dated runs)
 4. `<vault>/10-projects/agent-swarm/experiments/run-context/` — per-run context snapshots
-5. `~/.claude/projects/-Users-cdaly-projects-agent-swarm/memory/MEMORY.md` — auto-memory index *(machine-specific path; encodes this dev tree's cwd)*
+5. `~/.claude/projects/-home-fearsidhe--claude-plugins-agent-swarm/memory/MEMORY.md` — auto-memory index *(machine-specific path; encodes this dev tree's cwd. On other machines derive the equivalent: `~/.claude/projects/<dashed-cwd>/memory/MEMORY.md`)*
 
 ## Memory topics (use these in observation captures)
 
@@ -29,16 +29,13 @@ Claude Code plugin that enforces phase-gated workflows for AI-assisted developme
 - **Daemon** at port 7523. In-memory state lost on restart. Restart after code changes (no hot-reload).
 - **Subagent dispatch** via Task tool with iterate workflow; each subagent gets its own worktree at `~/projects/iterate-test-wt/<branch>/`. Worktree isolation works correctly — verified.
 
-## Session start protocol
+## Session start
 
-> *Stopgap until continuity's resume-brief is installed and provides this automatically — see `hooks/session-start.py:discover_resume_brief`. Remove this section when that path returns non-empty.*
+continuity's `resume_brief` MCP tool (`mcp__plugin_continuity_continuity__resume_brief`) is the canonical session-orientation path: call it with `project: "agent-swarm"` to get the recent narrative, decisions, journal entries, and memory observations in one composed brief. The dev-tree's auto-memory index at `~/.claude/projects/<dashed-cwd>/memory/MEMORY.md` is also auto-loaded by Claude Code at session start, so first-order observations about this plugin are already in context.
 
-Trigger: every session, before responding to the first user message.
-
-1. `tail -120 <vault>/10-projects/agent-swarm/narrative.md` — read the latest 1-2 dated entries.
-2. Skim `<vault>/10-projects/agent-swarm/open-recommendations.md` for `[~]` (in progress) and `[ ]` (open) items related to the cwd / area the user is asking about.
-3. Read `~/.claude/projects/-Users-cdaly-projects-agent-swarm/memory/MEMORY.md` — the auto-memory index, not bodies. Pull a body only when the index entry is relevant. *(Path encodes the cwd of this dev tree — `-Users-cdaly-projects-agent-swarm` for this machine. If you're on a different machine, derive the equivalent: `~/.claude/projects/<encoded-cwd>/memory/MEMORY.md`.)*
-4. Briefly acknowledge what state is being picked up from in the first response (e.g., "picking up from the simple-workflow PR93 merge; bin/ infra follow-ups still open").
+For deeper recovery beyond what the resume brief surfaces:
+- `tail -120 <vault>/10-projects/agent-swarm/narrative.md` — latest dated entries
+- `<vault>/10-projects/agent-swarm/open-recommendations.md` — `[~]` (in progress) and `[ ]` (open) items
 
 ## Task completion protocol
 
