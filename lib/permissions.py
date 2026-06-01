@@ -309,7 +309,9 @@ class PermissionChecker:
                 benign_block = benign_block or resp
                 continue
             return False, resp
-        if allowed_count == 0 and benign_block is not None:
+        if allowed_count == 0:
+            # Nothing was explicitly allowed -- only benign ride-alongs, or a
+            # command that tokenized to no real sub-command. Fail closed.
             return False, benign_block
         return True, None
 

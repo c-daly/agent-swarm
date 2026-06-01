@@ -57,16 +57,31 @@ def _is_clean_mcp_call(cmd: str) -> bool:
     A ``&&`` inside the quoted JSON argument is the inner command (which the
     router does police) and is fine.
     """
+    # Newline/CR injection: shlex treats \n as whitespace and silently drops
+    # it, so `mcp-call ...\nrm -rf /` would tokenize clean while the shell runs
+    # both lines. Reject outright.
+    if "\n" in cmd or "\r" in cmd:
+        return False
+
     import shlex
 
-    # backtick command substitution outside quotes -> reject
-    in_s = in_d = False
+    # backtick command substitution outside single quotes -> reject.
+    # Escape-aware: a backslash escapes the next char outside single quotes, so
+    # \" does not flip the double-quote state. A backtick is active substitution
+    # anywhere except inside single quotes (incl. inside double quotes).
+    in_s = in_d = escape = False
     for ch in cmd:
+        if escape:
+            escape = False
+            continue
+        if ch == "\\" and not in_s:
+            escape = True
+            continue
         if ch == "'" and not in_d:
             in_s = not in_s
         elif ch == '"' and not in_s:
             in_d = not in_d
-        elif ch == "`" and not in_s and not in_d:
+        elif ch == "`" and not in_s:
             return False
     try:
         lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)

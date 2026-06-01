@@ -142,3 +142,13 @@ class TestHookMcpCallGate:
 
     def test_non_mcp_call_rejected(self, hook):
         assert not hook._is_clean_mcp_call("git diff")
+
+    def test_newline_injection_blocked(self, hook):
+        # shlex drops \n as whitespace; without a guard "mcp-call ...\nrm -rf /"
+        # tokenizes clean while the outer shell runs both lines.
+        assert not hook._is_clean_mcp_call("mcp-call native__read_file '{}'\nrm -rf /tmp/x")
+        assert not hook._is_clean_mcp_call("mcp-call git status\rrm -rf /tmp/x")
+
+    def test_backtick_in_double_quotes_blocked(self, hook):
+        # `cmd` inside double quotes is still active command substitution.
+        assert not hook._is_clean_mcp_call('mcp-call foo "`rm -rf /tmp/x`"')
