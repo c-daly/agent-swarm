@@ -39,6 +39,12 @@ class TestRecordAndQuery:
         assert events[0].backend == "native"
         assert isinstance(events[0], EventRecord)
 
+    def test_workflow_and_phase_captured(self, store):
+        store.record_event(_make_event(workflow_id="develop", phase="implement"))
+        events = store.get_session_events("sess-1")
+        assert events[0].workflow_id == "develop"
+        assert events[0].phase == "implement"
+
     def test_defaults(self, store):
         store.record_event({"tool": "x", "backend": "y", "status": "success"})
         events = store.query_events(tool="x")

@@ -35,6 +35,7 @@ class EventRecord:
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
+    phase: str = ""
 
 
 @dataclass
@@ -76,7 +77,8 @@ CREATE TABLE IF NOT EXISTS events (
     input_tokens INTEGER DEFAULT 0,
     output_tokens INTEGER DEFAULT 0,
     cache_read_tokens INTEGER DEFAULT 0,
-    cache_creation_tokens INTEGER DEFAULT 0
+    cache_creation_tokens INTEGER DEFAULT 0,
+    phase TEXT DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
@@ -90,8 +92,8 @@ INSERT INTO events (
     session_id, agent_id, agent_type, workflow_id,
     error_type, was_summarized, original_size, summary_size,
     input_tokens, output_tokens, cache_read_tokens,
-    cache_creation_tokens
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    cache_creation_tokens, phase
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 _SELECT_COLUMNS = """\
@@ -99,7 +101,7 @@ timestamp, tool, backend, status, duration_ms,
     session_id, agent_id, agent_type, workflow_id,
     error_type, was_summarized, original_size, summary_size,
     input_tokens, output_tokens, cache_read_tokens,
-    cache_creation_tokens"""
+    cache_creation_tokens, phase"""
 
 
 class DataStore:
@@ -120,6 +122,16 @@ class DataStore:
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._lock = threading.RLock()
         self._conn.executescript(_CREATE_SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after a DB was first created (idempotent)."""
+        with self._lock:
+            cols = {r[1] for r in self._conn.execute("PRAGMA table_info(events)")}
+            if "phase" not in cols:
+                self._conn.execute(
+                    "ALTER TABLE events ADD COLUMN phase TEXT DEFAULT ''"
+                )
 
     def record_event(self, event: dict) -> None:
         """Insert a single event.
@@ -153,6 +165,7 @@ class DataStore:
                     event.get("output_tokens", 0),
                     event.get("cache_read_tokens", 0),
                     event.get("cache_creation_tokens", 0),
+                    event.get("phase", ""),
                 ),
             )
             self._conn.commit()
@@ -296,4 +309,5 @@ class DataStore:
             output_tokens=row[14],
             cache_read_tokens=row[15],
             cache_creation_tokens=row[16],
+            phase=row[17],
         )
