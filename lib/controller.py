@@ -665,21 +665,32 @@ class Controller:
             agent_type = args.get("agent_type", "")
             workflow_id = args.get("workflow_id")
 
-            # 1. Register in permissions system
-            info = self.permissions.register_agent(
-                agent_id=agent_id,
-                agent_type=agent_type,
-                roles=args.get("roles"),
-            )
+            # Idempotent: prepare_dispatch already registered this agent with its
+            # real role + live phase. A later registration (e.g. mcp-call's
+            # per-connection handshake, which carries AGENT_TYPE/WORKFLOW_ID env
+            # defaults) must ATTACH to that identity, not overwrite it.
+            existing = self.permissions.get_agent(agent_id)
+            if existing is not None:
+                info = existing
+                agent_type = existing.agent_type
+                workflow_id = existing.workflow
+                phase = existing.phase
+            else:
+                # 1. Register in permissions system
+                info = self.permissions.register_agent(
+                    agent_id=agent_id,
+                    agent_type=agent_type,
+                    roles=args.get("roles"),
+                )
 
-            # 2. Determine phase from workflow config (if applicable)
-            phase = None
-            if workflow_id:
-                config = self._workflow_configs.get(workflow_id)
-                if config:
-                    phase = config.initial_phase
-                    info.workflow = workflow_id
-                    info.phase = phase
+                # 2. Determine phase from workflow config (if applicable)
+                phase = None
+                if workflow_id:
+                    config = self._workflow_configs.get(workflow_id)
+                    if config:
+                        phase = config.initial_phase
+                        info.workflow = workflow_id
+                        info.phase = phase
 
             # 3. Record agent state
             agent_state = {

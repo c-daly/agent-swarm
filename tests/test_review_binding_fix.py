@@ -95,8 +95,11 @@ def _load_mcp_call():
     return mod
 
 
-class TestMcpCallNoReregister:
-    def test_call_tool_does_not_register(self, monkeypatch):
+class TestMcpCallHandshake:
+    def test_call_tool_registers_for_handshake(self, monkeypatch):
+        """mcp-call must complete the DaemonClient registration handshake:
+        call_tool requires the client-side _registered flag. The daemon makes
+        register idempotent so this does not clobber the agent's role/phase."""
         mod = _load_mcp_call()
         dc = MagicMock()
         cm = MagicMock()
@@ -104,5 +107,31 @@ class TestMcpCallNoReregister:
         cm.__exit__ = MagicMock(return_value=False)
         monkeypatch.setattr(mod, "DaemonClient", MagicMock(return_value=cm))
         mod.call_tool("native__read_file", {"_caller": "sub-x", "file_path": "/x"}, caller_id="sub-x")
-        dc.register.assert_not_called()
+        dc.register.assert_called_once()
         dc.call_tool.assert_called_once()
+
+
+class TestRegisterAgentIdempotent:
+    """The clobber prevention lives in the daemon handler, not in mcp-call: an
+    already-registered agent (bound by prepare_dispatch) is preserved when a
+    later registration arrives with default values."""
+
+    def test_existing_registration_preserved(self, controller):
+        existing = MagicMock(agent_id="sub-x", agent_type="reviewer",
+                             roles=["reviewer"], workflow="develop", phase="review")
+        controller.permissions.get_agent.return_value = existing
+        controller.permissions.register_agent.reset_mock()
+        with patch("controller.assemble_subagent_briefing", return_value=""):
+            result = controller._handle_router("register_agent", {
+                "agent_id": "sub-x", "agent_type": "implementer", "workflow_id": "iterate"})
+        controller.permissions.register_agent.assert_not_called()
+        assert result["agent_type"] == "reviewer"
+        assert result["workflow_id"] == "develop"
+        assert result["phase"] == "review"
+
+    def test_new_registration_creates(self, controller):
+        controller.permissions.get_agent.return_value = None
+        with patch("controller.assemble_subagent_briefing", return_value=""):
+            controller._handle_router("register_agent", {
+                "agent_id": "sub-y", "agent_type": "implementer"})
+        controller.permissions.register_agent.assert_called_once()
