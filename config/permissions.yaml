@@ -97,7 +97,22 @@ agents:
     blocked: [native__write_file, native__edit_file, native__bash]
 
 workflows:
-  # Iterate workflow (TDD-style)
+  # Orchestrate workflow — coordinator. The orchestrator spawns iterate workers
+  # and never edits code itself. intake/design are context kickbacks; orchestrate
+  # is the home phase it never leaves. (Was conflated into `iterate`; now its own
+  # permission-gated workflow, matching config/workflows/orchestrate.yaml.)
+  orchestrate:
+    intake:
+      allowed: [native__read_file, native__glob, native__grep, serena__*, context7__*, native__web_fetch, native__web_search, workflow__*]
+      blocked: [native__write_file, native__edit_file, native__bash]
+    design:
+      allowed: [native__read_file, native__glob, native__grep, serena__*, context7__*, native__web_fetch, native__web_search, workflow__*]
+      blocked: [native__write_file, native__edit_file, native__bash]
+    orchestrate:
+      allowed: [native__read_file, native__glob, native__grep, workflow__*]
+      blocked: [native__write_file, native__edit_file, native__bash]
+
+  # Iterate workflow (TDD-style) — worker: one agent per task, test_writing -> complete
   iterate:
     orchestrate:
       allowed: [native__read_file, native__glob, native__grep, workflow__*]
@@ -114,10 +129,6 @@ workflows:
     test:
       allowed: [native__read_file, native__bash(pytest*), native__bash(python -m pytest*), native__bash(ruff*)]
       blocked: [native__write_file, native__edit_file]
-
-    coverage:
-      allowed: [native__write_file, native__edit_file, native__read_file, native__glob, native__grep, native__bash(pytest*), serena__*]
-      blocked: []
 
     review:
       allowed: [native__read_file, native__glob, native__grep, native__bash(git*), native__bash(gh*), native__bash(mcp-call*)]
