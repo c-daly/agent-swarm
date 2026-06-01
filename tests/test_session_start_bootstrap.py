@@ -6,7 +6,7 @@ Bug A. `register_main_agent` calls `dc.call_tool("router__register_agent", ...)`
 which sends JSON-RPC method `tools/call`. The DaemonClient guard in
 `_call` requires `register()` first for any method that isn't in the
 narrow exempt set, so the bootstrap registration always raises
-`RuntimeError("Must call register() before tool calls")`. The hook
+`RuntimeError("caller-id() before tool calls")`. The hook
 swallows it and the main agent never gets phase-bound.
 
 Bug B. `auto_start_workflow` and `register_main_agent` both race the
@@ -93,7 +93,7 @@ class TestDaemonClientBootstrapToolExemption:
                 "roles": ["editor", "shell_full"],
             })
         except RuntimeError as e:
-            assert "Must call register" not in str(e), (
+            assert "caller-id" not in str(e), (
                 "Guard still blocks router__register_agent before register()"
             )
 
@@ -106,14 +106,14 @@ class TestDaemonClientBootstrapToolExemption:
                 "phase": "plan",
             })
         except RuntimeError as e:
-            assert "Must call register" not in str(e), (
+            assert "caller-id" not in str(e), (
                 "Guard still blocks router__update_agent_phase before register()"
             )
 
     def test_non_bootstrap_tool_still_guarded(self):
         """Guard must remain in place for any tool that isn't part of bootstrap."""
         dc = self._client_with_fake_sock()
-        with pytest.raises(RuntimeError, match="Must call register"):
+        with pytest.raises(RuntimeError, match="caller-id"):
             dc.call_tool("router__ping", {})
 
 

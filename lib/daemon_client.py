@@ -239,7 +239,11 @@ class DaemonClient:
                 and method not in _NO_REGISTER
                 and not method.startswith(("workflow/", "agent/"))
                 and not is_bootstrap_tool):
-            raise RuntimeError("Must call register() before tool calls")
+            raise RuntimeError(
+                "This mcp-call has no --caller-id, so it has no agent identity. "
+                "Re-run it with --caller-id=<your agent id> (it is in your task "
+                "prompt); mcp-call registers you automatically. Do not call register."
+            )
 
         self._request_id += 1
         request = {

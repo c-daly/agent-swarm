@@ -136,7 +136,10 @@ def main():
         if agent_id:
             block(
                 f"[SUBAGENT BLOCKED] '{tool_name}' not allowed. "
-                f"Use mcp-call via Bash: mcp-call {analogue} '<json_args>'"
+                f"Re-run it through mcp-call WITH your --caller-id. You are already "
+                f"registered — do NOT call register. Your agent id is in your task "
+                f"prompt; use it as the caller-id. "
+                f"Example: mcp-call --caller-id=<your-agent-id> {analogue} '<json_args>'"
             )
         else:
             block(f"[BLOCKED] '{tool_name}' blocked. Use mcp__router__{analogue} instead.")
