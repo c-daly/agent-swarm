@@ -47,6 +47,46 @@ def block(reason: str):
     sys.exit(2)
 
 
+def _is_clean_mcp_call(cmd: str) -> bool:
+    """True iff `cmd` is a single mcp-call invocation with no shell chaining,
+    piping, command substitution, or redirection OUTSIDE its quoted arguments.
+
+    The router only ever sees the inner native__* call mcp-call forwards;
+    anything the outer shell could additionally run (``mcp-call ... ; rm -rf``)
+    never reaches the router's permission check, so it must be rejected here.
+    A ``&&`` inside the quoted JSON argument is the inner command (which the
+    router does police) and is fine.
+    """
+    import shlex
+
+    # backtick command substitution outside quotes -> reject
+    in_s = in_d = False
+    for ch in cmd:
+        if ch == "'" and not in_d:
+            in_s = not in_s
+        elif ch == '"' and not in_s:
+            in_d = not in_d
+        elif ch == "`" and not in_s and not in_d:
+            return False
+    try:
+        lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        tokens = list(lex)
+    except ValueError:
+        return False
+    if not tokens:
+        return False
+    first = tokens[0]
+    if first != "mcp-call" and not first.endswith("/mcp-call"):
+        return False
+    # any unquoted shell operator / grouping token -> reject (chaining, pipes,
+    # subshells, $()/<() substitution and redirects all surface as these)
+    for tok in tokens[1:]:
+        if tok and set(tok) <= set("&|;()<>"):
+            return False
+    return True
+
+
 def main():
     if ALWAYS_ALLOW:
         print(json.dumps(allow("ALWAYS_ALLOW bypass")))
@@ -65,10 +105,12 @@ def main():
         print(json.dumps(allow("Router-mediated")))
         return
 
-    # Rule 2: Bash with mcp-call prefix → allow (router access path)
+    # Rule 2: a single, un-chained mcp-call → allow (router access path). A
+    # compound command (mcp-call ... ; rm -rf) must NOT pass here: the extra
+    # commands would run in the agent's shell, never reaching the router.
     if tool_name == "Bash":
         cmd = tool_input.get("command", "").strip()
-        if cmd.startswith("mcp-call ") or cmd == "mcp-call" or cmd.startswith(MCP_CALL_PATH):
+        if _is_clean_mcp_call(cmd):
             print(json.dumps(allow("mcp-call")))
             return
 
