@@ -601,8 +601,15 @@ class Controller:
         # Register in permissions system
         self.permissions.register_agent(agent_id, role)
 
+        # Bind the agent to the live workflow phase so per-phase permissions
+        # (not just its role) govern it. Registered once here in the shared
+        # daemon registry; propagate_phase keeps it current as phases advance,
+        # and later mcp-call traffic resolves this entry via _caller.
+        active_wf, active_phase = get_workflow_state()
+        if active_wf:
+            self.permissions.update_agent_phase(agent_id, active_wf, active_phase)
+
         # Assemble role-specific briefing (only default to iterate if no workflow active)
-        active_wf, _ = get_workflow_state()
         wf_override = "iterate" if role == "implementer" and not active_wf else None
         briefing = assemble_subagent_briefing(role, workflow_override=wf_override)
         caller_header = (

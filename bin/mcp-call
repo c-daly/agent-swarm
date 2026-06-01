@@ -32,18 +32,16 @@ from daemon_client import DaemonClient
 
 
 def call_tool(name, arguments, caller_id=None):
-    """Call a tool via the router daemon."""
+    """Call a tool via the router daemon.
+
+    The agent is registered once at dispatch by the agent-dispatch hook
+    (prepare_dispatch), and the daemon holds that registration in its shared
+    in-memory registry. The caller id travels in arguments["_caller"], so the
+    daemon resolves the existing registration on every call. We deliberately do
+    NOT re-register here: re-registering would overwrite the agent's real
+    role/phase with AGENT_TYPE/WORKFLOW_ID env defaults (implementer/iterate).
+    """
     with DaemonClient() as dc:
-        if caller_id:
-            agent_type = os.environ.get("AGENT_TYPE", "implementer")
-            workflow_id = os.environ.get("WORKFLOW_ID", "iterate")
-            session_id = os.environ.get("AGENT_SESSION_ID", f"mcp-call-{caller_id}")
-            dc.register(
-                agent_id=caller_id,
-                agent_type=agent_type,
-                session_id=session_id,
-                workflow_id=workflow_id,
-            )
         return dc.call_tool(name, arguments)
 
 

@@ -125,10 +125,14 @@ class TestDevelopWorkflowSection:
         assert "native__edit_file" in blocked
 
     def test_review_blocked(self, config):
-        blocked = config["workflows"]["develop"]["review"]["blocked"]
-        assert "native__bash" in blocked
-        assert "native__write_file" in blocked
-        assert "native__edit_file" in blocked
+        review = config["workflows"]["develop"]["review"]
+        # Review blocks code changes...
+        assert "native__write_file" in review["blocked"]
+        assert "native__edit_file" in review["blocked"]
+        # ...but must NOT wholesale-block bash: the reviewer needs read-only git
+        # to inspect the PR diff (see test_review_binding_fix).
+        assert "native__bash" not in review["blocked"]
+        assert "native__bash(git diff*)" in review["allowed"]
 
     def test_merge_allowed_git_gh(self, config):
         allowed = config["workflows"]["develop"]["merge"]["allowed"]

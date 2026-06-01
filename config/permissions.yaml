@@ -175,8 +175,8 @@ workflows:
       allowed: [native__read_file, native__bash(pytest*), native__bash(python -m pytest*), native__bash(ruff*)]
       blocked: [native__write_file, native__edit_file]
     review:
-      allowed: [native__read_file, native__glob, native__grep, serena__*]
-      blocked: [native__write_file, native__edit_file, native__bash]
+      allowed: [native__read_file, native__glob, native__grep, serena__*, native__bash(git diff*), native__bash(git log*), native__bash(git show*), native__bash(git status*), native__bash(gh pr diff*), native__bash(gh pr view*), native__bash(pytest*)]
+      blocked: [native__write_file, native__edit_file]
     merge:
       allowed: [native__read_file, native__bash(git*), native__bash(gh*)]
       blocked: [native__write_file, native__edit_file]
