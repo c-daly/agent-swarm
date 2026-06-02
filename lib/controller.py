@@ -611,26 +611,20 @@ class Controller:
         # so the start is a property of dispatch (nothing to remember) and
         # parallel workers get isolated instances.
         active_wf, active_phase = get_workflow_state()
-        wf_instance = None
         if active_wf:
             self.permissions.update_agent_phase(agent_id, active_wf, active_phase)
             wf_override = None
         elif role == "implementer":
-            instance_id = f"iterate:{agent_id}"
-            self._wf_start(
-                {"workflow_id": instance_id, "initial_state": {}}, agent_info=None
-            )
-            iter_cfg = self._wf_config("iterate")
-            init_phase = iter_cfg.initial_phase if iter_cfg else "test_writing"
-            self.permissions.update_agent_phase(agent_id, instance_id, init_phase)
+            # Standalone implementer = iterate worker. The orchestrator starts and
+            # binds its engine instance -- it alone knows the real agent id at
+            # creation, whereas prepare_dispatch runs before the subagent exists.
+            # So surface the iterate briefing here but start NO instance (starting
+            # one would bind a throwaway sub-id the worker never uses -> orphans).
             wf_override = "iterate"
-            wf_instance = instance_id
         else:
             wf_override = None
 
-        briefing = assemble_subagent_briefing(
-            role, workflow_override=wf_override, workflow_instance_id=wf_instance
-        )
+        briefing = assemble_subagent_briefing(role, workflow_override=wf_override)
         caller_header = (
             f"## Your Agent Identity\n"
             f"Agent ID: `{agent_id}`\n"
