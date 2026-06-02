@@ -207,6 +207,31 @@ class TestPrecedence:
         allowed, resp = checker.check("native__write_file", {}, agent)
         assert allowed
 
+    def test_per_instance_workflow_resolves_to_base_phase_rules(self, checker):
+        """A per-instance id (iterate:<agent_id>, used by parallel workers) is
+        governed by the base workflow's phase rules -- the test phase still
+        blocks write_file even on an isolated instance."""
+        agent = AgentInfo(
+            agent_id="a1",
+            agent_type="implementer",
+            workflow="iterate:a1",
+            phase="test",
+        )
+        allowed, resp = checker.check("native__write_file", {}, agent)
+        assert not allowed
+        assert "phase" in resp.reason
+
+    def test_per_instance_workflow_implement_allows_write(self, checker):
+        """The per-instance implement phase resolves to base iterate.implement."""
+        agent = AgentInfo(
+            agent_id="a1",
+            agent_type="implementer",
+            workflow="iterate:deadbeef",
+            phase="implement",
+        )
+        allowed, resp = checker.check("native__write_file", {}, agent)
+        assert allowed
+
     def test_role_allows_overrides_global_block(self, checker):
         """Editor role allows write_file despite global block."""
         agent = AgentInfo(agent_id="a1", agent_type="", roles=["editor"])

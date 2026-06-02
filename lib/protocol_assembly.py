@@ -219,34 +219,44 @@ DEFAULT_ROLE = """## Agent Role
 # =============================================================================
 
 WORKFLOW_PROTOCOLS = {
-    "iterate": """## Iterate Workflow
-Phases: implement -> test -> review
+    "iterate": """## Iterate Workflow (engine-governed TDD)
+Phases: test_writing -> implement -> test -> review -> complete.
+Your workflow instance is `__WF_ID__`. Pass it as `workflow_id` in EVERY workflow
+call below (always with your `--caller-id`). The router enforces each phase's tool
+permissions; you move the engine forward yourself. You START in **test_writing**.
 
-### implement
-Write code to satisfy the task. When ready to test:
+### test_writing  (write the spec as tests)
+Write the test file(s) first -- they define "done". File writes are allowed here.
+When the tests are written, advance:
 ```
-mcp-call workflow__workflow_advance_phase '{"workflow": "iterate", "phase": "test"}'
+mcp-call workflow__workflow_advance_phase '{"workflow_id": "__WF_ID__", "target_phase": "implement"}'
 ```
 
-### test
-Run tests: `mcp-call pytest -v <test_file>`
-- All pass -> advance:
+### implement  (make them pass)
+Write the implementation. When you believe the tests will pass, advance:
+```
+mcp-call workflow__workflow_advance_phase '{"workflow_id": "__WF_ID__", "target_phase": "test"}'
+```
+
+### test  (run, commit, hand off)
+Run them: `mcp-call pytest -v <test_file>`
+- Any failure -> back to implement (file writes are blocked in `test`):
   ```
-  mcp-call workflow__workflow_advance_phase '{"workflow": "iterate", "phase": "review"}'
+  mcp-call workflow__workflow_advance_phase '{"workflow_id": "__WF_ID__", "target_phase": "implement"}'
   ```
-- Failures -> back to implement:
+- All green -> commit (do NOT push), pass the checkpoint, advance to review, then STOP:
   ```
-  mcp-call workflow__workflow_advance_phase '{"workflow": "iterate", "phase": "implement"}'
+  mcp-call git add <files>
+  mcp-call git commit -m "<group>: <descriptive message>"
+  mcp-call workflow__workflow_pass_checkpoint '{"workflow_id": "__WF_ID__", "phase": "test"}'
+  mcp-call workflow__workflow_advance_phase '{"workflow_id": "__WF_ID__", "target_phase": "review"}'
   ```
 
 ### review
-Commit your work:
-```
-mcp-call git add <files>
-mcp-call git commit -m "<group>: <descriptive message>"
-```
-Do NOT push -- orchestrator handles that.
-If you spot issues, go back to implement.
+Review, push, and PR are handled by the orchestrator and a separate reviewer
+(you have no write/bash access in `review`). Once you have advanced to review,
+your task is done -- report your branch, the files you wrote, and the passing
+test count, then stop.
 """,
     "orchestrate": """## Orchestrate Workflow
 Phases: intake -> design -> orchestrate
@@ -408,8 +418,15 @@ def assemble_subagent_briefing(
     role,
     workflow_override=None,
     phase_override=None,
+    workflow_instance_id=None,
 ):
-    """Assemble complete briefing for subagent."""
+    """Assemble complete briefing for subagent.
+
+    workflow_instance_id, when given, replaces the __WF_ID__ placeholder in the
+    workflow protocol text so the transition examples name the subagent's own
+    engine instance (e.g. 'iterate:sub-abc123') -- without it the worker cannot
+    address the workflow it is bound to.
+    """
     parts = [UNIVERSAL_PROTOCOL, SUBAGENT_PROTOCOL, get_role_protocol(role)]
 
     workflow, phase = get_workflow_state()
@@ -417,11 +434,15 @@ def assemble_subagent_briefing(
     phase = phase_override or phase
 
     if workflow:
-        parts.append(get_workflow_protocol(workflow))
+        # A per-instance id (iterate:<agent_id>) resolves to its base workflow's
+        # protocol text; the full id is still used for the __WF_ID__ substitution
+        # so transition examples name the worker's own instance.
+        parts.append(get_workflow_protocol(workflow.split(":", 1)[0]))
     if phase:
         parts.append(get_phase_protocol(phase))
 
-    return "\n".join(parts)
+    briefing = "\n".join(parts)
+    return briefing.replace("__WF_ID__", workflow_instance_id or workflow or "")
 
 
 def estimate_tokens(text):

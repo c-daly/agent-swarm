@@ -79,14 +79,14 @@ def main():
     except json.JSONDecodeError:
         return
 
-    tool_name = input_data.get("toolName", "")
+    tool_name = input_data.get("tool_name", "")
 
     # Only intercept Task and Agent tool calls
     if tool_name not in ("Task", "Agent"):
         print(json.dumps(allow()))
         return
 
-    tool_input = input_data.get("toolInput", {})
+    tool_input = input_data.get("tool_input", {})
     agent_type = tool_input.get("subagent_type", "")
     prompt = tool_input.get("prompt", "")
     description = tool_input.get("description", "")
