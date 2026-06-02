@@ -576,6 +576,26 @@ class TestAdvancePhase:
                 {"workflow_id": "iterate", "target_phase": "review"},
             )
 
+    def test_checkpoint_does_not_block_failure_loop(self, ctrl_with_config):
+        """The TDD failure loop (test -> implement) must stay open on a red
+        suite even though the test checkpoint is unpassed -- the checkpoint
+        gates only forward progress (test -> review)."""
+        ctrl_with_config.handle_call(
+            "workflow__workflow_start",
+            {"workflow_id": "iterate", "initial_state": {}},
+        )
+        for target in ("implement", "test"):
+            ctrl_with_config.handle_call(
+                "workflow__workflow_advance_phase",
+                {"workflow_id": "iterate", "target_phase": target},
+            )
+        # test -> implement (kickback) without the checkpoint: allowed
+        result = ctrl_with_config.handle_call(
+            "workflow__workflow_advance_phase",
+            {"workflow_id": "iterate", "target_phase": "implement"},
+        )
+        assert result == {"status": "advanced", "phase": "implement"}
+
     def test_advance_after_checkpoint_passed(self, ctrl_with_config):
         ctrl_with_config.handle_call(
             "workflow__workflow_start",

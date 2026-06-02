@@ -927,11 +927,21 @@ class Controller:
                         f"Invalid transition: {current} -> {target}. "
                         f"Valid targets: {sorted(valid_targets)}"
                     )
-                # Check checkpoint if current phase requires it
+                # Check checkpoint if current phase requires it. The checkpoint
+                # gates FORWARD progress only -- a kickback to an earlier phase
+                # (test -> implement on a red suite, test -> test_writing,
+                # review -> implement) is the failure loop and must stay open
+                # even when the checkpoint has not been (and cannot honestly be)
+                # passed. Phase order is the config's declared phase order.
                 phase_config = config.phases.get(current)
                 if phase_config and phase_config.checkpoint:
+                    order = list(config.phases.keys())
+                    forward = current in order and (
+                        target not in order  # terminal phase -> forward
+                        or order.index(target) > order.index(current)
+                    )
                     ck_key = f"{current}_checkpoint_passed"
-                    if not state.get(ck_key):
+                    if forward and not state.get(ck_key):
                         raise WorkflowError(
                             f"Checkpoint not passed for phase '{current}'. "
                             "Call workflow_pass_checkpoint first."
