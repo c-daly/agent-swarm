@@ -434,7 +434,10 @@ def assemble_subagent_briefing(
     phase = phase_override or phase
 
     if workflow:
-        parts.append(get_workflow_protocol(workflow))
+        # A per-instance id (iterate:<agent_id>) resolves to its base workflow's
+        # protocol text; the full id is still used for the __WF_ID__ substitution
+        # so transition examples name the worker's own instance.
+        parts.append(get_workflow_protocol(workflow.split(":", 1)[0]))
     if phase:
         parts.append(get_phase_protocol(phase))
 

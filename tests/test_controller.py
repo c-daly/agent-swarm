@@ -577,6 +577,21 @@ class TestAdvancePhase:
         )
         assert result == {"status": "advanced", "phase": "implement"}
 
+    def test_wf_start_accepts_per_instance_id(self, ctrl_with_config):
+        """A per-instance workflow id (iterate:<x>) resolves to the base iterate
+        config. Regression: the _wf_config :suffix fallback was once dropped,
+        which made per-instance _wf_start raise 'Unknown workflow'."""
+        result = ctrl_with_config.handle_call(
+            "workflow__workflow_start",
+            {"workflow_id": "iterate:sub-xyz", "initial_state": {}},
+        )
+        assert result["phase"] == "test_writing"
+        # _wf_config resolves the instance id to the same base config object
+        assert (
+            ctrl_with_config._wf_config("iterate:sub-xyz")
+            is ctrl_with_config._wf_config("iterate")
+        )
+
     def test_advance_invalid_transition(self, ctrl_with_config):
         ctrl_with_config.handle_call(
             "workflow__workflow_start",

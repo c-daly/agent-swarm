@@ -57,3 +57,14 @@ class TestIterateBriefingInterpolation:
         # No raw placeholder should survive even when no instance id is supplied.
         assert "__WF_ID__" not in briefing
         assert "iterate" in briefing
+
+    def test_per_instance_override_includes_base_protocol(self):
+        """A per-instance workflow_override resolves to the base iterate protocol
+        text (suffix stripped for the lookup), while __WF_ID__ keeps the full id.
+        Regression: the suffix was once not stripped, omitting the protocol."""
+        briefing = assemble_subagent_briefing(
+            "implementer", workflow_override="iterate:sub-abc123"
+        )
+        assert "Iterate Workflow" in briefing       # base protocol text present
+        assert "iterate:sub-abc123" in briefing      # __WF_ID__ filled with full id
+        assert "__WF_ID__" not in briefing

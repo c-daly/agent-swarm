@@ -802,6 +802,8 @@ class Controller:
         """Resolve a workflow config by id, falling back to the base type for
         per-instance ids (e.g. 'iterate:<agent_id>' resolves to 'iterate')."""
         cfg = self._workflow_configs.get(wf_id)
+        if cfg is None and ":" in wf_id:
+            cfg = self._workflow_configs.get(wf_id.split(":", 1)[0])
         return cfg
 
     def _wf_start(self, args: dict, agent_info=None) -> dict:
