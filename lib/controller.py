@@ -202,7 +202,7 @@ class Controller:
             elif prefix == "router":
                 raw_result = self._handle_router(tool_name, clean_args)
             elif prefix == "workflow":
-                raw_result = self._handle_workflow(tool_name, clean_args)
+                raw_result = self._handle_workflow(tool_name, clean_args, agent_info)
             else:
                 raw_result = self._handle_backend(prefix, tool_name, clean_args)
         except PermissionDeniedError:
@@ -751,9 +751,12 @@ class Controller:
 
     # --- Workflow state operations ---
 
-    def _handle_workflow(self, tool_name: str, args: dict) -> Any:
+    def _handle_workflow(self, tool_name: str, args: dict, agent_info=None) -> Any:
+        # workflow_start binds the calling agent to the workflow it starts, so
+        # the caller is actually governed by it (not its stale prior binding).
+        if tool_name == "workflow_start":
+            return self._wf_start(args, agent_info)
         dispatch = {
-            "workflow_start": self._wf_start,
             "workflow_stop": self._wf_stop,
             "workflow_is_active": self._wf_is_active,
             "workflow_get_state": self._wf_get_state,
@@ -771,7 +774,7 @@ class Controller:
             raise RouterError(f"Unknown workflow tool: {tool_name}")
         return handler(args)
 
-    def _wf_start(self, args: dict) -> dict:
+    def _wf_start(self, args: dict, agent_info=None) -> dict:
         wf_id = args.get("workflow_id", "")
         with self._state_lock:
             if wf_id in self._workflow_state:
@@ -789,6 +792,13 @@ class Controller:
             clean["active_agents"] = {}
             clean["phase"] = config.initial_phase if config else ""
             self._workflow_state[wf_id] = clean
+            # Bind the caller to the workflow it just started so the permission
+            # layer + propagate_phase govern it; without this the caller keeps
+            # its stale session-start binding and never follows this workflow.
+            if agent_info is not None and clean["phase"]:
+                self.permissions.update_agent_phase(
+                    agent_info.agent_id, wf_id, clean["phase"]
+                )
             self.data.record_event({
                 "tool": "workflow__workflow_start",
                 "backend": "workflow",
