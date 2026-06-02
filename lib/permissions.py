@@ -352,12 +352,17 @@ class PermissionChecker:
                 guidance=_GUIDANCE["superblocked"],
             )
 
-        # Level 1: Workflow/Phase rules
+        # Level 1: Workflow/Phase rules. A per-instance workflow id
+        # (e.g. "iterate:<agent_id>" for a parallel worker) resolves to its base
+        # workflow's phase rules, so every isolated instance gets the same phase
+        # permissions as the shared workflow -- mirroring the engine's own
+        # _wf_config base-type fallback.
         if workflow and phase:
             wf_config = rules.get("workflows", {})
-            if workflow in wf_config and phase in wf_config[workflow]:
+            base_wf = workflow.split(":", 1)[0]
+            if base_wf in wf_config and phase in wf_config[base_wf]:
                 result = self._check_level(
-                    tool, args, wf_config[workflow][phase], "phase_blocked", ctx
+                    tool, args, wf_config[base_wf][phase], "phase_blocked", ctx
                 )
                 if result is not None:
                     return result
