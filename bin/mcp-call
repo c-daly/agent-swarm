@@ -32,7 +32,16 @@ from daemon_client import DaemonClient
 
 
 def call_tool(name, arguments, caller_id=None):
-    """Call a tool via the router daemon."""
+    """Call a tool via the router daemon.
+
+    The agent's real role + live phase were registered at dispatch by the
+    agent-dispatch hook (prepare_dispatch). We still complete the DaemonClient
+    registration handshake here because it flips the client-side _registered
+    flag that call_tool requires. The daemon's register_agent handler is
+    idempotent, so this does NOT clobber the agent's role/phase — it attaches
+    this connection to the existing identity. The caller id also travels in
+    arguments["_caller"] for per-call permission resolution.
+    """
     with DaemonClient() as dc:
         if caller_id:
             agent_type = os.environ.get("AGENT_TYPE", "implementer")

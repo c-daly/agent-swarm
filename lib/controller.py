@@ -601,8 +601,15 @@ class Controller:
         # Register in permissions system
         self.permissions.register_agent(agent_id, role)
 
+        # Bind the agent to the live workflow phase so per-phase permissions
+        # (not just its role) govern it. Registered once here in the shared
+        # daemon registry; propagate_phase keeps it current as phases advance,
+        # and later mcp-call traffic resolves this entry via _caller.
+        active_wf, active_phase = get_workflow_state()
+        if active_wf:
+            self.permissions.update_agent_phase(agent_id, active_wf, active_phase)
+
         # Assemble role-specific briefing (only default to iterate if no workflow active)
-        active_wf, _ = get_workflow_state()
         wf_override = "iterate" if role == "implementer" and not active_wf else None
         briefing = assemble_subagent_briefing(role, workflow_override=wf_override)
         caller_header = (
@@ -658,21 +665,32 @@ class Controller:
             agent_type = args.get("agent_type", "")
             workflow_id = args.get("workflow_id")
 
-            # 1. Register in permissions system
-            info = self.permissions.register_agent(
-                agent_id=agent_id,
-                agent_type=agent_type,
-                roles=args.get("roles"),
-            )
+            # Idempotent: prepare_dispatch already registered this agent with its
+            # real role + live phase. A later registration (e.g. mcp-call's
+            # per-connection handshake, which carries AGENT_TYPE/WORKFLOW_ID env
+            # defaults) must ATTACH to that identity, not overwrite it.
+            existing = self.permissions.get_agent(agent_id)
+            if existing is not None:
+                info = existing
+                agent_type = existing.agent_type
+                workflow_id = existing.workflow
+                phase = existing.phase
+            else:
+                # 1. Register in permissions system
+                info = self.permissions.register_agent(
+                    agent_id=agent_id,
+                    agent_type=agent_type,
+                    roles=args.get("roles"),
+                )
 
-            # 2. Determine phase from workflow config (if applicable)
-            phase = None
-            if workflow_id:
-                config = self._workflow_configs.get(workflow_id)
-                if config:
-                    phase = config.initial_phase
-                    info.workflow = workflow_id
-                    info.phase = phase
+                # 2. Determine phase from workflow config (if applicable)
+                phase = None
+                if workflow_id:
+                    config = self._workflow_configs.get(workflow_id)
+                    if config:
+                        phase = config.initial_phase
+                        info.workflow = workflow_id
+                        info.phase = phase
 
             # 3. Record agent state
             agent_state = {

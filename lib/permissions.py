@@ -118,6 +118,76 @@ def _matches_any(tool: str, args: dict, patterns: list[str]) -> tuple[bool, str]
     return False, ""
 
 
+# --- Compound bash-command policing ---------------------------------------
+# native__bash receives a full shell command string. Matching the whole string
+# against patterns like ``git diff*`` is unsound both ways: it blocks legitimate
+# compound commands (``cd /x && git diff``) and lets dangerous ones through
+# (``git status && rm -rf`` — the suffix never has to match an allow rule, and
+# the start-anchored superblock never sees it). So we decompose the command into
+# its constituent sub-commands and check each one independently.
+
+_CHAIN_OPS = {"&&", "||", ";", "|", "&"}
+# Always-safe sub-commands: navigation / no-ops / read-only stream filters.
+# None can delete or (absent a redirect, which we reject) write.
+_BENIGN_ARGV0 = {
+    "cd", "pwd", "true", ":", "echo",
+    "head", "tail", "cat", "wc", "grep", "sort", "uniq", "cut", "nl", "tr", "rev",
+}
+
+
+def _split_subcommands(command: str):
+    """Split a shell command into top-level sub-commands on control operators
+    (``&& || ; | &`` and newlines). Quote-aware. Returns a list, or None if the
+    command can't be tokenized (unbalanced quotes -> caller fails closed)."""
+    import shlex
+
+    subs: list[str] = []
+    for line in command.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            lex = shlex.shlex(line, posix=True, punctuation_chars=True)
+            lex.whitespace_split = True
+            tokens = list(lex)
+        except ValueError:
+            return None
+        cur: list[str] = []
+        for tok in tokens:
+            if tok in _CHAIN_OPS or (tok and set(tok) <= {"&", "|", ";"}):
+                if cur:
+                    subs.append(" ".join(cur))
+                    cur = []
+            else:
+                cur.append(tok)
+        if cur:
+            subs.append(" ".join(cur))
+    return subs or [command]
+
+
+def _argv0(subcmd: str) -> str:
+    parts = subcmd.split()
+    return parts[0] if parts else ""
+
+
+def _has_substitution(command: str) -> bool:
+    return any(marker in command for marker in ("$(", "`", "<(", ">("))
+
+
+def _has_write_redirect(command: str) -> bool:
+    """True if the command writes to a file via ``>`` / ``>>`` (fd-dup like
+    ``2>&1`` is fine and not flagged)."""
+    import shlex
+
+    try:
+        lex = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        tokens = list(lex)
+    except ValueError:
+        return True
+    return any(tok in (">", ">>") for tok in tokens)
+
+
 class PermissionChecker:
     """Evaluates tool access rules from permissions.yaml.
 
@@ -145,10 +215,113 @@ class PermissionChecker:
     ) -> tuple[bool, BlockedResponse | None]:
         """Check if a tool call is allowed.
 
+        native__bash commands are decomposed into their constituent
+        sub-commands (split on shell control operators) and each is checked, so
+        a compound command is allowed only if EVERY part is allowed and NO part
+        is superblocked. Closes the prefix-injection hole and the over-strict
+        ``cd /x && git diff`` case (see _check_bash). All other tools use
+        _check_single unchanged.
+
         Returns:
             (True, None) if allowed.
             (False, BlockedResponse) if blocked.
         """
+        if tool == "native__bash":
+            return self._check_bash(args, agent)
+        return self._check_single(tool, args, agent)
+
+    def _check_bash(
+        self,
+        args: dict,
+        agent: AgentInfo | None,
+    ) -> tuple[bool, BlockedResponse | None]:
+        """Decompose a bash command and require every sub-command to pass."""
+        command = (args.get("command") or "").strip()
+        if not command:
+            return self._check_single("native__bash", args, agent)
+
+        agent_type = agent.agent_type if agent else ""
+        agent_id = agent.agent_id if agent else ""
+        workflow = agent.workflow if agent else None
+        phase = agent.phase if agent else None
+        phase_str = f"{workflow}/{phase}" if workflow and phase else ""
+
+        def deny(reason: str, rule: str):
+            return False, BlockedResponse(
+                reason=reason,
+                tool="native__bash",
+                agent_type=agent_type,
+                agent_id=agent_id,
+                phase=phase_str,
+                rule_that_blocked=rule,
+                guidance=_GUIDANCE["blocked"],
+            )
+
+        # "Unrestricted" = a bare native__bash grant applies to this caller. Probe
+        # with a token that can only match a bare grant, never an arg pattern like
+        # git diff* nor a superblock.
+        unrestricted, _ = self._check_single(
+            "native__bash", {"command": "\x00probe"}, agent
+        )
+
+        subs = _split_subcommands(command)
+        if subs is None:
+            # Can't safely decompose (unusual quoting / shell syntax). A caller
+            # with a bare native__bash grant already has full shell, so defer to
+            # the single-command check; a restricted caller fails closed.
+            if unrestricted:
+                return self._check_single("native__bash", args, agent)
+            return deny("unparseable shell command", "bash.unparseable")
+
+        # Restricted callers (bash scoped to specific programs) additionally
+        # cannot use command substitution or write redirection, which would
+        # smuggle work past the allowlist.
+        if not unrestricted:
+            if _has_substitution(command):
+                return deny(
+                    "command substitution is not permitted in this phase",
+                    "bash.substitution",
+                )
+            if _has_write_redirect(command):
+                return deny(
+                    "file redirection is not permitted in this phase",
+                    "bash.redirect",
+                )
+
+        # Every sub-command must pass. A superblocked sub-command always blocks
+        # the whole command. Benign navigation / read-only filters (cd, head, …)
+        # may ride along, but ONLY when at least one other sub-command is
+        # explicitly allowed — so a phase that blocks bash outright still blocks
+        # "echo" etc., while "cd /x && git diff" and "git log | head" work.
+        allowed_count = 0
+        benign_block = None
+        for sub in subs:
+            if not sub:
+                continue
+            ok, resp = self._check_single("native__bash", {"command": sub}, agent)
+            if ok:
+                allowed_count += 1
+                continue
+            reason = (resp.reason if resp else "") or ""
+            if reason.startswith("superblock"):
+                return False, resp
+            if _argv0(sub) in _BENIGN_ARGV0:
+                benign_block = benign_block or resp
+                continue
+            return False, resp
+        if allowed_count == 0:
+            # Nothing was explicitly allowed -- only benign ride-alongs, or a
+            # command that tokenized to no real sub-command. Fail closed.
+            return False, benign_block
+        return True, None
+
+    def _check_single(
+        self,
+        tool: str,
+        args: dict,
+        agent: AgentInfo | None = None,
+    ) -> tuple[bool, BlockedResponse | None]:
+        """Check a single (non-compound) tool call against the layered rules."""
         rules = self._rules
         global_rules = rules.get("global", {})
         agent_type = agent.agent_type if agent else ""
