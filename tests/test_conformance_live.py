@@ -29,7 +29,7 @@ from pathlib import Path
 import pytest
 
 from lib.controller import Controller
-from lib.daemon_client import DaemonClient
+from lib.daemon_client import DaemonClient, DaemonError
 from lib.router import Router
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -92,6 +92,7 @@ SIMPLE_GATING = {
 
 def _assert_gating(controller, agent_id, phase):
     agent = controller.permissions.get_agent(agent_id)
+    assert agent is not None, f"agent {agent_id} is not registered"
     assert agent.phase == phase, f"expected phase {phase}, agent is in {agent.phase}"
     allowed_tool, blocked_tool = SIMPLE_GATING[phase]
     ok, _ = controller.permissions.check(allowed_tool, {}, agent)
@@ -135,7 +136,7 @@ def test_simple_live_conformance(governed_daemon):
         _assert_gating(controller, agent_id, "verify")
 
         # illegal transition is rejected (verify -> plan is not a legal edge)
-        with pytest.raises(Exception, match="Invalid transition"):
+        with pytest.raises(DaemonError, match="Invalid transition"):
             client.workflow_advance_phase("simple", "plan")
 
         # reach terminal
@@ -143,5 +144,8 @@ def test_simple_live_conformance(governed_daemon):
         client.workflow_advance_phase("simple", "done")
         assert controller.permissions.get_agent(agent_id).phase == "done"
     finally:
-        client.workflow_stop("simple")
+        try:
+            client.workflow_stop("simple")
+        except DaemonError:
+            pass  # workflow may never have started if an earlier assertion failed
         client.close()
