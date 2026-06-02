@@ -611,6 +611,7 @@ class Controller:
         # so the start is a property of dispatch (nothing to remember) and
         # parallel workers get isolated instances.
         active_wf, active_phase = get_workflow_state()
+        wf_instance = None
         if active_wf:
             self.permissions.update_agent_phase(agent_id, active_wf, active_phase)
             wf_override = None
@@ -623,10 +624,13 @@ class Controller:
             init_phase = iter_cfg.initial_phase if iter_cfg else "test_writing"
             self.permissions.update_agent_phase(agent_id, instance_id, init_phase)
             wf_override = "iterate"
+            wf_instance = instance_id
         else:
             wf_override = None
 
-        briefing = assemble_subagent_briefing(role, workflow_override=wf_override)
+        briefing = assemble_subagent_briefing(
+            role, workflow_override=wf_override, workflow_instance_id=wf_instance
+        )
         caller_header = (
             f"## Your Agent Identity\n"
             f"Agent ID: `{agent_id}`\n"
