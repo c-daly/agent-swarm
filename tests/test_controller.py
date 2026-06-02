@@ -833,3 +833,19 @@ class TestTelemetry:
         events = ctrl.data.query_events(tool="native__read_file")
         assert len(events) >= 1
         assert events[0].status == "success"
+
+
+class TestWorkflowStartBinding:
+    def test_workflow_start_binds_caller(self, ctrl_with_config):
+        c = ctrl_with_config
+        agent = c.permissions.register_agent("orch", "pm")
+        assert agent.workflow != "iterate"  # not bound to it yet
+        c._wf_start({"workflow_id": "iterate"}, agent)
+        bound = c.permissions.get_agent("orch")
+        assert bound.workflow == "iterate"
+        assert bound.phase == "test_writing"  # iterate's initial phase
+
+    def test_workflow_start_without_caller_is_safe(self, ctrl_with_config):
+        c = ctrl_with_config
+        c._wf_start({"workflow_id": "iterate"}, None)  # no caller -> no binding, no crash
+        assert "iterate" in c._workflow_state
