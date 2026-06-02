@@ -6,7 +6,7 @@ Bug A. `register_main_agent` calls `dc.call_tool("router__register_agent", ...)`
 which sends JSON-RPC method `tools/call`. The DaemonClient guard in
 `_call` requires `register()` first for any method that isn't in the
 narrow exempt set, so the bootstrap registration always raises
-`RuntimeError("caller-id() before tool calls")`. The hook
+`RuntimeError("Must call register() before tool calls")`. The hook
 swallows it and the main agent never gets phase-bound.
 
 Bug B. `auto_start_workflow` and `register_main_agent` both race the
