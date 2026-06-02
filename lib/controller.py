@@ -605,12 +605,27 @@ class Controller:
         # (not just its role) govern it. Registered once here in the shared
         # daemon registry; propagate_phase keeps it current as phases advance,
         # and later mcp-call traffic resolves this entry via _caller.
+        # Bind the new subagent. Dispatched within an active workflow (e.g.
+        # develop) -> inherit it. A *standalone* implementer is an iterate worker
+        # -> auto-start its own engine-backed iterate instance and bind it here,
+        # so the start is a property of dispatch (nothing to remember) and
+        # parallel workers get isolated instances.
         active_wf, active_phase = get_workflow_state()
         if active_wf:
             self.permissions.update_agent_phase(agent_id, active_wf, active_phase)
+            wf_override = None
+        elif role == "implementer":
+            instance_id = f"iterate:{agent_id}"
+            self._wf_start(
+                {"workflow_id": instance_id, "initial_state": {}}, agent_info=None
+            )
+            iter_cfg = self._wf_config("iterate")
+            init_phase = iter_cfg.initial_phase if iter_cfg else "test_writing"
+            self.permissions.update_agent_phase(agent_id, instance_id, init_phase)
+            wf_override = "iterate"
+        else:
+            wf_override = None
 
-        # Assemble role-specific briefing (only default to iterate if no workflow active)
-        wf_override = "iterate" if role == "implementer" and not active_wf else None
         briefing = assemble_subagent_briefing(role, workflow_override=wf_override)
         caller_header = (
             f"## Your Agent Identity\n"
@@ -686,7 +701,7 @@ class Controller:
                 # 2. Determine phase from workflow config (if applicable)
                 phase = None
                 if workflow_id:
-                    config = self._workflow_configs.get(workflow_id)
+                    config = self._wf_config(workflow_id)
                     if config:
                         phase = config.initial_phase
                         info.workflow = workflow_id
@@ -774,13 +789,21 @@ class Controller:
             raise RouterError(f"Unknown workflow tool: {tool_name}")
         return handler(args)
 
+    def _wf_config(self, wf_id: str):
+        """Resolve a workflow config by id, falling back to the base type for
+        per-instance ids (e.g. 'iterate:<agent_id>' resolves to 'iterate')."""
+        cfg = self._workflow_configs.get(wf_id)
+        if cfg is None and ":" in wf_id:
+            cfg = self._workflow_configs.get(wf_id.split(":", 1)[0])
+        return cfg
+
     def _wf_start(self, args: dict, agent_info=None) -> dict:
         wf_id = args.get("workflow_id", "")
         with self._state_lock:
             if wf_id in self._workflow_state:
                 raise WorkflowError(f"Workflow already exists: {wf_id}")
             # Validate against workflow config if available
-            config = self._workflow_configs.get(wf_id)
+            config = self._wf_config(wf_id)
             if self._workflow_configs and config is None:
                 raise WorkflowError(f"Unknown workflow: {wf_id}")
             # Strip protected keys from user-provided initial state
@@ -827,7 +850,7 @@ class Controller:
             if wf_id not in self._workflow_state:
                 return False
             # Terminal phase means workflow completed
-            config = self._workflow_configs.get(wf_id)
+            config = self._wf_config(wf_id)
             if config and self._workflow_state[wf_id].get("phase") == config.terminal_phase:
                 return False
             return True
@@ -892,7 +915,7 @@ class Controller:
             state = self._workflow_state[wf_id]
             current = state.get("phase", "")
             # Validate transition if config available
-            config = self._workflow_configs.get(wf_id)
+            config = self._wf_config(wf_id)
             if config:
                 valid_targets = config.transitions.get(current, set())
                 if target not in valid_targets:
@@ -929,7 +952,7 @@ class Controller:
             if not current:
                 raise WorkflowError("No active phase to checkpoint")
             # Validate that current phase has a checkpoint (if config available)
-            config = self._workflow_configs.get(wf_id)
+            config = self._wf_config(wf_id)
             if config:
                 phase_config = config.phases.get(current)
                 if phase_config and not phase_config.checkpoint:

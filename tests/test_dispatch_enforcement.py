@@ -18,6 +18,9 @@ def controller():
             roles=["editor", "shell_safe"],
         )
         ctrl._agent_state = {}
+        ctrl._workflow_configs = {}
+        ctrl._workflow_state = {}
+        ctrl.data = MagicMock()
         ctrl._state_lock = __import__("threading").RLock()
         yield ctrl
 
@@ -60,6 +63,30 @@ class TestPrepareDispatch:
         assert agent_id in controller._agent_state
         assert controller._agent_state[agent_id]["status"] == "pending"
         assert controller._agent_state[agent_id]["description"] == "test task"
+
+    def test_standalone_implementer_autostarts_iterate(self, controller):
+        """A standalone implementer auto-starts its own engine-backed iterate
+        instance and is bound to it -- the start is a property of dispatch."""
+        with patch("controller.get_workflow_state", return_value=(None, None)), \
+                patch("controller.assemble_subagent_briefing", return_value=""):
+            result = controller._prepare_dispatch({"agent_type": "implementer"})
+        agent_id = result["agent_id"]
+        assert f"iterate:{agent_id}" in controller._workflow_state
+        controller.permissions.update_agent_phase.assert_any_call(
+            agent_id, f"iterate:{agent_id}", "test_writing"
+        )
+
+    def test_implementer_inherits_active_workflow(self, controller):
+        """An implementer dispatched within an active workflow inherits it
+        (does NOT auto-start iterate)."""
+        with patch("controller.get_workflow_state", return_value=("develop", "implement")), \
+                patch("controller.assemble_subagent_briefing", return_value=""):
+            result = controller._prepare_dispatch({"agent_type": "implementer"})
+        agent_id = result["agent_id"]
+        assert not any(k.startswith("iterate:") for k in controller._workflow_state)
+        controller.permissions.update_agent_phase.assert_any_call(
+            agent_id, "develop", "implement"
+        )
 
     def test_missing_agent_type_raises(self, controller):
         from lib.errors import RouterError
