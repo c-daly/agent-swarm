@@ -5,7 +5,7 @@ from datetime import date, datetime
 
 import pytest
 
-from lib.datastore import DataStore, DaySummary, EventRecord, ToolSummary
+from lib.datastore import DataStore, EventRecord
 
 
 @pytest.fixture
@@ -38,6 +38,12 @@ class TestRecordAndQuery:
         assert events[0].tool == "native__bash"
         assert events[0].backend == "native"
         assert isinstance(events[0], EventRecord)
+
+    def test_workflow_and_phase_captured(self, store):
+        store.record_event(_make_event(workflow_id="develop", phase="implement"))
+        events = store.get_session_events("sess-1")
+        assert events[0].workflow_id == "develop"
+        assert events[0].phase == "implement"
 
     def test_defaults(self, store):
         store.record_event({"tool": "x", "backend": "y", "status": "success"})
@@ -193,3 +199,57 @@ class TestDataStoreLifecycle:
         mode = s._conn.execute("PRAGMA journal_mode").fetchone()[0]
         assert mode == "wal"
         s.close()
+
+
+def test_migrate_adds_phase_column_to_pre_phase_db(tmp_path):
+    """A pre-phase events table gains the column via _migrate()'s ALTER branch.
+
+    The fresh-DB schema already includes `phase`, so _migrate() skips the ALTER
+    on a new DB; this exercises the backward-compat path for an existing DB.
+    """
+    import sqlite3
+
+    db_path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            tool TEXT NOT NULL,
+            backend TEXT NOT NULL,
+            status TEXT NOT NULL,
+            duration_ms INTEGER DEFAULT 0,
+            session_id TEXT DEFAULT '',
+            agent_id TEXT DEFAULT '',
+            agent_type TEXT DEFAULT '',
+            workflow_id TEXT DEFAULT '',
+            error_type TEXT DEFAULT '',
+            was_summarized INTEGER DEFAULT 0,
+            original_size INTEGER DEFAULT 0,
+            summary_size INTEGER,
+            input_tokens INTEGER DEFAULT 0,
+            output_tokens INTEGER DEFAULT 0,
+            cache_read_tokens INTEGER DEFAULT 0,
+            cache_creation_tokens INTEGER DEFAULT 0
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO events (timestamp, tool, backend, status) "
+        "VALUES ('2026-01-01T00:00:00Z', 'legacy_tool', 'native', 'success')"
+    )
+    conn.commit()
+    conn.close()
+
+    # Opening the store runs _migrate(), which must ALTER the phase column in.
+    store = DataStore(db_path)
+    try:
+        cols = {r[1] for r in store._conn.execute("PRAGMA table_info(events)")}
+        assert "phase" in cols, "migration did not add the phase column to a pre-phase DB"
+        # the pre-existing row survives and defaults phase to ''
+        events = store.query_events(tool="legacy_tool")
+        assert len(events) == 1
+        assert events[0].phase == ""
+    finally:
+        store.close()

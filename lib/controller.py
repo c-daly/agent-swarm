@@ -250,6 +250,8 @@ class Controller:
             "session_id": agent_info.session_id if agent_info else "",
             "agent_id": agent_info.agent_id if agent_info else "",
             "agent_type": agent_info.agent_type if agent_info else "",
+            "workflow_id": (agent_info.workflow or "") if agent_info else "",
+            "phase": (agent_info.phase or "") if agent_info else "",
         })
 
         return result
@@ -275,6 +277,8 @@ class Controller:
                 "session_id": agent_info.session_id if agent_info else "",
                 "agent_id": agent_info.agent_id if agent_info else "",
                 "agent_type": agent_info.agent_type if agent_info else "",
+                "workflow_id": (agent_info.workflow or "") if agent_info else "",
+                "phase": (agent_info.phase or "") if agent_info else "",
             })
         except Exception:
             log.warning("Failed to record error event for %s", tool)
