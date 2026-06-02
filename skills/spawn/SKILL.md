@@ -16,11 +16,11 @@ call tools via `mcp-call --caller-id=<its id>`. Two steps, never skip either:
    ```
    Task(
      subagent_type="<role>",
-     prompt=reg.briefing + "\n\n" + <task description + working dir>,
+     prompt=reg["briefing"] + "\n\n" + <task description + working dir>,
    )
    ```
 
-`reg.briefing` carries the agent's id, the `mcp-call`/`--caller-id` convention,
+`reg["briefing"]` carries the agent's id, the `mcp-call`/`--caller-id` convention,
 its role rules, and its workflow phases. **Without it the agent has no identity
 and its tool calls are denied.**
 
