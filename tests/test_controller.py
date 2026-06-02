@@ -261,6 +261,40 @@ class TestRouterOps:
         assert state["status"] == "registered"
         assert "registered_at" in state
 
+    def test_update_agent_phase_accepts_workflow_id(self, ctrl):
+        """update_agent_phase honors the conventional `workflow_id` key (not just
+        the legacy `workflow`) and syncs the display state -- regression for the
+        bug that left dispatched workers unbound (blank workflow/phase)."""
+        ctrl.handle_call(
+            "router__register_agent",
+            {"agent_id": "w1", "agent_type": "implementer"},
+        )
+        ctrl.handle_call(
+            "router__update_agent_phase",
+            {"agent_id": "w1", "workflow_id": "iterate:w1", "phase": "implement"},
+        )
+        # permission binding (what drives phase gating) is updated
+        agent = ctrl.permissions.get_agent("w1")
+        assert agent.workflow == "iterate:w1"
+        assert agent.phase == "implement"
+        # display state is kept in sync so agent_get_state is truthful
+        state = ctrl.handle_call("workflow__agent_get_state", {"agent_id": "w1"})
+        assert state["workflow_id"] == "iterate:w1"
+        assert state["phase"] == "implement"
+
+    def test_update_agent_phase_legacy_workflow_key(self, ctrl):
+        """The legacy `workflow` key still binds (session-start used it)."""
+        ctrl.handle_call(
+            "router__register_agent",
+            {"agent_id": "w2", "agent_type": "implementer"},
+        )
+        ctrl.handle_call(
+            "router__update_agent_phase",
+            {"agent_id": "w2", "workflow": "iterate", "phase": "test"},
+        )
+        assert ctrl.permissions.get_agent("w2").workflow == "iterate"
+        assert ctrl.permissions.get_agent("w2").phase == "test"
+
     def test_register_agent_without_workflow_has_no_phase(self, ctrl):
         """register_agent without workflow_id should have no phase."""
         result = ctrl.handle_call(

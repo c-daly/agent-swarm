@@ -742,11 +742,22 @@ class Controller:
             }
 
         if tool_name == "update_agent_phase":
+            agent_id = args.get("agent_id", "")
+            # Accept `workflow_id` (the key every other workflow tool uses) as
+            # well as the legacy `workflow`. Reading only `workflow` silently set
+            # the binding to "" for any caller using the conventional key, which
+            # left dispatched workers unbound (no phase gating).
+            workflow = args.get("workflow_id") or args.get("workflow", "")
+            phase = args.get("phase", "")
             self.permissions.update_agent_phase(
-                agent_id=args.get("agent_id", ""),
-                workflow=args.get("workflow", ""),
-                phase=args.get("phase", ""),
+                agent_id=agent_id, workflow=workflow, phase=phase,
             )
+            # Keep the display/agent_state snapshot in sync with the live
+            # permission binding so agent_get_state is not misleading.
+            with self._state_lock:
+                if agent_id in self._agent_state:
+                    self._agent_state[agent_id]["workflow_id"] = workflow
+                    self._agent_state[agent_id]["phase"] = phase
             return {"result": "ok"}
 
         if tool_name == "get_allowed_tools":
@@ -797,8 +808,6 @@ class Controller:
         """Resolve a workflow config by id, falling back to the base type for
         per-instance ids (e.g. 'iterate:<agent_id>' resolves to 'iterate')."""
         cfg = self._workflow_configs.get(wf_id)
-        if cfg is None and ":" in wf_id:
-            cfg = self._workflow_configs.get(wf_id.split(":", 1)[0])
         return cfg
 
     def _wf_start(self, args: dict, agent_info=None) -> dict:

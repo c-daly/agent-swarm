@@ -282,7 +282,7 @@ def register_main_agent():
                 return
             dc.call_tool("router__update_agent_phase", {
                 "agent_id": "",
-                "workflow": active_wf,
+                "workflow_id": active_wf,
                 "phase": phase,
             })
         except Exception as e:
