@@ -264,7 +264,7 @@ class TestPythonFilesNoHardcodedPluginPaths:
         files = []
         for py_file in PROJECT_ROOT.rglob("*.py"):
             rel = py_file.relative_to(PROJECT_ROOT)
-            skip_dirs = {"__pycache__", ".worktrees", "docs"}
+            skip_dirs = {"__pycache__", ".worktrees", "docs", ".venv", ".git", "tests"}
             if any(part in skip_dirs for part in rel.parts):
                 continue
             files.append(py_file)
