@@ -93,9 +93,9 @@ class TestDaemonClientBootstrapToolExemption:
                 "roles": ["editor", "shell_full"],
             })
         except RuntimeError as e:
-            assert "Must call register" not in str(e), (
-                "Guard still blocks router__register_agent before register()"
-            )
+            if "caller-id" in str(e):
+                pytest.fail("Guard still blocks router__register_agent before register()")
+            raise
 
     def test_router_update_agent_phase_bypasses_guard(self):
         dc = self._client_with_fake_sock()
@@ -106,14 +106,14 @@ class TestDaemonClientBootstrapToolExemption:
                 "phase": "plan",
             })
         except RuntimeError as e:
-            assert "Must call register" not in str(e), (
-                "Guard still blocks router__update_agent_phase before register()"
-            )
+            if "caller-id" in str(e):
+                pytest.fail("Guard still blocks router__update_agent_phase before register()")
+            raise
 
     def test_non_bootstrap_tool_still_guarded(self):
         """Guard must remain in place for any tool that isn't part of bootstrap."""
         dc = self._client_with_fake_sock()
-        with pytest.raises(RuntimeError, match="Must call register"):
+        with pytest.raises(RuntimeError, match="caller-id"):
             dc.call_tool("router__ping", {})
 
 

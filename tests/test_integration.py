@@ -284,7 +284,7 @@ class TestDaemonClientConnection:
     def test_must_register_before_calls(self, mock_daemon):
         c = DaemonClient(port=mock_daemon.port, timeout=5.0)
         c.connect()
-        with pytest.raises(RuntimeError, match="Must call register"):
+        with pytest.raises(RuntimeError, match="caller-id"):
             c.call_tool("native__bash", {"command": "ls"})
         c.close()
 
