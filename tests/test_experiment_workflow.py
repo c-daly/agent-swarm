@@ -273,3 +273,298 @@ class TestExperimentWorkflow:
 
         stop()
         mock_dc.workflow_advance_phase.assert_not_called()
+
+
+import experiment_harness  # noqa: E402
+from experiment_harness import EvalResult  # noqa: E402
+
+
+class TestEvalPhaseAutoRun:
+    """CHANGE 1: eval phase runs the harness itself rather than trusting self-report."""
+
+    def _to_eval(self, advance_phase):
+        for phase in ["plan", "work", "eval"]:
+            advance_phase(phase)
+
+    def test_run_eval_phase_auto_runs_harness_and_records(self, mock_daemon):
+        from experiment_workflow import start_experiment, advance_phase, run_eval_phase
+
+        _, state = mock_daemon
+        criteria = [{"metric": "accuracy", "threshold": 0.9, "comparison": ">=", "primary": True}]
+        start_experiment(experiment_dir="/tmp/exp", task="test", success_criteria=criteria)
+        self._to_eval(advance_phase)
+
+        fake = EvalResult(passed=True, metrics={"accuracy": 0.95})
+        with patch("experiment_harness.run_eval", return_value=fake) as mock_run:
+            out = run_eval_phase()
+
+        mock_run.assert_called_once()
+        assert out["passed"] is True
+        assert out["metrics"] == {"accuracy": 0.95}
+        assert any(d["metric"] == "accuracy" for d in out["criteria_details"])
+        assert state["last_eval_metrics"] == {"accuracy": 0.95}
+        assert state["last_eval_passed"] is True
+
+    def test_run_eval_phase_passed_reflects_criteria_not_result(self, mock_daemon):
+        from experiment_workflow import start_experiment, advance_phase, run_eval_phase
+
+        _, state = mock_daemon
+        criteria = [{"metric": "accuracy", "threshold": 0.9, "comparison": ">=", "primary": True}]
+        start_experiment(experiment_dir="/tmp/exp", task="test", success_criteria=criteria)
+        self._to_eval(advance_phase)
+
+        fake = EvalResult(passed=True, metrics={"accuracy": 0.5})
+        with patch("experiment_harness.run_eval", return_value=fake):
+            out = run_eval_phase()
+
+        assert out["passed"] is False
+        assert state["last_eval_passed"] is False
+
+    def test_run_eval_phase_requires_eval_phase(self, mock_daemon):
+        from experiment_workflow import (
+            start_experiment, advance_phase, run_eval_phase, ExperimentWorkflowError,
+        )
+
+        _, state = mock_daemon
+        start_experiment(experiment_dir="/tmp/exp", task="test")
+        advance_phase("plan")
+        fake = EvalResult(passed=True, metrics={})
+        with patch("experiment_harness.run_eval", return_value=fake):
+            with pytest.raises(ExperimentWorkflowError):
+                run_eval_phase()
+
+    def test_run_eval_phase_requires_active(self, mock_daemon):
+        from experiment_workflow import run_eval_phase, ExperimentWorkflowError
+
+        _, state = mock_daemon
+        with pytest.raises(ExperimentWorkflowError):
+            run_eval_phase()
+
+
+class TestDecideToDoneGate:
+    """CHANGE 2: decide->done independently re-verifies success criteria."""
+
+    def _drive_to_decide(self, advance_phase):
+        for phase in ["plan", "work", "eval", "journal", "decide"]:
+            advance_phase(phase)
+
+    def test_done_blocked_when_recorded_metrics_fail(self, mock_daemon):
+        from experiment_workflow import (
+            start_experiment, advance_phase, record_eval_result, ExperimentWorkflowError,
+        )
+
+        _, state = mock_daemon
+        criteria = [{"metric": "accuracy", "threshold": 0.9, "comparison": ">=", "primary": True}]
+        start_experiment(experiment_dir="/tmp/exp", task="test", success_criteria=criteria)
+        for phase in ["plan", "work", "eval"]:
+            advance_phase(phase)
+        record_eval_result({"accuracy": 0.5}, passed=False)
+        for phase in ["journal", "decide"]:
+            advance_phase(phase)
+        with pytest.raises(ExperimentWorkflowError, match="criteria not met"):
+            advance_phase("done")
+        assert state.get("active") is not False
+
+    def test_done_blocked_when_no_eval_recorded(self, mock_daemon):
+        from experiment_workflow import (
+            start_experiment, advance_phase, ExperimentWorkflowError,
+        )
+
+        _, state = mock_daemon
+        criteria = [{"metric": "accuracy", "threshold": 0.9, "comparison": ">=", "primary": True}]
+        start_experiment(experiment_dir="/tmp/exp", task="test", success_criteria=criteria)
+        self._drive_to_decide(advance_phase)
+        with pytest.raises(ExperimentWorkflowError, match="criteria not met"):
+            advance_phase("done")
+
+    def test_done_blocked_when_claimed_pass_but_metrics_fail(self, mock_daemon):
+        from experiment_workflow import (
+            start_experiment, advance_phase, record_eval_result, ExperimentWorkflowError,
+        )
+
+        _, state = mock_daemon
+        criteria = [{"metric": "accuracy", "threshold": 0.9, "comparison": ">=", "primary": True}]
+        start_experiment(experiment_dir="/tmp/exp", task="test", success_criteria=criteria)
+        for phase in ["plan", "work", "eval"]:
+            advance_phase(phase)
+        record_eval_result({"accuracy": 0.5}, passed=True)
+        for phase in ["journal", "decide"]:
+            advance_phase(phase)
+        with pytest.raises(ExperimentWorkflowError, match="criteria not met"):
+            advance_phase("done")
+
+    def test_done_allowed_when_metrics_pass(self, mock_daemon):
+        from experiment_workflow import (
+            start_experiment, advance_phase, record_eval_result,
+        )
+
+        mock_dc, state = mock_daemon
+        criteria = [{"metric": "accuracy", "threshold": 0.9, "comparison": ">=", "primary": True}]
+        start_experiment(experiment_dir="/tmp/exp", task="test", success_criteria=criteria)
+        for phase in ["plan", "work", "eval"]:
+            advance_phase(phase)
+        record_eval_result({"accuracy": 0.95}, passed=True)
+        for phase in ["journal", "decide"]:
+            advance_phase(phase)
+        advance_phase("done")
+        assert state["active"] is False
+        assert state["exit_reason"] == "success"
+        mock_dc.workflow_stop.assert_called_with("experiment")
+
+    def test_done_allowed_when_no_criteria(self, mock_daemon):
+        from experiment_workflow import start_experiment, advance_phase
+
+        mock_dc, state = mock_daemon
+        start_experiment(experiment_dir="/tmp/exp", task="test")
+        for phase in ["plan", "work", "eval", "journal", "decide"]:
+            advance_phase(phase)
+        advance_phase("done")
+        assert state["active"] is False
+        assert state["exit_reason"] == "success"
+
+
+class TestNoPrimaryCriteriaGate:
+    """PR #121 review: close the no-primary-criteria bypass.
+
+    When success_criteria is non-empty but NO criterion is marked primary,
+    CriteriaResult.passed (== primary_passed) is vacuously True even if every
+    criterion fails. The gate and run_eval_phase must fall back to all_passed.
+    """
+
+    def test_done_blocked_when_nonprimary_criteria_fail(self, mock_daemon):
+        from experiment_workflow import (
+            start_experiment, advance_phase, record_eval_result, ExperimentWorkflowError,
+        )
+
+        _, state = mock_daemon
+        # NON-empty criteria, NO primary, recorded metrics FAIL all of them.
+        criteria = [{"metric": "accuracy", "threshold": 0.9, "comparison": ">="}]
+        start_experiment(experiment_dir="/tmp/exp", task="test", success_criteria=criteria)
+        for phase in ["plan", "work", "eval"]:
+            advance_phase(phase)
+        record_eval_result({"accuracy": 0.5}, passed=False)
+        for phase in ["journal", "decide"]:
+            advance_phase(phase)
+        with pytest.raises(ExperimentWorkflowError, match="criteria not met"):
+            advance_phase("done")
+        assert state.get("active") is not False
+
+    def test_done_allowed_when_nonprimary_criteria_pass(self, mock_daemon):
+        from experiment_workflow import (
+            start_experiment, advance_phase, record_eval_result,
+        )
+
+        mock_dc, state = mock_daemon
+        criteria = [{"metric": "accuracy", "threshold": 0.9, "comparison": ">="}]
+        start_experiment(experiment_dir="/tmp/exp", task="test", success_criteria=criteria)
+        for phase in ["plan", "work", "eval"]:
+            advance_phase(phase)
+        record_eval_result({"accuracy": 0.95}, passed=True)
+        for phase in ["journal", "decide"]:
+            advance_phase(phase)
+        advance_phase("done")
+        assert state["active"] is False
+        assert state["exit_reason"] == "success"
+        mock_dc.workflow_stop.assert_called_with("experiment")
+
+    def test_run_eval_phase_records_false_when_nonprimary_fail(self, mock_daemon):
+        from experiment_workflow import start_experiment, advance_phase, run_eval_phase
+
+        _, state = mock_daemon
+        criteria = [{"metric": "accuracy", "threshold": 0.9, "comparison": ">="}]
+        start_experiment(experiment_dir="/tmp/exp", task="test", success_criteria=criteria)
+        for phase in ["plan", "work", "eval"]:
+            advance_phase(phase)
+
+        fake = EvalResult(passed=True, metrics={"accuracy": 0.5})
+        with patch("experiment_harness.run_eval", return_value=fake):
+            out = run_eval_phase()
+
+        # Previously would record True (no primary -> primary_passed vacuously True).
+        assert out["passed"] is False
+        assert state["last_eval_passed"] is False
+
+    def test_run_eval_phase_records_true_when_nonprimary_pass(self, mock_daemon):
+        from experiment_workflow import start_experiment, advance_phase, run_eval_phase
+
+        _, state = mock_daemon
+        criteria = [{"metric": "accuracy", "threshold": 0.9, "comparison": ">="}]
+        start_experiment(experiment_dir="/tmp/exp", task="test", success_criteria=criteria)
+        for phase in ["plan", "work", "eval"]:
+            advance_phase(phase)
+
+        fake = EvalResult(passed=False, metrics={"accuracy": 0.95})
+        with patch("experiment_harness.run_eval", return_value=fake):
+            out = run_eval_phase()
+
+        assert out["passed"] is True
+        assert state["last_eval_passed"] is True
+
+    def test_run_eval_phase_missing_experiment_dir_raises(self, mock_daemon):
+        from experiment_workflow import (
+            start_experiment, advance_phase, run_eval_phase, ExperimentWorkflowError,
+        )
+
+        _, state = mock_daemon
+        start_experiment(experiment_dir="/tmp/exp", task="test")
+        for phase in ["plan", "work", "eval"]:
+            advance_phase(phase)
+        # Simulate state that lost experiment_dir.
+        state.pop("experiment_dir", None)
+
+        fake = EvalResult(passed=True, metrics={})
+        with patch("experiment_harness.run_eval", return_value=fake):
+            with pytest.raises(ExperimentWorkflowError, match="experiment_dir"):
+                run_eval_phase()
+
+
+class TestDoneGateMetricsDistinction:
+    """decide->done gate must distinguish None (no eval) from {} (empty eval).
+
+    Regression for PR #121 review: the guard used a falsy check that
+    conflated last_eval_metrics is None (no eval ran) with {} (empty eval).
+    """
+
+    def _advance_to_decide(self, mock_daemon, **start_kwargs):
+        from experiment_workflow import start_experiment, advance_phase
+
+        _, state = mock_daemon
+        start_experiment(experiment_dir="/tmp/exp", task="test", **start_kwargs)
+        for phase in ["plan", "work", "eval", "journal", "decide"]:
+            advance_phase(phase)
+        return state
+
+    def test_none_metrics_with_criteria_blocks_no_eval_recorded(self, mock_daemon):
+        from experiment_workflow import advance_phase, ExperimentWorkflowError
+
+        state = self._advance_to_decide(mock_daemon)
+        state["success_criteria"] = [{"metric": "accuracy", "threshold": 0.9}]
+        state["last_eval_metrics"] = None
+        with pytest.raises(ExperimentWorkflowError, match="no eval result recorded"):
+            advance_phase("done")
+        assert state.get("active") is not False
+
+    def test_empty_metrics_empty_criteria_allows_done(self, mock_daemon):
+        from experiment_workflow import advance_phase
+
+        mock_dc, state = mock_daemon
+        state = self._advance_to_decide(mock_daemon)
+        state["success_criteria"] = []
+        state["last_eval_metrics"] = {}
+        advance_phase("done")
+        assert state["phase"] == "done"
+        assert state["active"] is False
+        assert state["exit_reason"] == "success"
+        mock_dc.workflow_stop.assert_called_with("experiment")
+
+    def test_empty_metrics_with_criteria_blocks_criteria_not_met(self, mock_daemon):
+        from experiment_workflow import advance_phase, ExperimentWorkflowError
+
+        state = self._advance_to_decide(mock_daemon)
+        state["success_criteria"] = [{"metric": "accuracy", "threshold": 0.9}]
+        state["last_eval_metrics"] = {}
+        with pytest.raises(ExperimentWorkflowError) as exc:
+            advance_phase("done")
+        msg = str(exc.value)
+        assert "criteria not met" in msg
+        assert "no eval result recorded" not in msg
