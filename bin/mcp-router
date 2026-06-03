@@ -17,6 +17,10 @@ from pathlib import Path
 DAEMON_PORT = int(os.environ.get("DAEMON_PORT", "7523"))
 ROOT = Path(__file__).resolve().parent.parent
 CALLER_ID = os.environ.get("AGENT_SWARM_CALLER_ID")
+if CALLER_ID is None:
+    _session_id = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if _session_id:
+        CALLER_ID = f"main:{_session_id}"
 
 MAX_RECONNECT_ATTEMPTS = 5
 RECONNECT_DELAY = 0.5
