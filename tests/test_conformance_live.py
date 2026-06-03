@@ -28,6 +28,7 @@ import time
 from pathlib import Path
 
 import pytest
+import yaml
 
 from lib.controller import Controller
 from lib.daemon_client import DaemonClient, DaemonError
@@ -82,13 +83,33 @@ def governed_daemon(tmp_path):
     thread.join(timeout=3)
 
 
-# config/permissions.yaml workflows['simple'] is the oracle. One representative
-# allowed + blocked tool per phase that the L1 layer decides outright.
-SIMPLE_GATING = {
-    "plan": ("native__read_file", "native__write_file"),
-    "work": ("native__write_file", None),
-    "verify": ("native__read_file", "native__write_file"),
-}
+def _concrete_tool(tools):
+    """First concrete tool in a list -- skips wildcard (`*`) and arg-pattern
+    (`tool(args)`) entries, which are not checkable as a bare tool name."""
+    for tool in tools or []:
+        if "*" not in tool and "(" not in tool:
+            return tool
+    return None
+
+
+def _derive_gating(workflow):
+    """Derive {phase: (allowed_tool, blocked_tool)} from config/permissions.yaml
+    workflows[<workflow>] -- the L1 governance oracle. Picks one representative
+    concrete tool from each phase's allowed/blocked lists so the expectation
+    tracks the config instead of hardcoded literals (the bridge to all-workflow
+    conformance, #106). `None` in a slot means the phase declares no concrete
+    tool there, and the corresponding assertion is skipped."""
+    perms = yaml.safe_load((PLUGIN_ROOT / "config" / "permissions.yaml").read_text())
+    phases = perms["workflows"][workflow]
+    return {
+        phase: (_concrete_tool(rules.get("allowed")), _concrete_tool(rules.get("blocked")))
+        for phase, rules in phases.items()
+    }
+
+
+# config/permissions.yaml workflows['simple'] is the L1 governance oracle,
+# derived (not hardcoded) so it stays correct as the config evolves.
+SIMPLE_GATING = _derive_gating("simple")
 
 
 def _assert_gating(controller, agent_id, phase):
@@ -96,8 +117,9 @@ def _assert_gating(controller, agent_id, phase):
     assert agent is not None, f"agent {agent_id} is not registered"
     assert agent.phase == phase, f"expected phase {phase}, agent is in {agent.phase}"
     allowed_tool, blocked_tool = SIMPLE_GATING[phase]
-    ok, _ = controller.permissions.check(allowed_tool, {}, agent)
-    assert ok, f"{allowed_tool} should be ALLOWED in simple/{phase}"
+    if allowed_tool is not None:
+        ok, _ = controller.permissions.check(allowed_tool, {}, agent)
+        assert ok, f"{allowed_tool} should be ALLOWED in simple/{phase}"
     if blocked_tool is not None:
         ok, _ = controller.permissions.check(blocked_tool, {}, agent)
         assert not ok, f"{blocked_tool} should be BLOCKED in simple/{phase}"
