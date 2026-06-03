@@ -131,12 +131,19 @@ class WorkflowEngine:
 
         Uses workflow_advance_phase for phase changes and skips other
         daemon-managed keys. All remaining keys use workflow_set_value.
+
+        advance() reads state back via get_state(), so the dict round-trips
+        daemon-owned keys: started_at (set at workflow_start) and
+        <phase>_checkpoint_passed (set via the daemon's workflow_pass_checkpoint).
+        The daemon rejects workflow_set_value for any of these, which would abort
+        the save *after* the phase already advanced — leaving the CLI reporting a
+        failure for a transition that actually happened (#129). Skip them here.
         """
         with DaemonClient() as dc:
             if "phase" in state:
                 dc.workflow_advance_phase(self.workflow_id, state["phase"])
             for key, value in state.items():
-                if is_daemon_only_key(key):
+                if is_daemon_only_key(key) or key.endswith("_checkpoint_passed"):
                     continue
                 dc.workflow_set_value(self.workflow_id, key, value)
 
