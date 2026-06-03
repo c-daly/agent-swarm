@@ -25,10 +25,10 @@ MAX_RESPONSE_SIZE = 10 * 1024 * 1024  # 10 MB — matches daemon MAX_MESSAGE_SIZ
 # separately via workflow_advance_phase. These must stay a subset of
 # controller.PROTECTED_KEYS (the daemon's authoritative reject list);
 # test_save_state_protected_keys pins them so they cannot drift (#129).
-# NOTE: *_checkpoint_passed is also daemon-protected, but is intentionally NOT
-# listed here — develop_workflow manages those flags as client-side state via
-# workflow_set_value. Daemon-backed engines that take checkpoints through the
-# daemon API skip them locally in workflow_base._save_state instead.
+# NOTE: *_checkpoint_passed is daemon-protected too, but is intentionally NOT
+# listed here. The daemon-backed engines that take checkpoints through the daemon
+# API skip it locally in workflow_base._save_state. Folding it into this shared
+# set (once the daemon fully owns the checkpoint lifecycle) is tracked in #134.
 DAEMON_ONLY_KEYS = frozenset({
     "phase", "active_agents", "started_at", "completed_at",
     "agent_id", "agent_type", "session_id", "workflow_id",

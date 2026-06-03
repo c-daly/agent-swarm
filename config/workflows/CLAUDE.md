@@ -14,7 +14,7 @@
 
 ## Aspirational fields and what (if anything) reads them
 
-- `max_iterations`, `max_agents`, `max_review_retries`, `max_agent_respawns` — only consumed by per-workflow Python *engines* (`lib/develop_workflow.py`, `lib/pr_comment_workflow.py`). For workflows without a Python engine (e.g. `simple`), these are **dead** — silently ignored. Don't add them unless you're also writing the engine, or expect them to take effect.
+- `max_iterations`, `max_agents`, `max_review_retries`, `max_agent_respawns` — only consumed by per-workflow Python *engines* (e.g. `lib/pr_comment_workflow.py`). For workflows without a Python engine (e.g. `simple`, and `develop`, which is daemon-config-driven), these are **dead** — silently ignored. Don't add them unless you're also writing the engine, or expect them to take effect.
 - `phases[*].allowed_tool_categories`, `phases[*].blocked_tools`, `phases[*].eligible_agents` — informational at the YAML layer. Per-tool permissions are enforced via `config/permissions.yaml`, not from these fields. Best practice: keep them mirrored to the permissions block (defense-in-depth) but don't rely on the YAML alone for enforcement.
 
 ## Critical gotcha: adding a new workflow
