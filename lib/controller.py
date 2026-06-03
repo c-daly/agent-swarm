@@ -627,10 +627,23 @@ class Controller:
             # sub-id the worker never uses" rationale was wrong. _complete_dispatch
             # tears the instance down so it does not orphan (#124).
             if self._wf_config("iterate") is not None:
+                wf_id = f"iterate:{agent_id}"
                 try:
-                    self._wf_start({"workflow_id": f"iterate:{agent_id}"}, agent_info=info)
+                    self._wf_start({"workflow_id": wf_id}, agent_info=info)
                 except WorkflowError:
-                    pass  # instance already exists (re-dispatch) -- binding stands
+                    # Instance already exists -- either a genuine re-dispatch of
+                    # this sub-id, or a truncated-uuid collision (sub-{uuid4[:8]},
+                    # 32-bit) with a different live worker. _wf_start's bind only
+                    # runs on a fresh start, so it did NOT bind THIS agent. Bind
+                    # it here to the instance's current phase; otherwise the new
+                    # worker proceeds unbound and permissions.check silently skips
+                    # all L1 phase gates for it. Binding (fail-safe: governed)
+                    # beats leaving it ungoverned in the collision case (#116).
+                    with self._state_lock:
+                        existing = self._workflow_state.get(wf_id)
+                        phase = existing.get("phase") if existing else None
+                    if phase:
+                        self.permissions.update_agent_phase(agent_id, wf_id, phase)
             # Pass the FULL per-instance id so the briefing's __WF_ID__ resolves to
             # the workflow the worker is actually bound to (iterate:<agent_id>);
             # assemble_subagent_briefing strips the suffix for the protocol lookup.
