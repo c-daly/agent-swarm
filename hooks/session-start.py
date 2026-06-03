@@ -239,14 +239,13 @@ def auto_start_workflow():
 
 
 def register_main_agent():
-    """Register the main agent (caller_id="") and bind it to the active workflow.
+    """Register the main agent and bind it to the active workflow.
 
-    The main agent is the conversation driver. Its tool calls arrive at the
-    daemon without a _caller field (its mcp-router has no AGENT_SWARM_CALLER_ID
-    set); controller._resolve_agent maps that to caller="". Registering an
-    AgentInfo under that key lets the permission resolver apply
-    workflow/phase rules. Without this, the main agent falls back to
-    global-only permissions.
+    The main agent caller id is derived from CLAUDE_CODE_SESSION_ID so that
+    concurrent Claude Code sessions each register under a distinct key and
+    cannot clobber each other phase bindings (issue #122). The id is
+    "main:<session_id>" when CLAUDE_CODE_SESSION_ID is set, or "" as a
+    fallback for environments where the env var is absent.
 
     Uses the router__* tool dispatch path (call_tool) rather than calling
     DaemonClient methods directly, because DaemonClient does not expose
@@ -256,13 +255,20 @@ def register_main_agent():
         log_debug("register_main_agent: DaemonClient unavailable; skipping")
         return
 
+    # Derive a session-unique id so concurrent sessions do not clobber each
+    # other registry entry in the daemon. CLAUDE_CODE_SESSION_ID is injected
+    # by Claude Code into every process it spawns (hooks and mcp-router alike),
+    # so both sides of registration always agree on the same key (issue #122).
+    _session_id = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    main_agent_id = f"main:{_session_id}" if _session_id else ""
+
     with _open_daemon_client_with_retry("register_main_agent") as dc:
         if dc is None:
             return
 
         try:
             dc.call_tool("router__register_agent", {
-                "agent_id": "",
+                "agent_id": main_agent_id,
                 "agent_type": "implementer",
                 "roles": ["editor", "shell_full"],
             })
@@ -281,7 +287,7 @@ def register_main_agent():
                 log_debug(f"register_main_agent: workflow {active_wf} has no phase; registered without phase binding")
                 return
             dc.call_tool("router__update_agent_phase", {
-                "agent_id": "",
+                "agent_id": main_agent_id,
                 "workflow_id": active_wf,
                 "phase": phase,
             })
