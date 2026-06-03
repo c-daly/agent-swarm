@@ -47,7 +47,12 @@ def _iso_to_ms(ts: Optional[str]) -> Optional[int]:
     if not ts:
         return None
     try:
-        return int(datetime.fromisoformat(ts).timestamp() * 1000)
+        parsed = datetime.fromisoformat(ts)
+        if parsed.tzinfo is None:
+            # A naive timestamp is read as UTC (not host-local) so epoch-ms is
+            # reproducible regardless of where the scorer runs.
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return int(parsed.timestamp() * 1000)
     except (ValueError, TypeError):
         return None
 
@@ -148,7 +153,8 @@ def score_compliance(events: list) -> ComplianceScore:
                 router += 1
         aid = e.get("agent_id") or "(none)"
         seqs.setdefault(aid, []).append(e.get("tool"))
-    violation_rate = (perm + wf) / total if total else 0.0
+    violations = sum(hist.get(name, 0) for name in _VIOLATION_ERRORS)
+    violation_rate = violations / total if total else 0.0
     return ComplianceScore(total_calls=total, errors=errors, permission_denied=perm,
                            workflow_errors=wf, router_errors=router,
                            violation_rate=violation_rate, error_histogram=hist,
@@ -173,7 +179,7 @@ def score_cost(events: list) -> CostScore:
     dur_n = 0
     for e in events:
         d = e.get("duration_ms")
-        if d:
+        if d is not None:
             dur_sum += d
             dur_n += 1
     return CostScore(wallclock_s=wall, duration_ms_sum=dur_sum,
@@ -216,10 +222,14 @@ def derive_window(conn: sqlite3.Connection, workflow_id: str,
     meaningful once controller.record_event tags events with workflow_id.
     """
     if match_prefix:
+        # Escape LIKE metacharacters in the user-supplied id so a literal '_'
+        # or '%' in a workflow_id cannot widen the prefix match.
+        esc = (workflow_id.replace("\\", "\\\\")
+               .replace("%", "\\%").replace("_", "\\_"))
         row = conn.execute(
             "SELECT MIN(timestamp), MAX(timestamp) FROM events "
-            "WHERE workflow_id = ? OR workflow_id LIKE ?",
-            (workflow_id, workflow_id + ":%"),
+            "WHERE workflow_id = ? OR workflow_id LIKE ? ESCAPE '\\'",
+            (workflow_id, esc + ":%"),
         ).fetchone()
     else:
         row = conn.execute(
@@ -265,7 +275,7 @@ def score_run(conn: sqlite3.Connection, start_ms: Optional[int] = None,
     out-of-band timestamps). Output carries a per-phase breakdown so the run is
     sliceable by phase, plus the distinct workflow_ids actually seen in-window.
     """
-    if (start_ms is None or end_ms is None) and workflow_id:
+    if start_ms is None and end_ms is None and workflow_id:
         win = derive_window(conn, workflow_id, match_prefix=match_prefix)
         if win is None:
             raise ValueError(f"no events tagged with workflow_id={workflow_id!r}")
@@ -351,10 +361,13 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     conn = sqlite3.connect(str(args.db))
-    outcome_md = Path(args.outcome_file).read_text() if args.outcome_file else None
-    rec = score_run(conn, args.start, args.end, workflow_id=args.workflow_id,
-                    match_prefix=args.match_prefix, outcome_md=outcome_md,
-                    model=args.model, label=args.label, workflow=args.workflow)
+    try:
+        outcome_md = Path(args.outcome_file).read_text() if args.outcome_file else None
+        rec = score_run(conn, args.start, args.end, workflow_id=args.workflow_id,
+                        match_prefix=args.match_prefix, outcome_md=outcome_md,
+                        model=args.model, label=args.label, workflow=args.workflow)
+    finally:
+        conn.close()
     if args.no_tool_seq:
         rec["compliance"].pop("tool_sequence", None)
     print(json.dumps(rec, indent=2, default=str))

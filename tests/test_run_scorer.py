@@ -257,3 +257,52 @@ def test_score_run_scopes_by_workflow_id_and_breaks_down_by_phase(mem_db):
     assert rec["by_phase"]["test"]["compliance"]["permission_denied"] == 1
     # window was derived, not supplied
     assert rec["window"]["start_ms"] == _iso_to_ms("2026-05-03T15:15:00+00:00")
+
+
+# --- PR #120 review fixes ---------------------------------------------------
+
+def test_score_cost_counts_zero_duration():
+    # duration_ms == 0 is a real (instantaneous) call and must be counted;
+    # the old `if d:` guard silently dropped it. None still means "unknown".
+    events = [
+        _ev(ts="2026-05-03T15:00:00+00:00", duration_ms=0),
+        _ev(ts="2026-05-03T15:00:01+00:00", duration_ms=None),
+        _ev(ts="2026-05-03T15:00:02+00:00", duration_ms=120),
+    ]
+    cost = score_cost(events)
+    assert cost.calls_with_duration == 2   # the 0 and the 120, NOT the None
+    assert cost.duration_ms_sum == 120
+
+
+def test_iso_to_ms_treats_naive_timestamp_as_utc():
+    # A naive (tz-less) ISO timestamp must be read as UTC, not host-local, so
+    # the result is reproducible regardless of where the scorer runs.
+    naive = _iso_to_ms("2026-05-03T00:00:00")
+    aware = _iso_to_ms("2026-05-03T00:00:00+00:00")
+    assert naive == aware
+    expected = int(dt.datetime(2026, 5, 3, 0, 0, 0,
+                               tzinfo=dt.timezone.utc).timestamp() * 1000)
+    assert naive == expected
+
+
+def test_derive_window_prefix_escapes_like_wildcards(mem_db):
+    # workflow_id containing a literal _ must not be treated as a LIKE
+    # single-char wildcard: 'run_a' must NOT match 'runXa:1'.
+    _tag(mem_db, "2026-05-03T15:10:00+00:00", "run_a")
+    _tag(mem_db, "2026-05-03T15:11:00+00:00", "run_a:sub-1")
+    _tag(mem_db, "2026-05-03T15:40:00+00:00", "runXa:sub-9")  # unrelated decoy
+    win = derive_window(mem_db, "run_a", match_prefix=True)
+    # window spans only the run_a rows, never the runXa decoy at 15:40
+    assert win == (_iso_to_ms("2026-05-03T15:10:00+00:00"),
+                   _iso_to_ms("2026-05-03T15:11:00+00:00"))
+
+
+def test_score_run_partial_window_not_clobbered_by_workflow_id(mem_db):
+    # Only start_ms supplied (no end_ms) + a workflow_id: the partially-given
+    # window must NOT be silently replaced by the derived one. With end_ms
+    # missing the run is under-specified, so score_run raises rather than
+    # quietly overriding the caller's start_ms.
+    _tag(mem_db, "2026-05-03T15:15:00+00:00", "iterate:sub-1")
+    start = _ms(2026, 5, 3, 15, 0, 0)
+    with pytest.raises(ValueError):
+        score_run(mem_db, start_ms=start, end_ms=None, workflow_id="iterate:sub-1")
