@@ -152,41 +152,39 @@ def test_simple_live_conformance(governed_daemon):
         client.close()
 
 
-def test_tool_call_telemetry_is_phase_stamped(governed_daemon):
+def test_tool_call_telemetry_is_phase_stamped(governed_daemon, tmp_path):
     """Each tool call's telemetry event is stamped with the agent's bound phase
     (datastore `phase` column) -- the assertion #104 deferred until the column
     landed. Drive a real allowed tool through the controller, then read the
     recorded event back and assert its phase + workflow match the binding."""
     controller = governed_daemon["controller"]
     agent_id = "conf-telemetry"
-    client = DaemonClient(port=governed_daemon["port"], timeout=5.0)
-    client.connect()
-    client.register(
-        agent_id=agent_id, agent_type="orchestrator",
-        session_id="telemetry", workflow_id="",
-    )
-    try:
+    # Read a file inside the hermetic sandbox (same tmp_path the fixture uses),
+    # not the real project tree, so the test stays self-contained.
+    probe = tmp_path / "telemetry_probe.txt"
+    probe.write_text("conformance telemetry probe")
+    with DaemonClient(port=governed_daemon["port"], timeout=5.0) as client:
+        client.register(
+            agent_id=agent_id, agent_type="orchestrator",
+            session_id="telemetry", workflow_id="",
+        )
         # workflow_start binds the caller to simple/plan; native__read_file is
         # allowed in plan, so the call succeeds and records a success event.
         client._call("workflow/start", {
             "workflow_id": "simple", "initial_state": {}, "_caller": agent_id,
         })
         controller.handle_call("native__read_file", {
-            "file_path": str(PLUGIN_ROOT / "config" / "permissions.yaml"),
-            "_caller": agent_id,
+            "file_path": str(probe), "_caller": agent_id,
         })
-        events = [
-            e for e in controller.data.query_events(
-                tool="native__read_file", status="success")
-            if e.agent_id == agent_id
-        ]
-        assert events, "no success telemetry recorded for the read_file call"
-        assert events[-1].phase == "plan", (
-            f"event not stamped with bound phase (phase={events[-1].phase!r})")
-        assert events[-1].workflow_id == "simple"
-    finally:
-        try:
-            client.workflow_stop("simple")
-        except DaemonError:
-            pass
-        client.close()
+    # Filter by agent_id in Python: the session_id passed to register() is not
+    # propagated onto AgentInfo, so the recorded event's session_id is "" and a
+    # DB-layer session_id filter would match nothing (see PR #127 review).
+    events = [
+        e for e in controller.data.query_events(
+            tool="native__read_file", status="success")
+        if e.agent_id == agent_id
+    ]
+    assert events, "no success telemetry recorded for the read_file call"
+    assert events[-1].phase == "plan", (
+        f"event not stamped with bound phase (phase={events[-1].phase!r})")
+    assert events[-1].workflow_id == "simple"
