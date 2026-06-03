@@ -1,4 +1,5 @@
 """Tests for agent dispatch enforcement — prepare_dispatch and briefing retrieval."""
+import re
 import pytest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
@@ -33,6 +34,16 @@ class TestPrepareDispatch:
         })
         assert result["success"] is True
         assert result["agent_id"].startswith("sub-")
+
+    def test_agent_id_uses_full_uuid_entropy(self, controller):
+        """agent_id must carry full uuid4 entropy (128-bit / 32 hex chars), not
+        a truncated 32-bit prefix. Truncation makes birthday collisions between
+        concurrent workers plausible, and a collision entangles two workers in a
+        single AgentInfo / iterate instance -- silent governance bypass (#130)."""
+        result = controller._prepare_dispatch({"agent_type": "implementer"})
+        assert re.fullmatch(r"sub-[0-9a-f]{32}", result["agent_id"]), (
+            f"agent_id {result['agent_id']!r} is not a full-entropy uuid4 hex"
+        )
 
     def test_returns_briefing(self, controller):
         with patch("controller.assemble_subagent_briefing", return_value="BRIEFING"):
@@ -110,7 +121,7 @@ class TestPrepareDispatch:
 
     def test_standalone_implementer_binds_on_instance_collision(self, controller):
         """If iterate:<agent_id> already exists when prepare_dispatch starts a
-        worker (a truncated-uuid collision, or a re-dispatch of the sub-id),
+        worker (an agent_id collision, or a re-dispatch of the sub-id),
         _wf_start raises WorkflowError and its own bind never runs. The except
         branch must still bind THIS agent to the live instance's CURRENT phase,
         otherwise the new worker proceeds unbound and permissions.check silently
@@ -122,9 +133,10 @@ class TestPrepareDispatch:
             lambda agent_id, role=None: MagicMock(
                 agent_id=agent_id, agent_type=role, roles=[])
         )
+        fake_hex = "c0111de0deadbeefcafef00dba5eba11"
         with patch("controller.uuid.uuid4",
-                   return_value=MagicMock(hex="collide0deadbeef")):
-            wf_id = "iterate:sub-collide0"
+                   return_value=MagicMock(hex=fake_hex)):
+            wf_id = f"iterate:sub-{fake_hex}"
             # Pre-existing instance bound to a DIFFERENT prior worker, advanced
             # past its initial phase.
             controller._workflow_state[wf_id] = {
@@ -133,7 +145,7 @@ class TestPrepareDispatch:
                     patch("controller.get_workflow_state", return_value=(None, None)):
                 result = controller._prepare_dispatch({"agent_type": "implementer"})
         agent_id = result["agent_id"]
-        assert agent_id == "sub-collide0"
+        assert agent_id == f"sub-{fake_hex}"
         # Bound to the existing instance's CURRENT phase, not left ungoverned.
         controller.permissions.update_agent_phase.assert_any_call(
             agent_id, wf_id, "implementing"
