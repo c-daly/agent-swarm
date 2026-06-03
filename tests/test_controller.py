@@ -833,6 +833,79 @@ class TestAgentState:
         agents = ctrl.handle_call("workflow__list_agents", {})
         assert set(agents) == {"a1", "a2"}
 
+    def test_agent_delete_clears_permission_store(self, ctrl):
+        """#114: agent_delete must drop the permission-store entry, not just the
+        display state -- otherwise a deleted id keeps its old agent_type because
+        register_agent attaches to the surviving perm entry."""
+        ctrl.handle_call(
+            "router__register_agent",
+            {"agent_id": "dd1", "agent_type": "git-agent"},
+        )
+        assert ctrl.permissions.get_agent("dd1") is not None
+
+        ctrl.handle_call("workflow__agent_delete", {"agent_id": "dd1"})
+        assert ctrl.permissions.get_agent("dd1") is None
+        assert ctrl.handle_call(
+            "workflow__agent_get_state", {"agent_id": "dd1"}
+        ) is None
+
+        # Re-register the SAME id with a different agent_type -> the new type
+        # must take (no stale-identity reuse).
+        result = ctrl.handle_call(
+            "router__register_agent",
+            {"agent_id": "dd1", "agent_type": "implementer"},
+        )
+        assert result["agent_type"] == "implementer"
+        assert ctrl.permissions.get_agent("dd1").agent_type == "implementer"
+
+    def test_agent_delete_requires_agent_id(self, ctrl):
+        """#114 follow-up (PR #125 review): an empty agent_id must not de-register
+        the main agent -- "" is the main-agent id, so remove_agent("") would
+        unbind the live session. Guard mirrors _complete_dispatch."""
+        ctrl.handle_call(
+            "router__register_agent", {"agent_id": "", "agent_type": "implementer"}
+        )
+        with pytest.raises(RouterError, match="requires agent_id"):
+            ctrl.handle_call("workflow__agent_delete", {})
+        # The main-agent permission entry must survive.
+        assert ctrl.permissions.get_agent("") is not None
+
+    def test_register_unknown_id_without_workflow_stays_unbound(self, ctrl_with_config):
+        """#116/#117: an unknown id registered with no workflow (as bin/mcp-call
+        now sends when AGENT_TYPE/WORKFLOW_ID are unset) must NOT be auto-bound to
+        a workflow's initial phase -- it stays unbound (-> global/default-deny)
+        until update_agent_phase binds it."""
+        result = ctrl_with_config.handle_call(
+            "router__register_agent",
+            {"agent_id": "harness-x", "agent_type": "", "workflow_id": ""},
+        )
+        assert result["phase"] is None
+        agent = ctrl_with_config.permissions.get_agent("harness-x")
+        assert agent is not None
+        assert agent.workflow is None
+        assert agent.phase is None
+
+    def test_reregister_does_not_clobber_existing_binding(self, ctrl_with_config):
+        """#117: a per-call mcp-call handshake (which may still carry an
+        env-default agent_type/workflow_id) must ATTACH to an existing identity,
+        never overwrite its role/phase."""
+        ctrl_with_config.handle_call(
+            "router__register_agent",
+            {"agent_id": "w-keep", "agent_type": "git-agent"},
+        )
+        ctrl_with_config.handle_call(
+            "router__update_agent_phase",
+            {"agent_id": "w-keep", "workflow_id": "iterate", "phase": "review"},
+        )
+        # Simulate a stray re-register carrying the old env defaults.
+        ctrl_with_config.handle_call(
+            "router__register_agent",
+            {"agent_id": "w-keep", "agent_type": "implementer", "workflow_id": "iterate"},
+        )
+        agent = ctrl_with_config.permissions.get_agent("w-keep")
+        assert agent.agent_type == "git-agent"
+        assert agent.phase == "review"
+
 
 # --- Permissions ---
 
