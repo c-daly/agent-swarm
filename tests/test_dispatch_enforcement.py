@@ -1,4 +1,5 @@
 """Tests for agent dispatch enforcement — prepare_dispatch and briefing retrieval."""
+import re
 import pytest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
@@ -39,7 +40,6 @@ class TestPrepareDispatch:
         a truncated 32-bit prefix. Truncation makes birthday collisions between
         concurrent workers plausible, and a collision entangles two workers in a
         single AgentInfo / iterate instance -- silent governance bypass (#130)."""
-        import re
         result = controller._prepare_dispatch({"agent_type": "implementer"})
         assert re.fullmatch(r"sub-[0-9a-f]{32}", result["agent_id"]), (
             f"agent_id {result['agent_id']!r} is not a full-entropy uuid4 hex"
