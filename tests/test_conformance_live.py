@@ -8,14 +8,15 @@ against it, asserting the runtime governance matches the declared config:
     workflow_start binding fix in controller._wf_start);
   * per-phase tool gating matches config/permissions.yaml workflows['simple'];
   * legal transitions advance + propagate the bound agent's phase, illegal
-    transitions are rejected, and the terminal phase is reached.
+    transitions are rejected, and the terminal phase is reached;
+  * telemetry: each tool call's event is stamped with the agent's bound phase.
 
 Unlike Slice 1 (lib/conformance.py, static), this exercises the live
 daemon + router + controller assembly. Hermetic (own ephemeral port, tmp
 data dir) so it is reproducible and needs no shared daemon.
 
-The telemetry phase-stamp assertion is deferred until the datastore `phase`
-column lands (PR #111); binding/gating/transitions do not depend on it.
+Telemetry phase-stamping (the datastore `phase` column, which has since landed)
+is asserted by test_tool_call_telemetry_is_phase_stamped.
 """
 
 from __future__ import annotations
@@ -148,4 +149,44 @@ def test_simple_live_conformance(governed_daemon):
             client.workflow_stop("simple")
         except DaemonError:
             pass  # workflow may never have started if an earlier assertion failed
+        client.close()
+
+
+def test_tool_call_telemetry_is_phase_stamped(governed_daemon):
+    """Each tool call's telemetry event is stamped with the agent's bound phase
+    (datastore `phase` column) -- the assertion #104 deferred until the column
+    landed. Drive a real allowed tool through the controller, then read the
+    recorded event back and assert its phase + workflow match the binding."""
+    controller = governed_daemon["controller"]
+    agent_id = "conf-telemetry"
+    client = DaemonClient(port=governed_daemon["port"], timeout=5.0)
+    client.connect()
+    client.register(
+        agent_id=agent_id, agent_type="orchestrator",
+        session_id="telemetry", workflow_id="",
+    )
+    try:
+        # workflow_start binds the caller to simple/plan; native__read_file is
+        # allowed in plan, so the call succeeds and records a success event.
+        client._call("workflow/start", {
+            "workflow_id": "simple", "initial_state": {}, "_caller": agent_id,
+        })
+        controller.handle_call("native__read_file", {
+            "file_path": str(PLUGIN_ROOT / "config" / "permissions.yaml"),
+            "_caller": agent_id,
+        })
+        events = [
+            e for e in controller.data.query_events(
+                tool="native__read_file", status="success")
+            if e.agent_id == agent_id
+        ]
+        assert events, "no success telemetry recorded for the read_file call"
+        assert events[-1].phase == "plan", (
+            f"event not stamped with bound phase (phase={events[-1].phase!r})")
+        assert events[-1].workflow_id == "simple"
+    finally:
+        try:
+            client.workflow_stop("simple")
+        except DaemonError:
+            pass
         client.close()
