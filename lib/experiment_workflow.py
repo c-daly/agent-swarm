@@ -129,6 +129,27 @@ def advance_phase(target: str) -> dict:
                 f"Max iterations ({max_iter}) reached"
             )
 
+    # Hard gate: decide->done must independently re-verify success criteria.
+    # Recompute from RECORDED metrics rather than trusting last_eval_passed
+    # (claimed-vs-actual independent check, mirroring run_scorer). Empty
+    # success_criteria preserves prior behavior (gate passes) by convention.
+    if current == "decide" and target == "done":
+        import experiment_harness
+        criteria = state.get("success_criteria", [])
+        if criteria:
+            recorded = state.get("last_eval_metrics")
+            if not recorded:
+                raise ExperimentWorkflowError(
+                    "decide->done blocked: success criteria not met "
+                    "(no eval result recorded)"
+                )
+            recheck = experiment_harness.check_criteria(criteria, recorded)
+            if not recheck.passed:
+                raise ExperimentWorkflowError(
+                    "decide->done blocked: success criteria not met "
+                    f"(recomputed from recorded metrics: {recheck.details})"
+                )
+
     state["phase"] = target
 
     if target == "done":
@@ -167,6 +188,36 @@ def record_eval_result(metrics: dict, passed: bool) -> None:
             best[k] = max(best[k], v)
     state["best_metrics"] = best
     _set_state(state)
+
+
+def run_eval_phase(eval_path: str = "eval/") -> dict:
+    """Auto-run the eval harness during the eval phase.
+
+    The engine runs the eval itself rather than trusting the model to
+    self-report. Requires an active workflow in the "eval" phase. Runs the
+    harness, checks the recorded metrics against the configured success
+    criteria, records the result, and returns a structured summary.
+    """
+    import experiment_harness
+
+    state = _get_state()
+    if not state or not state.get("active"):
+        raise ExperimentWorkflowError("Workflow not active")
+    if state.get("phase") != "eval":
+        raise ExperimentWorkflowError(
+            f"run_eval_phase requires phase 'eval', got '{state.get('phase')}'"
+        )
+
+    result = experiment_harness.run_eval(Path(state["experiment_dir"]), eval_path)
+    criteria = experiment_harness.check_criteria(
+        state.get("success_criteria", []), result.metrics
+    )
+    record_eval_result(result.metrics, passed=criteria.passed)
+    return {
+        "metrics": result.metrics,
+        "passed": criteria.passed,
+        "criteria_details": criteria.details,
+    }
 
 
 def record_hypothesis(hypothesis: str, result: str) -> None:
