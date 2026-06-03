@@ -167,7 +167,7 @@ def _load_mcp_router(env_override: dict):
     import importlib.machinery
     import types
 
-    unique_name = f"mcp_router_test_{id(env_override)}_{id(object())}"
+    unique_name = f"mcp_router_test_{id(env_override)}_{os.urandom(8).hex()}"
     env_copy = {k: v for k, v in env_override.items() if v is not None}
     absent_keys = [k for k, v in env_override.items() if v is None]
 
@@ -248,7 +248,7 @@ class TestRegisterMainAgentUsesSessionUniqueId:
         CLAUDE_CODE_SESSION_ID when it is available."""
         session_id = "test-session-99"
 
-        mod = _load_session_start(f"session_start_isolation_{id(self)}")
+        mod = _load_session_start(f"session_start_isolation_{id(self)}_{os.urandom(8).hex()}")
 
         good_dc = MagicMock()
         good_dc.call_tool = MagicMock(return_value={})
