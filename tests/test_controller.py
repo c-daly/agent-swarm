@@ -858,6 +858,18 @@ class TestAgentState:
         assert result["agent_type"] == "implementer"
         assert ctrl.permissions.get_agent("dd1").agent_type == "implementer"
 
+    def test_agent_delete_requires_agent_id(self, ctrl):
+        """#114 follow-up (PR #125 review): an empty agent_id must not de-register
+        the main agent -- "" is the main-agent id, so remove_agent("") would
+        unbind the live session. Guard mirrors _complete_dispatch."""
+        ctrl.handle_call(
+            "router__register_agent", {"agent_id": "", "agent_type": "implementer"}
+        )
+        with pytest.raises(RouterError, match="requires agent_id"):
+            ctrl.handle_call("workflow__agent_delete", {})
+        # The main-agent permission entry must survive.
+        assert ctrl.permissions.get_agent("") is not None
+
     def test_register_unknown_id_without_workflow_stays_unbound(self, ctrl_with_config):
         """#116/#117: an unknown id registered with no workflow (as bin/mcp-call
         now sends when AGENT_TYPE/WORKFLOW_ID are unset) must NOT be auto-bound to

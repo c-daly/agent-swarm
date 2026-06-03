@@ -1000,6 +1000,11 @@ class Controller:
 
     def _agent_delete(self, args: dict) -> bool:
         agent_id = args.get("agent_id", "")
+        # "" is the main-agent id; an empty/missing arg must NOT silently
+        # de-register it (remove_agent("") would unbind the main session).
+        # Mirror _complete_dispatch's guard.
+        if not agent_id:
+            raise RouterError("agent_delete requires agent_id")
         with self._state_lock:
             self._agent_state.pop(agent_id, None)
         # Mirror _complete_dispatch: also drop the permission-store entry. Leaving
