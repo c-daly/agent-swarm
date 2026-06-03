@@ -14,6 +14,8 @@ Current known gaps are tracked in #106 (and surfaced by `python3 -m lib.conforma
   - debug:      in _KNOWN_WORKFLOWS but has no workflow YAML (phantom).
 """
 
+import pytest
+
 from lib.conformance import analyze
 
 # Workflows whose declared phases are NOT fully governed at L1 today. Each is a
@@ -28,10 +30,16 @@ KNOWN_PHANTOM = {"debug"}
 CORE_GOVERNED = {"simple", "iterate", "orchestrate"}
 
 
-def test_fail_open_matrix_matches_baseline():
+@pytest.fixture(scope="module")
+def conformance():
+    """analyze() reads + regex-parses several config files; compute it once and
+    share across the module's tests rather than re-running per test."""
+    return analyze()
+
+
+def test_fail_open_matrix_matches_baseline(conformance):
     """The set of fail-open workflows must equal the documented baseline."""
-    result = analyze()
-    fail_open = {r.name for r in result["workflows"] if r.fail_open}
+    fail_open = {r.name for r in conformance["workflows"] if r.fail_open}
     assert fail_open == KNOWN_FAIL_OPEN, (
         "workflow governance conformance changed -- "
         f"newly fail-open: {sorted(fail_open - KNOWN_FAIL_OPEN)}; "
@@ -39,17 +47,19 @@ def test_fail_open_matrix_matches_baseline():
     )
 
 
-def test_phantom_known_matches_baseline():
+def test_phantom_known_matches_baseline(conformance):
     """_KNOWN_WORKFLOWS entries without a YAML must equal the documented baseline."""
-    result = analyze()
-    assert set(result["phantom_known"]) == KNOWN_PHANTOM, (
-        f"phantom _KNOWN_WORKFLOWS changed: {sorted(result['phantom_known'])}"
+    phantom = set(conformance["phantom_known"])
+    assert phantom == KNOWN_PHANTOM, (
+        "phantom _KNOWN_WORKFLOWS changed -- "
+        f"new: {sorted(phantom - KNOWN_PHANTOM)}; "
+        f"gone (update KNOWN_PHANTOM): {sorted(KNOWN_PHANTOM - phantom)}"
     )
 
 
-def test_core_workflows_stay_governed():
+def test_core_workflows_stay_governed(conformance):
     """simple, iterate, orchestrate must remain fully governed (not fail-open)."""
-    by_name = {r.name: r for r in analyze()["workflows"]}
+    by_name = {r.name: r for r in conformance["workflows"]}
     for wf in CORE_GOVERNED:
         assert wf in by_name, f"{wf} workflow config is missing"
         assert not by_name[wf].fail_open, (
