@@ -603,7 +603,7 @@ class Controller:
         role = agent_type.split(":")[-1] if ":" in agent_type else agent_type
 
         # Register in permissions system
-        self.permissions.register_agent(agent_id, role)
+        info = self.permissions.register_agent(agent_id, role)
 
         # Bind the agent to the live workflow phase so per-phase permissions
         # (not just its role) govern it. Registered once here in the shared
@@ -619,12 +619,37 @@ class Controller:
             self.permissions.update_agent_phase(agent_id, active_wf, active_phase)
             wf_override = None
         elif role == "implementer":
-            # Standalone implementer = iterate worker. The orchestrator starts and
-            # binds its engine instance -- it alone knows the real agent id at
-            # creation, whereas prepare_dispatch runs before the subagent exists.
-            # So surface the iterate briefing here but start NO instance (starting
-            # one would bind a throwaway sub-id the worker never uses -> orphans).
-            wf_override = "iterate"
+            # Standalone implementer = iterate worker. Start a per-worker iterate
+            # instance keyed by this sub-id and bind the worker to it (via
+            # _wf_start), so iterate's phase gates govern the worker from its first
+            # mcp-call (#116). The briefing tells the worker to use this sub-id as
+            # its --caller-id, so binding here is correct -- the old "throwaway
+            # sub-id the worker never uses" rationale was wrong. _complete_dispatch
+            # tears the instance down so it does not orphan (#124).
+            if self._wf_config("iterate") is not None:
+                wf_id = f"iterate:{agent_id}"
+                try:
+                    self._wf_start({"workflow_id": wf_id}, agent_info=info)
+                except WorkflowError:
+                    # Instance already exists -- either a genuine re-dispatch of
+                    # this sub-id, or a truncated-uuid collision (sub-{uuid4[:8]},
+                    # 32-bit) with a different live worker. _wf_start's bind only
+                    # runs on a fresh start, so it did NOT bind THIS agent. Bind
+                    # it here to the instance's current phase; otherwise the new
+                    # worker proceeds unbound and permissions.check silently skips
+                    # all L1 phase gates for it. Binding (fail-safe: governed)
+                    # beats leaving it ungoverned in the collision case (#116).
+                    with self._state_lock:
+                        existing = self._workflow_state.get(wf_id)
+                        phase = existing.get("phase") if existing else None
+                    if phase:
+                        self.permissions.update_agent_phase(agent_id, wf_id, phase)
+            # Pass the FULL per-instance id so the briefing's __WF_ID__ resolves to
+            # the workflow the worker is actually bound to (iterate:<agent_id>);
+            # assemble_subagent_briefing strips the suffix for the protocol lookup.
+            # Bare "iterate" would tell the worker to address a workflow that does
+            # not exist, so it could not advance/stop its own instance (#116).
+            wf_override = f"iterate:{agent_id}"
         else:
             wf_override = None
 
@@ -663,6 +688,16 @@ class Controller:
                 self._agent_state[agent_id]["status"] = status
                 self._agent_state[agent_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
         self.permissions.remove_agent(agent_id)
+        # Tear down the per-worker iterate instance that prepare_dispatch may have
+        # started for a standalone implementer, so a finished worker does not
+        # orphan it in _workflow_state (#116/#124). Only implementers get an
+        # instance; guard on membership so non-implementer dispatches do not pay
+        # for a raised+caught WorkflowError. _state_lock is an RLock, so holding
+        # it across the check and _wf_stop is reentrant and closes the race.
+        wf_id = f"iterate:{agent_id}"
+        with self._state_lock:
+            if wf_id in self._workflow_state:
+                self._wf_stop({"workflow_id": wf_id})
         return {"success": True, "agent_id": agent_id}
 
     # --- Router operations ---
