@@ -603,7 +603,7 @@ class Controller:
         role = agent_type.split(":")[-1] if ":" in agent_type else agent_type
 
         # Register in permissions system
-        self.permissions.register_agent(agent_id, role)
+        info = self.permissions.register_agent(agent_id, role)
 
         # Bind the agent to the live workflow phase so per-phase permissions
         # (not just its role) govern it. Registered once here in the shared
@@ -619,11 +619,18 @@ class Controller:
             self.permissions.update_agent_phase(agent_id, active_wf, active_phase)
             wf_override = None
         elif role == "implementer":
-            # Standalone implementer = iterate worker. The orchestrator starts and
-            # binds its engine instance -- it alone knows the real agent id at
-            # creation, whereas prepare_dispatch runs before the subagent exists.
-            # So surface the iterate briefing here but start NO instance (starting
-            # one would bind a throwaway sub-id the worker never uses -> orphans).
+            # Standalone implementer = iterate worker. Start a per-worker iterate
+            # instance keyed by this sub-id and bind the worker to it (via
+            # _wf_start), so iterate's phase gates govern the worker from its first
+            # mcp-call (#116). The briefing tells the worker to use this sub-id as
+            # its --caller-id, so binding here is correct -- the old "throwaway
+            # sub-id the worker never uses" rationale was wrong. _complete_dispatch
+            # tears the instance down so it does not orphan (#124).
+            if self._wf_config("iterate") is not None:
+                try:
+                    self._wf_start({"workflow_id": f"iterate:{agent_id}"}, agent_info=info)
+                except WorkflowError:
+                    pass  # instance already exists (re-dispatch) -- binding stands
             wf_override = "iterate"
         else:
             wf_override = None
@@ -663,6 +670,13 @@ class Controller:
                 self._agent_state[agent_id]["status"] = status
                 self._agent_state[agent_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
         self.permissions.remove_agent(agent_id)
+        # Tear down the per-worker iterate instance that prepare_dispatch may have
+        # started for a standalone implementer, so a finished worker does not
+        # orphan it in _workflow_state (#116/#124).
+        try:
+            self._wf_stop({"workflow_id": f"iterate:{agent_id}"})
+        except WorkflowError:
+            pass
         return {"success": True, "agent_id": agent_id}
 
     # --- Router operations ---

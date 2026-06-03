@@ -64,16 +64,42 @@ class TestPrepareDispatch:
         assert controller._agent_state[agent_id]["status"] == "pending"
         assert controller._agent_state[agent_id]["description"] == "test task"
 
-    def test_standalone_implementer_no_autostart(self, controller):
-        """A standalone implementer gets the iterate briefing, but prepare_dispatch
-        starts NO workflow instance -- the orchestrator owns starting/binding the
-        worker's engine instance (it alone knows the real agent id at creation).
-        Auto-starting here bound a throwaway sub-id the worker never used."""
-        with patch("controller.get_workflow_state", return_value=(None, None)), \
-                patch("controller.assemble_subagent_briefing", return_value="") as brief:
-            controller._prepare_dispatch({"agent_type": "implementer"})
-        assert not any(k.startswith("iterate:") for k in controller._workflow_state)
-        assert brief.call_args.kwargs.get("workflow_override") == "iterate"
+    def test_standalone_implementer_starts_bound_iterate_instance(self, controller):
+        """A standalone implementer (no active workflow) gets a per-worker iterate
+        instance STARTED and is BOUND to its initial phase, so iterate's phase
+        gates govern the worker from its first mcp-call (#116). The briefing tells
+        the worker to use this sub-id as its --caller-id, so binding it here is
+        correct. Previously prepare_dispatch started no instance and left the
+        worker unbound -> governed by permissive agent-type rules, bypassing the
+        phase gates."""
+        controller._workflow_configs = {
+            "iterate": MagicMock(initial_phase="test_writing")
+        }
+        controller.permissions.register_agent.side_effect = (
+            lambda agent_id, role=None: MagicMock(
+                agent_id=agent_id, agent_type=role, roles=[])
+        )
+        with patch("controller.assemble_subagent_briefing", return_value=""), \
+                patch("controller.get_workflow_state", return_value=(None, None)):
+            result = controller._prepare_dispatch({"agent_type": "implementer"})
+        agent_id = result["agent_id"]
+        wf_id = f"iterate:{agent_id}"
+        assert wf_id in controller._workflow_state
+        assert controller._workflow_state[wf_id]["phase"] == "test_writing"
+        controller.permissions.update_agent_phase.assert_any_call(
+            agent_id, wf_id, "test_writing"
+        )
+
+    def test_complete_dispatch_stops_worker_iterate_instance(self, controller):
+        """complete_dispatch tears down the per-worker iterate instance keyed by
+        the agent id, so a finished standalone-implementer worker does not orphan
+        it in _workflow_state (#116 binding implies #124-style cleanup)."""
+        agent_id = "sub-deadbeef"
+        wf_id = f"iterate:{agent_id}"
+        controller._workflow_state[wf_id] = {"phase": "test_writing", "active_agents": {}}
+        controller._agent_state[agent_id] = {"status": "pending"}
+        controller._complete_dispatch({"agent_id": agent_id, "status": "completed"})
+        assert wf_id not in controller._workflow_state
 
     def test_implementer_inherits_active_workflow(self, controller):
         """An implementer dispatched within an active workflow inherits it
