@@ -421,3 +421,98 @@ class TestDecideToDoneGate:
         advance_phase("done")
         assert state["active"] is False
         assert state["exit_reason"] == "success"
+
+
+class TestNoPrimaryCriteriaGate:
+    """PR #121 review: close the no-primary-criteria bypass.
+
+    When success_criteria is non-empty but NO criterion is marked primary,
+    CriteriaResult.passed (== primary_passed) is vacuously True even if every
+    criterion fails. The gate and run_eval_phase must fall back to all_passed.
+    """
+
+    def test_done_blocked_when_nonprimary_criteria_fail(self, mock_daemon):
+        from experiment_workflow import (
+            start_experiment, advance_phase, record_eval_result, ExperimentWorkflowError,
+        )
+
+        _, state = mock_daemon
+        # NON-empty criteria, NO primary, recorded metrics FAIL all of them.
+        criteria = [{"metric": "accuracy", "threshold": 0.9, "comparison": ">="}]
+        start_experiment(experiment_dir="/tmp/exp", task="test", success_criteria=criteria)
+        for phase in ["plan", "work", "eval"]:
+            advance_phase(phase)
+        record_eval_result({"accuracy": 0.5}, passed=False)
+        for phase in ["journal", "decide"]:
+            advance_phase(phase)
+        with pytest.raises(ExperimentWorkflowError, match="criteria not met"):
+            advance_phase("done")
+        assert state.get("active") is not False
+
+    def test_done_allowed_when_nonprimary_criteria_pass(self, mock_daemon):
+        from experiment_workflow import (
+            start_experiment, advance_phase, record_eval_result,
+        )
+
+        mock_dc, state = mock_daemon
+        criteria = [{"metric": "accuracy", "threshold": 0.9, "comparison": ">="}]
+        start_experiment(experiment_dir="/tmp/exp", task="test", success_criteria=criteria)
+        for phase in ["plan", "work", "eval"]:
+            advance_phase(phase)
+        record_eval_result({"accuracy": 0.95}, passed=True)
+        for phase in ["journal", "decide"]:
+            advance_phase(phase)
+        advance_phase("done")
+        assert state["active"] is False
+        assert state["exit_reason"] == "success"
+        mock_dc.workflow_stop.assert_called_with("experiment")
+
+    def test_run_eval_phase_records_false_when_nonprimary_fail(self, mock_daemon):
+        from experiment_workflow import start_experiment, advance_phase, run_eval_phase
+
+        _, state = mock_daemon
+        criteria = [{"metric": "accuracy", "threshold": 0.9, "comparison": ">="}]
+        start_experiment(experiment_dir="/tmp/exp", task="test", success_criteria=criteria)
+        for phase in ["plan", "work", "eval"]:
+            advance_phase(phase)
+
+        fake = EvalResult(passed=True, metrics={"accuracy": 0.5})
+        with patch("experiment_harness.run_eval", return_value=fake):
+            out = run_eval_phase()
+
+        # Previously would record True (no primary -> primary_passed vacuously True).
+        assert out["passed"] is False
+        assert state["last_eval_passed"] is False
+
+    def test_run_eval_phase_records_true_when_nonprimary_pass(self, mock_daemon):
+        from experiment_workflow import start_experiment, advance_phase, run_eval_phase
+
+        _, state = mock_daemon
+        criteria = [{"metric": "accuracy", "threshold": 0.9, "comparison": ">="}]
+        start_experiment(experiment_dir="/tmp/exp", task="test", success_criteria=criteria)
+        for phase in ["plan", "work", "eval"]:
+            advance_phase(phase)
+
+        fake = EvalResult(passed=False, metrics={"accuracy": 0.95})
+        with patch("experiment_harness.run_eval", return_value=fake):
+            out = run_eval_phase()
+
+        assert out["passed"] is True
+        assert state["last_eval_passed"] is True
+
+    def test_run_eval_phase_missing_experiment_dir_raises(self, mock_daemon):
+        from experiment_workflow import (
+            start_experiment, advance_phase, run_eval_phase, ExperimentWorkflowError,
+        )
+
+        _, state = mock_daemon
+        start_experiment(experiment_dir="/tmp/exp", task="test")
+        for phase in ["plan", "work", "eval"]:
+            advance_phase(phase)
+        # Simulate state that lost experiment_dir.
+        state.pop("experiment_dir", None)
+
+        fake = EvalResult(passed=True, metrics={})
+        with patch("experiment_harness.run_eval", return_value=fake):
+            with pytest.raises(ExperimentWorkflowError, match="experiment_dir"):
+                run_eval_phase()

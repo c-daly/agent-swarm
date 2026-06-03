@@ -24,6 +24,22 @@ class ExperimentWorkflowError(Exception):
     """Error in experiment workflow logic."""
 
 
+def _criteria_pass(criteria: list, metrics: dict) -> bool:
+    """Decide whether eval metrics satisfy the success criteria.
+
+    Uses primary-criteria passing when at least one criterion is marked
+    primary; otherwise falls back to requiring ALL criteria to pass. This
+    closes the no-primary bypass where CriteriaResult.passed (== primary_passed)
+    is vacuously True when no criterion is primary, even if every criterion
+    fails. Empty criteria -> no primary -> all_passed is vacuously True ->
+    still passes (convention preserved).
+    """
+    import experiment_harness
+    result = experiment_harness.check_criteria(criteria, metrics)
+    has_primary = any(c.get("primary") for c in criteria)
+    return result.passed if has_primary else result.all_passed
+
+
 def _get_state() -> dict:
     with DaemonClient() as dc:
         return dc.workflow_get_state(WORKFLOW_ID) or {}
@@ -143,8 +159,8 @@ def advance_phase(target: str) -> dict:
                     "decide->done blocked: success criteria not met "
                     "(no eval result recorded)"
                 )
-            recheck = experiment_harness.check_criteria(criteria, recorded)
-            if not recheck.passed:
+            if not _criteria_pass(criteria, recorded):
+                recheck = experiment_harness.check_criteria(criteria, recorded)
                 raise ExperimentWorkflowError(
                     "decide->done blocked: success criteria not met "
                     f"(recomputed from recorded metrics: {recheck.details})"
@@ -208,14 +224,18 @@ def run_eval_phase(eval_path: str = "eval/") -> dict:
             f"run_eval_phase requires phase 'eval', got '{state.get('phase')}'"
         )
 
-    result = experiment_harness.run_eval(Path(state["experiment_dir"]), eval_path)
-    criteria = experiment_harness.check_criteria(
-        state.get("success_criteria", []), result.metrics
-    )
-    record_eval_result(result.metrics, passed=criteria.passed)
+    exp_dir = state.get("experiment_dir")
+    if not exp_dir:
+        raise ExperimentWorkflowError("Workflow state missing 'experiment_dir'")
+
+    result = experiment_harness.run_eval(Path(exp_dir), eval_path)
+    success_criteria = state.get("success_criteria", [])
+    criteria = experiment_harness.check_criteria(success_criteria, result.metrics)
+    passed = _criteria_pass(success_criteria, result.metrics)
+    record_eval_result(result.metrics, passed=passed)
     return {
         "metrics": result.metrics,
-        "passed": criteria.passed,
+        "passed": passed,
         "criteria_details": criteria.details,
     }
 
