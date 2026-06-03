@@ -8,6 +8,7 @@ unbound (-> global/default-deny) until it is explicitly bound.
 """
 import importlib.machinery
 import importlib.util
+import sys
 from pathlib import Path
 from unittest import mock
 
@@ -28,7 +29,14 @@ def _load_mcp_call():
 
 @pytest.fixture
 def mcp_call():
-    return _load_mcp_call()
+    # Loading bin/mcp-call runs its top-level `sys.path.insert(...)`; restore
+    # sys.path afterward so repeated fixture use does not accrete duplicate
+    # entries / shadow imports in larger runs (PR #125 review).
+    original_path = list(sys.path)
+    try:
+        return _load_mcp_call()
+    finally:
+        sys.path[:] = original_path
 
 
 def _patched_dc(mcp_call):
