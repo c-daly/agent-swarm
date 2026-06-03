@@ -154,7 +154,7 @@ def advance_phase(target: str) -> dict:
         criteria = state.get("success_criteria", [])
         if criteria:
             recorded = state.get("last_eval_metrics")
-            if not recorded:
+            if recorded is None:
                 raise ExperimentWorkflowError(
                     "decide->done blocked: success criteria not met "
                     "(no eval result recorded)"
