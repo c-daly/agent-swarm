@@ -596,8 +596,12 @@ class Controller:
 
         description = args.get("description", "")
 
-        # Generate agent ID
-        agent_id = f"sub-{uuid.uuid4().hex[:8]}"
+        # Generate agent ID. Use the full uuid4 hex (128-bit), not a truncated
+        # prefix: agent_id keys the permission registry and the per-worker
+        # iterate:{agent_id} instance, so a collision entangles two concurrent
+        # workers in one AgentInfo / workflow instance -- silent governance
+        # bypass and mid-flight teardown (#130).
+        agent_id = f"sub-{uuid.uuid4().hex}"
 
         # Extract role from agent_type (e.g., "agent-swarm:implementer" -> "implementer")
         role = agent_type.split(":")[-1] if ":" in agent_type else agent_type
@@ -631,14 +635,15 @@ class Controller:
                 try:
                     self._wf_start({"workflow_id": wf_id}, agent_info=info)
                 except WorkflowError:
-                    # Instance already exists -- either a genuine re-dispatch of
-                    # this sub-id, or a truncated-uuid collision (sub-{uuid4[:8]},
-                    # 32-bit) with a different live worker. _wf_start's bind only
-                    # runs on a fresh start, so it did NOT bind THIS agent. Bind
-                    # it here to the instance's current phase; otherwise the new
-                    # worker proceeds unbound and permissions.check silently skips
-                    # all L1 phase gates for it. Binding (fail-safe: governed)
-                    # beats leaving it ungoverned in the collision case (#116).
+                    # Instance already exists -- a re-dispatch of this sub-id, or
+                    # (now astronomically unlikely, post-#130 full-entropy ids) an
+                    # agent_id collision with a different live worker. _wf_start's
+                    # bind only runs on a fresh start, so it did NOT bind THIS
+                    # agent. Bind it here to the instance's current phase;
+                    # otherwise the new worker proceeds unbound and
+                    # permissions.check silently skips all L1 phase gates for it.
+                    # Binding (fail-safe: governed) beats leaving it ungoverned
+                    # (#116; collision space narrowed by #130).
                     with self._state_lock:
                         existing = self._workflow_state.get(wf_id)
                         phase = existing.get("phase") if existing else None
