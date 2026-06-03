@@ -631,7 +631,12 @@ class Controller:
                     self._wf_start({"workflow_id": f"iterate:{agent_id}"}, agent_info=info)
                 except WorkflowError:
                     pass  # instance already exists (re-dispatch) -- binding stands
-            wf_override = "iterate"
+            # Pass the FULL per-instance id so the briefing's __WF_ID__ resolves to
+            # the workflow the worker is actually bound to (iterate:<agent_id>);
+            # assemble_subagent_briefing strips the suffix for the protocol lookup.
+            # Bare "iterate" would tell the worker to address a workflow that does
+            # not exist, so it could not advance/stop its own instance (#116).
+            wf_override = f"iterate:{agent_id}"
         else:
             wf_override = None
 
