@@ -34,18 +34,25 @@ from daemon_client import DaemonClient
 def call_tool(name, arguments, caller_id=None):
     """Call a tool via the router daemon.
 
-    The agent's real role + live phase were registered at dispatch by the
-    agent-dispatch hook (prepare_dispatch). We still complete the DaemonClient
-    registration handshake here because it flips the client-side _registered
-    flag that call_tool requires. The daemon's register_agent handler is
-    idempotent, so this does NOT clobber the agent's role/phase — it attaches
-    this connection to the existing identity. The caller id also travels in
-    arguments["_caller"] for per-call permission resolution.
+    The agent's real role + live phase are registered out-of-band: at dispatch by
+    the agent-dispatch hook (prepare_dispatch) and/or by the orchestrator's
+    update_agent_phase. We still complete the DaemonClient registration handshake
+    here because it flips the client-side _registered flag that call_tool requires.
+    The daemon's register_agent handler ATTACHES to an existing identity (never
+    overwriting its role/phase), so re-running the handshake is safe.
+
+    We deliberately do NOT fabricate a role/workflow. Defaulting AGENT_TYPE/
+    WORKFLOW_ID to "implementer"/"iterate" silently fresh-binds an *unknown* id to
+    the iterate base on its first call (issues #116/#117) -- a wrong binding the
+    agent never asked for. When the env vars are unset we send empty values: an
+    unknown id then resolves as unbound (-> global/default-deny) until it is
+    explicitly bound, rather than inheriting iterate/implementer by accident.
+    The caller id also travels in arguments["_caller"] for per-call resolution.
     """
     with DaemonClient() as dc:
         if caller_id:
-            agent_type = os.environ.get("AGENT_TYPE", "implementer")
-            workflow_id = os.environ.get("WORKFLOW_ID", "iterate")
+            agent_type = os.environ.get("AGENT_TYPE", "")
+            workflow_id = os.environ.get("WORKFLOW_ID", "")
             session_id = os.environ.get("AGENT_SESSION_ID", f"mcp-call-{caller_id}")
             dc.register(
                 agent_id=caller_id,

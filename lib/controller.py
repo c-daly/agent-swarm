@@ -1002,7 +1002,12 @@ class Controller:
         agent_id = args.get("agent_id", "")
         with self._state_lock:
             self._agent_state.pop(agent_id, None)
-            return True
+        # Mirror _complete_dispatch: also drop the permission-store entry. Leaving
+        # it pins the old identity -- register_agent ATTACHES to a surviving perm
+        # entry, so a deleted-then-re-registered id keeps its old agent_type/role
+        # until a daemon restart (issue #114).
+        self.permissions.remove_agent(agent_id)
+        return True
 
     def _agent_list(self, args: dict) -> list[str]:
         with self._state_lock:
