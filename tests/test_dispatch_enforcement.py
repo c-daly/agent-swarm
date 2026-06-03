@@ -101,6 +101,16 @@ class TestPrepareDispatch:
         controller._complete_dispatch({"agent_id": agent_id, "status": "completed"})
         assert wf_id not in controller._workflow_state
 
+    def test_complete_dispatch_skips_wf_stop_without_instance(self, controller):
+        """A dispatch with no per-worker iterate instance (a reviewer or any
+        non-implementer) completes WITHOUT invoking _wf_stop -- the membership
+        guard avoids raising/catching WorkflowError for the common case (PR #126
+        review feedback)."""
+        controller._agent_state["sub-noinst"] = {"status": "pending"}
+        controller._wf_stop = MagicMock()
+        controller._complete_dispatch({"agent_id": "sub-noinst", "status": "completed"})
+        controller._wf_stop.assert_not_called()
+
     def test_implementer_inherits_active_workflow(self, controller):
         """An implementer dispatched within an active workflow inherits it
         (does NOT auto-start iterate)."""

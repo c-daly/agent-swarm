@@ -672,11 +672,14 @@ class Controller:
         self.permissions.remove_agent(agent_id)
         # Tear down the per-worker iterate instance that prepare_dispatch may have
         # started for a standalone implementer, so a finished worker does not
-        # orphan it in _workflow_state (#116/#124).
-        try:
-            self._wf_stop({"workflow_id": f"iterate:{agent_id}"})
-        except WorkflowError:
-            pass
+        # orphan it in _workflow_state (#116/#124). Only implementers get an
+        # instance; guard on membership so non-implementer dispatches do not pay
+        # for a raised+caught WorkflowError. _state_lock is an RLock, so holding
+        # it across the check and _wf_stop is reentrant and closes the race.
+        wf_id = f"iterate:{agent_id}"
+        with self._state_lock:
+            if wf_id in self._workflow_state:
+                self._wf_stop({"workflow_id": wf_id})
         return {"success": True, "agent_id": agent_id}
 
     # --- Router operations ---
