@@ -66,3 +66,26 @@ def test_save_state_does_not_rewrite_daemon_owned_keys():
     # Workflow-owned keys are still persisted.
     assert "task" in set_keys
     assert "iteration" in set_keys
+
+
+def test_save_state_persists_bare_checkpoint_passed_key():
+    """The *_checkpoint_passed skip must mirror controller._is_protected_key's
+    length guard: only phase-prefixed keys are daemon-owned. A workflow-owned key
+    literally named "_checkpoint_passed" (no prefix) is NOT protected by the
+    daemon and must still be persisted (PR #131 review)."""
+    engine = workflow_base.WorkflowEngine.__new__(workflow_base.WorkflowEngine)
+    engine.workflow_id = "pr_comment"
+
+    dc = MagicMock()
+    client = MagicMock()
+    client.__enter__.return_value = dc
+
+    with patch.object(workflow_base, "DaemonClient", return_value=client):
+        engine._save_state({
+            "_checkpoint_passed": "owned-value",
+            "design_checkpoint_passed": True,
+        })
+
+    set_keys = {call.args[1] for call in dc.workflow_set_value.call_args_list}
+    assert "_checkpoint_passed" in set_keys, "bare suffix key is workflow-owned"
+    assert "design_checkpoint_passed" not in set_keys, "phase-prefixed flag is daemon-owned"

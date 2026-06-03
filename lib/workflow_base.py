@@ -15,6 +15,11 @@ from typing import Callable, FrozenSet, Optional, Any
 from daemon_client import DaemonClient, is_daemon_only_key
 from permission_store import PermissionStore, PhasePermissions
 
+# Suffix the daemon stamps on per-phase checkpoint flags via
+# workflow_pass_checkpoint. Mirrors controller._is_protected_key, which only
+# treats a *_checkpoint_passed key as daemon-owned when it has a phase prefix.
+_CHECKPOINT_PASSED_SUFFIX = "_checkpoint_passed"
+
 
 class KickbackReason(Enum):
     """Standard reasons for phase kickback."""
@@ -143,7 +148,14 @@ class WorkflowEngine:
             if "phase" in state:
                 dc.workflow_advance_phase(self.workflow_id, state["phase"])
             for key, value in state.items():
-                if is_daemon_only_key(key) or key.endswith("_checkpoint_passed"):
+                # Mirror controller._is_protected_key exactly: a *_checkpoint_passed
+                # key is daemon-owned only when it has a phase-name prefix (length
+                # strictly greater than the bare suffix), so a workflow-owned key
+                # literally named "_checkpoint_passed" is not swallowed here.
+                if is_daemon_only_key(key) or (
+                    len(key) > len(_CHECKPOINT_PASSED_SUFFIX)
+                    and key.endswith(_CHECKPOINT_PASSED_SUFFIX)
+                ):
                     continue
                 dc.workflow_set_value(self.workflow_id, key, value)
 
