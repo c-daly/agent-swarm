@@ -263,7 +263,6 @@ Main Agent
 | `lib/router.py` | MCP/JSON-RPC server; translates calls, enforces permissions |
 | `lib/controller.py` | Workflow state, phase transitions, agent registry |
 | `lib/iterate_workflow.py` | TDD loop implementation |
-| `lib/develop_workflow.py` | Full SDLC orchestration |
 | `lib/experiment_workflow.py` | Experiment loop with eval gates |
 | `lib/debug_workflow.py` | Systematic debugging workflow |
 | `lib/orchestrate.py` | Task queue management, subagent dispatch |

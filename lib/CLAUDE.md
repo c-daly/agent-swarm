@@ -11,7 +11,7 @@ The daemon is a long-lived process (port 7523) that owns all of agent-swarm's st
   - `_get_agent_briefing` — main-agent briefing (subagents get theirs via dispatch hook `additionalContext`).
   - `handle_call(tool_name, args)` — routes named tools (e.g. `prepare_dispatch`, `agent/register`).
 - **`lib/permissions.py`** + **`lib/permission_query.py`** — yaml-driven layered allow/block (`global` → `roles` → `agents` → `workflow/phase`). `permission_query._KNOWN_WORKFLOWS` is a hardcoded list — see `config/workflows/CLAUDE.md` for the security gotcha when adding a new workflow.
-- **Per-workflow engines** — `lib/implementer_workflow.py`, `lib/develop_workflow.py`, `lib/pr_comment_workflow.py`, etc. These are the only places where YAML fields like `max_iterations` and `max_agents` are read; workflows without a corresponding engine module silently ignore those fields.
+- **Per-workflow engines** — `lib/implementer_workflow.py`, `lib/pr_comment_workflow.py`, etc. These are the only places where YAML fields like `max_iterations` and `max_agents` are read; workflows without a corresponding engine module silently ignore those fields.
 
 ## Briefing assembly
 
