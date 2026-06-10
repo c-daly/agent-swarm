@@ -118,7 +118,6 @@ def _validate_task_fields(raw: dict[str, Any], index: int) -> None:
         )
 
 
-
 def _detect_cycles(manifest: Manifest) -> None:
     """Raise ValueError if dependency graph has cycles."""
     dep_map = {t.name: t.depends_on for t in manifest.tasks}

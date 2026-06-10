@@ -478,3 +478,17 @@ class TestTierFields:
         )
         with pytest.raises(ValueError, match="higher tier"):
             parse_manifest(str(manifest_file))
+
+    def test_non_string_model_rejected(self, tmp_path):
+        manifest_file = tmp_path / "m.yaml"
+        manifest_file.write_text(
+            "project: p\n"
+            "tasks:\n"
+            "  - name: t1\n"
+            "    description: d\n"
+            "    target_dir: src\n"
+            "    test_dir: tests\n"
+            "    model: 5\n"
+        )
+        with pytest.raises(ValueError, match="invalid model"):
+            parse_manifest(str(manifest_file))
