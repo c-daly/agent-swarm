@@ -1,0 +1,31 @@
+# Demo manifest for the delegate workflow: two tiny tiered tasks.
+# Smoke-test with:
+#   python3 lib/orchestrator.py load config/manifests/demo_delegate.yaml
+
+project: demo-delegate
+base_branch: main
+max_retries: 2
+
+tasks:
+  - name: greeting
+    description: |
+      Implement a greet(name: str) -> str function in src/greeting/greeting.py.
+      Returns "Hello, {name}!". Raises ValueError on empty or whitespace-only
+      name. Strip surrounding whitespace before formatting.
+    target_dir: src/greeting
+    test_dir: tests/test_greeting
+    min_tests: 5
+    model: haiku
+    escalation: sonnet
+
+  - name: word_count
+    description: |
+      Implement word_count(text: str) -> dict[str, int] in src/word_count/word_count.py.
+      Case-insensitive, strips punctuation (string.punctuation), splits on
+      whitespace, returns counts keyed by lowercased word. Empty string
+      returns {}.
+    target_dir: src/word_count
+    test_dir: tests/test_word_count
+    min_tests: 5
+    model: sonnet
+    escalation: fable
