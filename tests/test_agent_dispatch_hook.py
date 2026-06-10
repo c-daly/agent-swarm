@@ -201,7 +201,8 @@ def test_unbriefed_warn_allows_with_warning():
     hso = decision["hookSpecificOutput"]
     assert hso["permissionDecision"] == "allow"
     ctx = hso.get("additionalContext", "")
-    assert "WARNING" in ctx
+    parsed = json.loads(ctx)  # payload must remain valid JSON for consumers
+    assert "WARNING" in parsed["warning"]
 
 
 def test_unbriefed_off_allows_no_warning():

@@ -131,18 +131,19 @@ def main():
                 additional_context=dispatch_state,
             )))
         elif enforce == "warn":
+            warning = (
+                f"WARNING: spawn prompt is unbriefed (missing {briefing_marker!r}). "
+                f"agent_id={agent_id}."
+            )
             dispatch_state = json.dumps({
                 "agent_id": agent_id,
                 "briefing": briefing,
                 "agent_type": agent_type_result,
+                "warning": warning,
             })
-            warning = (
-                f"WARNING: spawn prompt is unbriefed (missing {briefing_marker!r}). "
-                f"agent_id={agent_id}. "
-            )
             print(json.dumps(allow(
                 reason=f"Agent {agent_id} registered via prepare_dispatch (unbriefed, warned)",
-                additional_context=warning + dispatch_state,
+                additional_context=dispatch_state,
             )))
         else:
             # Default: block and tell the spawner what to prepend
