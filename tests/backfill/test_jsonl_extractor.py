@@ -7,7 +7,6 @@ Tests pin current behavior of token extraction and JSONL parsing.
 import json
 import os
 import pytest
-import time
 
 from lib.jsonl_extractor import (
     get_file_hash,
@@ -203,9 +202,10 @@ class TestGetFileHash:
         f.write_text("content")
         hash1 = get_file_hash(f)
         
-        # Change mtime
-        time.sleep(0.01)  # Small delay to ensure mtime difference
-        os.utime(f, None)  # Touch file to update mtime
+        # Change mtime explicitly (sleep-based touch is flaky on coarse
+        # filesystem timestamp resolutions)
+        stat = f.stat()
+        os.utime(f, (stat.st_atime, stat.st_mtime + 1.0))
         hash2 = get_file_hash(f)
         
         assert hash1 != hash2
@@ -216,8 +216,7 @@ class TestGetFileHash:
         f.write_text("content")
         hash1 = get_file_hash(f)
         
-        # Modify file
-        time.sleep(0.01)
+        # Modify file (size change alone changes the hash; no sleep needed)
         f.write_text("longer content now")
         hash2 = get_file_hash(f)
         
@@ -264,9 +263,11 @@ class TestProgressTracking:
         mark_file_processed(f, progress, tokens)
         assert is_file_processed(f, progress)
         
-        # Change file
-        time.sleep(0.01)
+        # Change file; bump mtime explicitly (same size, and sleep-based
+        # mtime changes are flaky on coarse timestamp resolutions)
         f.write_text("content2\n")
+        stat = f.stat()
+        os.utime(f, (stat.st_atime, stat.st_mtime + 1.0))
         
         # Now hash should not match
         assert not is_file_processed(f, progress)

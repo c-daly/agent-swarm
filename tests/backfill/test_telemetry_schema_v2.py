@@ -2,7 +2,7 @@
 """Characterization tests for lib.telemetry_schema_v2."""
 
 import json
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from lib.telemetry_schema_v2 import (
     default_token_data, default_call_data, default_summarization_data,
     default_timing_data, default_day_data, default_aggregate_data, default_telemetry_v2,
@@ -281,7 +281,7 @@ class TestRecomputeAggregates:
         today = date.today()
         day_recent = ensure_day(tel, today.isoformat())
         day_recent["tokens"]["input"] = 100
-        day_old = ensure_day(tel, "2026-01-01")
+        day_old = ensure_day(tel, (today - timedelta(days=10)).isoformat())
         day_old["tokens"]["input"] = 1000
         recompute_aggregates(tel)
         last_7 = tel["aggregates"]["last_7_days"]
