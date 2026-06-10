@@ -8,6 +8,7 @@ additionalContext so the subagent starts with its identity and protocol.
 """
 
 import json
+import os
 import socket
 import sys
 
@@ -99,18 +100,62 @@ def main():
     })
 
     if result and result.get("success"):
-        # Return full dispatch state as JSON in additionalContext
-        dispatch_state = json.dumps({
-            "agent_id": result.get("agent_id"),
-            "briefing": result.get("briefing", ""),
-            "agent_type": result.get("agent_type", agent_type),
-        })
-        print(json.dumps(allow(
-            reason=f"Agent {result.get('agent_id', '?')} registered via prepare_dispatch",
-            additional_context=dispatch_state,
-        )))
+        agent_id = result.get("agent_id", "?")
+        briefing = result.get("briefing", "")
+        agent_type_result = result.get("agent_type", agent_type)
+
+        # Enforce briefing delivery
+        briefing_marker = "## Your Agent Identity"
+        enforce = os.environ.get("AGENT_SWARM_BRIEFING_ENFORCE", "block")
+
+        if briefing_marker in prompt:
+            # Prompt already contains the briefing -- allow as-is
+            dispatch_state = json.dumps({
+                "agent_id": agent_id,
+                "briefing": briefing,
+                "agent_type": agent_type_result,
+            })
+            print(json.dumps(allow(
+                reason=f"Agent {agent_id} registered via prepare_dispatch",
+                additional_context=dispatch_state,
+            )))
+        elif enforce == "off":
+            # Legacy passthrough -- no enforcement
+            dispatch_state = json.dumps({
+                "agent_id": agent_id,
+                "briefing": briefing,
+                "agent_type": agent_type_result,
+            })
+            print(json.dumps(allow(
+                reason=f"Agent {agent_id} registered via prepare_dispatch",
+                additional_context=dispatch_state,
+            )))
+        elif enforce == "warn":
+            dispatch_state = json.dumps({
+                "agent_id": agent_id,
+                "briefing": briefing,
+                "agent_type": agent_type_result,
+            })
+            warning = (
+                f"WARNING: spawn prompt is unbriefed (missing {briefing_marker!r}). "
+                f"agent_id={agent_id}. "
+            )
+            print(json.dumps(allow(
+                reason=f"Agent {agent_id} registered via prepare_dispatch (unbriefed, warned)",
+                additional_context=warning + dispatch_state,
+            )))
+        else:
+            # Default: block and tell the spawner what to prepend
+            reason = (
+                f"Spawn blocked: prompt is missing the briefing marker {briefing_marker!r}. "
+                f"Prepend the following briefing to the prompt and re-spawn:\n"
+                f"agent_id: {agent_id}\n"
+                f"{briefing_marker}\n"
+                f"{briefing}"
+            )
+            print(json.dumps(block(reason)))
     else:
-        # Graceful degradation — don't break spawning if daemon is down
+        # Graceful degradation -- don't break spawning if daemon is down
         print(json.dumps(allow("prepare_dispatch unavailable, allowing through")))
 
 
