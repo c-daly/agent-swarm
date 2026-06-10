@@ -10,6 +10,7 @@ from both directions (the fix had zero coverage; surfaced by adversarial review)
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -79,3 +80,156 @@ def test_camelcase_payload_is_not_dispatched():
 def test_non_dispatch_tool_is_passthrough():
     calls = _run({"tool_name": "Read", "tool_input": {"file_path": "/x"}})
     assert calls == []
+
+
+
+# ---------------------------------------------------------------------------
+# Helper for enforcement tests -- captures stdout decision as parsed dict
+# ---------------------------------------------------------------------------
+
+
+
+
+def _run_with_decision(payload, *, briefing="B", router_success=True, env=None):
+    """Run main() and return (calls, decision_dict).
+
+    `briefing` is the text returned by fake_call_router so tests can
+    put it into the prompt to simulate a briefed spawn.
+    `router_success` controls whether the fake router returns success.
+    `env` is an optional dict of extra os.environ overrides.
+    """
+    mod = _load_hook()
+    calls = []
+    stdout_buf = io.StringIO()
+
+    def fake_call_router(tool_name, args=None, timeout=5.0):
+        calls.append((tool_name, args or {}))
+        if not router_success:
+            return None
+        return {
+            "success": True,
+            "agent_id": "sub-test",
+            "briefing": briefing,
+            "agent_type": (args or {}).get("agent_type"),
+        }
+
+    env_overrides = env or {}
+    orig_env = {k: os.environ.get(k) for k in env_overrides}
+    try:
+        for k, v in env_overrides.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        with patch.object(mod, "call_router", fake_call_router), \
+                patch("sys.stdin", io.StringIO(json.dumps(payload))), \
+                patch("sys.stdout", stdout_buf):
+            mod.main()
+    finally:
+        for k, v in orig_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    raw = stdout_buf.getvalue()
+    decision = json.loads(raw) if raw.strip() else {}
+    return calls, decision
+
+
+BRIEFING_MARKER = "## Your Agent Identity"
+_BRIEFED_PROMPT = BRIEFING_MARKER + chr(10) + "Agent ID: sub-test" + chr(10) + "some briefing text"
+_UNBRIEFED_PROMPT = "do something without briefing"
+
+
+# ---------------------------------------------------------------------------
+# Enforcement tests (6 required)
+# ---------------------------------------------------------------------------
+
+
+def test_briefed_prompt_allows():
+    """When the spawn prompt contains the briefing marker, the hook allows."""
+    _, decision = _run_with_decision(
+        {
+            "tool_name": "Agent",
+            "tool_input": {"subagent_type": "implementer", "prompt": _BRIEFED_PROMPT, "description": "d"},
+        }
+    )
+    hso = decision["hookSpecificOutput"]
+    assert hso["permissionDecision"] == "allow"
+
+
+def test_unbriefed_default_blocks_with_agent_id_and_marker():
+    """Unbriefed prompt + default env (block) must block, with reason containing
+    the agent_id and the briefing marker so the spawner can comply."""
+    _, decision = _run_with_decision(
+        {
+            "tool_name": "Agent",
+            "tool_input": {"subagent_type": "implementer", "prompt": _UNBRIEFED_PROMPT, "description": "d"},
+        },
+        env={"AGENT_SWARM_BRIEFING_ENFORCE": "block"},
+    )
+    hso = decision["hookSpecificOutput"]
+    assert hso["permissionDecision"] == "block"
+    reason = hso["permissionDecisionReason"]
+    assert "## Your Agent Identity" in reason
+    assert "sub-test" in reason
+
+
+def test_unbriefed_default_env_absent_blocks():
+    """Default behavior (env var absent) must also block -- same as explicit 'block'."""
+    _, decision = _run_with_decision(
+        {
+            "tool_name": "Task",
+            "tool_input": {"subagent_type": "reviewer", "prompt": _UNBRIEFED_PROMPT},
+        },
+        env={"AGENT_SWARM_BRIEFING_ENFORCE": None},  # ensure absent
+    )
+    hso = decision["hookSpecificOutput"]
+    assert hso["permissionDecision"] == "block"
+
+
+def test_unbriefed_warn_allows_with_warning():
+    """AGENT_SWARM_BRIEFING_ENFORCE=warn must allow but put a WARNING in additionalContext."""
+    _, decision = _run_with_decision(
+        {
+            "tool_name": "Agent",
+            "tool_input": {"subagent_type": "implementer", "prompt": _UNBRIEFED_PROMPT, "description": "d"},
+        },
+        env={"AGENT_SWARM_BRIEFING_ENFORCE": "warn"},
+    )
+    hso = decision["hookSpecificOutput"]
+    assert hso["permissionDecision"] == "allow"
+    ctx = hso.get("additionalContext", "")
+    parsed = json.loads(ctx)  # payload must remain valid JSON for consumers
+    assert "WARNING" in parsed["warning"]
+
+
+def test_unbriefed_off_allows_no_warning():
+    """AGENT_SWARM_BRIEFING_ENFORCE=off is today's behavior -- allow with no warning."""
+    _, decision = _run_with_decision(
+        {
+            "tool_name": "Agent",
+            "tool_input": {"subagent_type": "implementer", "prompt": _UNBRIEFED_PROMPT, "description": "d"},
+        },
+        env={"AGENT_SWARM_BRIEFING_ENFORCE": "off"},
+    )
+    hso = decision["hookSpecificOutput"]
+    assert hso["permissionDecision"] == "allow"
+    ctx = hso.get("additionalContext", "")
+    assert "WARNING" not in ctx
+
+
+def test_daemon_down_allows():
+    """When prepare_dispatch returns None (daemon down), the hook must always allow."""
+    _, decision = _run_with_decision(
+        {
+            "tool_name": "Agent",
+            "tool_input": {"subagent_type": "implementer", "prompt": _UNBRIEFED_PROMPT, "description": "d"},
+        },
+        router_success=False,
+        env={"AGENT_SWARM_BRIEFING_ENFORCE": "block"},
+    )
+    hso = decision["hookSpecificOutput"]
+    assert hso["permissionDecision"] == "allow"
+

@@ -20,7 +20,10 @@ INTAKE → RESEARCH → DESIGN → IMPLEMENT → REVIEW → INTEGRATE → COMPLE
 
 Kickbacks: REVIEW → IMPLEMENT (code issues), INTEGRATE → IMPLEMENT (merge conflicts / test failures).
 
+<!-- spawn-conformance: native-teams-exempt -->
 ## Agent Lifecycle
+
+These agents run as native Claude Code team members via `Agent()` / `TeamCreate()` / `SendMessage()` and do not route through the router; they cannot use `mcp-call` and do not need `register_agent` or a briefing prepend.
 
 | Role | Phase | Agent Type | Model | Isolation | Writes? |
 |------|-------|------------|-------|-----------|---------|
@@ -104,6 +107,7 @@ Create feature branch, create tasks per subtask, spawn implementers in isolated 
    TaskUpdate(taskId=<id>, addBlockedBy=[<dependency-ids>])
    ```
 3. For each unblocked task, spawn an implementer:
+<!-- spawn-conformance: native-teams-exempt -->
    ```
    Agent(
      team_name="td-<slug>",
