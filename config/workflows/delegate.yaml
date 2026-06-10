@@ -67,6 +67,7 @@ phases:
       - CODE_QUERY
       - SHELL_SAFE
       - CODE_EDIT
+      - FILE_WRITE
     blocked_tools:
       - native__write_file
     eligible_agents: []

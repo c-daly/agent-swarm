@@ -1,7 +1,6 @@
 """Tests for the ParallelOrchestrator."""
 
-from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -701,3 +700,44 @@ class TestEscalation:
             "core", success=False, error="e2"
         )
         assert result == "failed"
+
+    def test_escalation_does_not_poison_dependents(self, tmp_path, tmp_state_dir):
+        """Escalation must NOT propagate failure to dependent tasks.
+
+        When a task is escalated (bumped to higher tier), _propagate_failure
+        is NOT called.  A downstream task that depends on the escalated task
+        must remain in its normal waiting state (status "pending"), not
+        acquire the "failed" status that _propagate_failure would set.
+        """
+        manifest_yaml = """\
+project: esc-dep-test
+base_branch: main
+max_retries: 1
+tasks:
+  - name: leaf
+    description: leaf task
+    target_dir: src/leaf
+    test_dir: tests/test_leaf
+    model: haiku
+    escalation: sonnet
+  - name: dep
+    description: dependent task
+    target_dir: src/dep
+    test_dir: tests/test_dep
+    max_retries: 1
+    depends_on:
+      - leaf
+"""
+        path = tmp_path / "esc-dep.yaml"
+        path.write_text(manifest_yaml)
+        orch = ParallelOrchestrator()
+        orch.load_manifest(str(path))
+        orch.start()
+        # Two failures drive leaf to escalation (max_retries=1).
+        orch.record_completion("leaf", success=False, error="e1")
+        result = orch.record_completion("leaf", success=False, error="e2")
+        assert result == "escalated"
+        # dep must NOT be failed - escalation skips _propagate_failure.
+        dep_state = orch.get_status()["tasks"]["dep"]
+        assert dep_state["status"] != "failed"
+        assert dep_state["status"] == "pending"
