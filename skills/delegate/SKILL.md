@@ -100,13 +100,18 @@ workflow__advance_phase(wf_id, "dispatch")
 python3 ${AGENT_SWARM_ROOT}/lib/orchestrator.py pending .delegate/<slug>.yaml --json
 ```
 
-For each entry, spawn a worker with the **Agent tool**:
+For each entry, register the worker, then spawn it with the **Agent
+tool** (the spawn protocol — see `skills/spawn/SKILL.md`):
 
-- `subagent_type: "general-purpose"` (same as parallel-orchestrate)
-- `model: <entry.model>` — **this is the tiering lever; never omit it**
-- `prompt`: the `prompt` field verbatim
-- Spawn all pending tasks **in parallel** — worktrees isolate them
-
+1. `reg = router__register_agent(agent_id="<task_name>-w<n>", agent_type="implementer", roles=["editor", "shell_full"])`
+2. Spawn:
+   - `subagent_type: "implementer"` — never a native type
+     (`general-purpose`/`Explore`/`Plan`): native types have no router
+     access and will flail
+   - `model: <entry.model>` — **this is the tiering lever; never omit it**
+   - `prompt`: `reg["briefing"] + "\n\n" +` the entry's `prompt` field
+     verbatim — the briefing carries the worker's identity/caller-id
+   - Spawn all pending tasks **in parallel** — worktrees isolate them
 Record each spawn, then advance:
 
 ```bash
