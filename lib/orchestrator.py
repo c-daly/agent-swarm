@@ -26,6 +26,7 @@ class SpawnRequest:
     branch_name: str
     prompt: str
     worktree_dir: str = ""
+    model: str = "sonnet"
 
 
 @dataclass
@@ -198,6 +199,7 @@ class ParallelOrchestrator:
                 retries = ts.get("retries", 0)
                 last_error = ts.get("last_error", "")
                 worktree_dir = ts.get("worktree_dir", "")
+                model = ts.get("model") or task.model
                 if retries > 0 and last_error:
                     prompt = build_retry_prompt(
                         task,
@@ -220,6 +222,7 @@ class ParallelOrchestrator:
                     branch_name=task.branch_name,
                     prompt=prompt,
                     worktree_dir=worktree_dir,
+                    model=model,
                 ))
         return pending
 
@@ -234,7 +237,7 @@ class ParallelOrchestrator:
 
     def record_completion(
         self, task_name: str, success: bool, error: str = ""
-    ) -> Literal["completed", "retrying", "failed"]:
+    ) -> Literal["completed", "retrying", "failed", "escalated"]:
         """Record task completion. Returns outcome."""
         self._require_manifest()
         self._require_state()
@@ -249,6 +252,24 @@ class ParallelOrchestrator:
             return "completed"
 
         if retries >= self._manifest.max_retries:
+            task = next(
+                (t for t in self._manifest.tasks if t.name == task_name), None
+            )
+            if task is None:
+                raise ValueError(f"Task '{task_name}' not found in manifest")
+            current_model = task_state.get("model") or task.model
+            if task.escalation != "fable" and current_model != task.escalation:
+                self._state.update_task(
+                    task_name,
+                    status="pending",
+                    retries=0,
+                    model=task.escalation,
+                    last_error=error,
+                    escalated_from=current_model,
+                )
+                self._update_phase()
+                self._state.save()
+                return "escalated"
             self._state.update_task(
                 task_name, status="failed", last_error=error
             )
@@ -509,6 +530,7 @@ def main():
                     "branch_name": req.branch_name,
                     "worktree_dir": req.worktree_dir,
                     "prompt": req.prompt,
+                    "model": req.model,
                 }
                 for req in pending
             ], indent=2))

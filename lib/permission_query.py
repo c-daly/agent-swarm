@@ -11,7 +11,7 @@ from permission_store import PermissionStore
 
 
 # Known workflow IDs to check when no specific ID given
-_KNOWN_WORKFLOWS = ["iterate", "debug", "pr_comment", "simple", "develop", "experiment", "orchestrate"]
+_KNOWN_WORKFLOWS = ["iterate", "debug", "pr_comment", "simple", "develop", "experiment", "orchestrate", "delegate"]
 
 
 def get_active_workflow_id() -> Optional[str]:

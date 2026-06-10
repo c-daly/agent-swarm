@@ -230,3 +230,22 @@ workflows:
     done:
       allowed: []
       blocked: []
+
+  # Delegate workflow — Fable decomposes into a tiered manifest; haiku/sonnet
+  # workers execute via parallel-orchestrate; Fable escalates and integrates.
+  delegate:
+    decompose:
+      allowed: [native__read_file, native__glob, native__grep, serena__*, context7__*, native__write_file, native__bash(python*), workflow__*]
+      blocked: [native__edit_file]
+    dispatch:
+      allowed: [Task, native__read_file, native__bash(python*), workflow__*]
+      blocked: [native__write_file, native__edit_file]
+    monitor:
+      allowed: [Task, native__read_file, native__bash(python*), workflow__*]
+      blocked: [native__write_file, native__edit_file]
+    escalate:
+      allowed: [native__read_file, native__glob, native__grep, serena__*, native__write_file, native__edit_file, native__bash(python*), workflow__*]
+      blocked: []
+    integrate:
+      allowed: [native__read_file, native__glob, native__grep, serena__*, native__edit_file, native__bash(python*), native__bash(pytest*), native__bash(git*), workflow__*]
+      blocked: [native__write_file]

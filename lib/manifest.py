@@ -18,6 +18,8 @@ class ManifestTask:
     min_tests: int = 5
     branch_name: str = ""
     depends_on: list[str] = field(default_factory=list)
+    model: str = "sonnet"
+    escalation: str = "fable"
 
     def __post_init__(self):
         if not self.branch_name:
@@ -71,6 +73,8 @@ def parse_manifest(path: str) -> Manifest:
                 min_tests=raw.get("min_tests", 5),
                 branch_name=raw.get("branch_name", ""),
                 depends_on=raw.get("depends_on", []),
+                model=raw.get("model", "sonnet"),
+                escalation=raw.get("escalation", "fable"),
             )
         )
 
@@ -83,6 +87,10 @@ def parse_manifest(path: str) -> Manifest:
     )
 
 
+_VALID_MODELS = ["haiku", "sonnet"]
+_VALID_ESCALATIONS = ["sonnet", "fable"]
+_TIER_ORDER = {"haiku": 0, "sonnet": 1, "fable": 2}
+
 _REQUIRED_TASK_FIELDS = ["name", "description", "target_dir", "test_dir"]
 
 
@@ -91,6 +99,23 @@ def _validate_task_fields(raw: dict[str, Any], index: int) -> None:
     for field_name in _REQUIRED_TASK_FIELDS:
         if field_name not in raw:
             raise ValueError(f"Task {index} missing required field: {field_name}")
+
+    model = raw.get("model", "sonnet")
+    escalation = raw.get("escalation", "fable")
+    if model not in _VALID_MODELS:
+        raise ValueError(
+            f"Task {index} has invalid model: {model} (valid: {_VALID_MODELS})"
+        )
+    if escalation not in _VALID_ESCALATIONS:
+        raise ValueError(
+            f"Task {index} has invalid escalation: {escalation} "
+            f"(valid: {_VALID_ESCALATIONS})"
+        )
+    if _TIER_ORDER[escalation] <= _TIER_ORDER[model]:
+        raise ValueError(
+            f"Task {index}: escalation {escalation!r} must be a "
+            f"higher tier than model {model!r}"
+        )
 
 
 def _detect_cycles(manifest: Manifest) -> None:

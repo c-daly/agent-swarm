@@ -1,7 +1,6 @@
 """Tests for the ParallelOrchestrator."""
 
-from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -599,3 +598,146 @@ class TestWorktreeLifecycle:
         status = worktree_orchestrator.get_status()
         for task_state in status["tasks"].values():
             assert task_state["worktree_dir"] == ""
+
+
+@pytest.fixture
+def tiered_manifest_path(tmp_path):
+    """Manifest with explicit per-task tiers. max_retries=1 keeps
+    escalation tests short: one 'retrying', then the escalation decision."""
+    content = """\
+project: tiered-project
+base_branch: main
+max_retries: 1
+tasks:
+  - name: leaf
+    description: "Mechanical leaf task"
+    target_dir: src/leaf
+    test_dir: tests/test_leaf
+    model: haiku
+    escalation: sonnet
+  - name: core
+    description: "Locally-reasoned task"
+    target_dir: src/core
+    test_dir: tests/test_core
+    model: sonnet
+"""
+    path = tmp_path / "tiered.yaml"
+    path.write_text(content)
+    return str(path)
+
+
+@pytest.fixture
+def tiered_orchestrator(tmp_state_dir, tiered_manifest_path):
+    orch = ParallelOrchestrator()
+    orch.load_manifest(tiered_manifest_path)
+    return orch
+
+
+class TestTierPassthrough:
+    def test_spawn_requests_carry_manifest_model(self, tiered_orchestrator):
+        tiered_orchestrator.start()
+        pending = {r.task_name: r for r in tiered_orchestrator.get_pending_tasks()}
+        assert pending["leaf"].model == "haiku"
+        assert pending["core"].model == "sonnet"
+
+    def test_state_model_overrides_manifest_model(self, tiered_orchestrator):
+        """After a tier bump, state['model'] is the current tier."""
+        tiered_orchestrator.start()
+        tiered_orchestrator._state.update_task("leaf", model="sonnet")
+        tiered_orchestrator._state.save()
+        pending = {r.task_name: r for r in tiered_orchestrator.get_pending_tasks()}
+        assert pending["leaf"].model == "sonnet"
+
+
+class TestEscalation:
+    def test_escalates_after_max_retries(self, tiered_orchestrator):
+        tiered_orchestrator.start()
+        assert tiered_orchestrator.record_completion(
+            "leaf", success=False, error="red"
+        ) == "retrying"
+        result = tiered_orchestrator.record_completion(
+            "leaf", success=False, error="still red"
+        )
+        assert result == "escalated"
+        task_state = tiered_orchestrator.get_status()["tasks"]["leaf"]
+        assert task_state["status"] == "pending"
+        assert task_state["model"] == "sonnet"
+        assert task_state["retries"] == 0
+        assert task_state["escalated_from"] == "haiku"
+
+    def test_escalated_task_redispatches_at_higher_tier(self, tiered_orchestrator):
+        tiered_orchestrator.start()
+        tiered_orchestrator.record_completion("leaf", success=False, error="e")
+        tiered_orchestrator.record_completion("leaf", success=False, error="e")
+        pending = {r.task_name: r for r in tiered_orchestrator.get_pending_tasks()}
+        assert pending["leaf"].model == "sonnet"
+
+    def test_fails_for_good_at_escalation_tier(self, tiered_orchestrator):
+        tiered_orchestrator.start()
+        tiered_orchestrator.record_completion("leaf", success=False, error="e1")
+        assert tiered_orchestrator.record_completion(
+            "leaf", success=False, error="e2"
+        ) == "escalated"
+        assert tiered_orchestrator.record_completion(
+            "leaf", success=False, error="e3"
+        ) == "retrying"
+        result = tiered_orchestrator.record_completion(
+            "leaf", success=False, error="e4"
+        )
+        assert result == "failed"
+        task_state = tiered_orchestrator.get_status()["tasks"]["leaf"]
+        assert task_state["status"] == "failed"
+
+    def test_fable_escalation_fails_without_redispatch(self, tiered_orchestrator):
+        # core has escalation fable -> no spawnable higher tier, so
+        # exhausted retries mean failed (skill routes to escalate phase,
+        # where Fable handles it personally).
+        tiered_orchestrator.start()
+        assert tiered_orchestrator.record_completion(
+            "core", success=False, error="e1"
+        ) == "retrying"
+        result = tiered_orchestrator.record_completion(
+            "core", success=False, error="e2"
+        )
+        assert result == "failed"
+
+    def test_escalation_does_not_poison_dependents(self, tmp_path, tmp_state_dir):
+        """Escalation must NOT propagate failure to dependent tasks.
+
+        When a task is escalated (bumped to higher tier), _propagate_failure
+        is NOT called.  A downstream task that depends on the escalated task
+        must remain in its normal waiting state (status "pending"), not
+        acquire the "failed" status that _propagate_failure would set.
+        """
+        manifest_yaml = """\
+project: esc-dep-test
+base_branch: main
+max_retries: 1
+tasks:
+  - name: leaf
+    description: leaf task
+    target_dir: src/leaf
+    test_dir: tests/test_leaf
+    model: haiku
+    escalation: sonnet
+  - name: dep
+    description: dependent task
+    target_dir: src/dep
+    test_dir: tests/test_dep
+    max_retries: 1
+    depends_on:
+      - leaf
+"""
+        path = tmp_path / "esc-dep.yaml"
+        path.write_text(manifest_yaml)
+        orch = ParallelOrchestrator()
+        orch.load_manifest(str(path))
+        orch.start()
+        # Two failures drive leaf to escalation (max_retries=1).
+        orch.record_completion("leaf", success=False, error="e1")
+        result = orch.record_completion("leaf", success=False, error="e2")
+        assert result == "escalated"
+        # dep must NOT be failed - escalation skips _propagate_failure.
+        dep_state = orch.get_status()["tasks"]["dep"]
+        assert dep_state["status"] != "failed"
+        assert dep_state["status"] == "pending"
