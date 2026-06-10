@@ -99,6 +99,7 @@ Ask the user: **Proceed to orchestration / Edit the manifest first / Stop**
 Invoke `agent-swarm:parallel-orchestrate` with the manifest path.
 
 The orchestrator handles everything from here: spawning subagents, monitoring, merging, verification, and branch completion.
+Subagent spawning in that skill follows the mandatory register+prepend protocol; see `skills/spawn/SKILL.md` for the full contract.
 
 ---
 
