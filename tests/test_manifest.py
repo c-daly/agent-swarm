@@ -407,3 +407,74 @@ tasks:
         manifest = parse_manifest(path)
         warnings = validate_manifest(manifest)
         assert not any("depend" in w.lower() or "circular" in w.lower() for w in warnings)
+
+
+class TestTierFields:
+    def test_default_model_and_escalation(self):
+        task = ManifestTask(
+            name="stack",
+            description="Implement a stack",
+            target_dir="src/stack",
+            test_dir="tests/test_stack",
+        )
+        assert task.model == "sonnet"
+        assert task.escalation == "fable"
+
+    def test_explicit_model_and_escalation_parsed(self, tmp_path):
+        manifest_file = tmp_path / "m.yaml"
+        manifest_file.write_text(
+            "project: p\n"
+            "tasks:\n"
+            "  - name: t1\n"
+            "    description: d\n"
+            "    target_dir: src\n"
+            "    test_dir: tests\n"
+            "    model: haiku\n"
+            "    escalation: sonnet\n"
+        )
+        m = parse_manifest(str(manifest_file))
+        assert m.tasks[0].model == "haiku"
+        assert m.tasks[0].escalation == "sonnet"
+
+    def test_invalid_model_rejected(self, tmp_path):
+        manifest_file = tmp_path / "m.yaml"
+        manifest_file.write_text(
+            "project: p\n"
+            "tasks:\n"
+            "  - name: t1\n"
+            "    description: d\n"
+            "    target_dir: src\n"
+            "    test_dir: tests\n"
+            "    model: opus\n"
+        )
+        with pytest.raises(ValueError, match="invalid model"):
+            parse_manifest(str(manifest_file))
+
+    def test_invalid_escalation_rejected(self, tmp_path):
+        manifest_file = tmp_path / "m.yaml"
+        manifest_file.write_text(
+            "project: p\n"
+            "tasks:\n"
+            "  - name: t1\n"
+            "    description: d\n"
+            "    target_dir: src\n"
+            "    test_dir: tests\n"
+            "    escalation: haiku\n"
+        )
+        with pytest.raises(ValueError, match="invalid escalation"):
+            parse_manifest(str(manifest_file))
+
+    def test_escalation_must_be_higher_tier_than_model(self, tmp_path):
+        manifest_file = tmp_path / "m.yaml"
+        manifest_file.write_text(
+            "project: p\n"
+            "tasks:\n"
+            "  - name: t1\n"
+            "    description: d\n"
+            "    target_dir: src\n"
+            "    test_dir: tests\n"
+            "    model: sonnet\n"
+            "    escalation: sonnet\n"
+        )
+        with pytest.raises(ValueError, match="higher tier"):
+            parse_manifest(str(manifest_file))
