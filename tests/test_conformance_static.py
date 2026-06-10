@@ -27,7 +27,7 @@ KNOWN_FAIL_OPEN = {"develop", "experiment", "pr_comment"}
 KNOWN_PHANTOM = {"debug"}
 
 # Workflows that must stay fully governed -- a regression here is a real defect.
-CORE_GOVERNED = {"simple", "iterate", "orchestrate"}
+CORE_GOVERNED = {"simple", "iterate", "orchestrate", "delegate"}
 
 
 @pytest.fixture(scope="module")

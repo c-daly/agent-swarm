@@ -1,0 +1,88 @@
+name: delegate
+description: "Fable decomposes into a tiered manifest; cheap models execute; Fable escalates and integrates"
+initial_phase: decompose
+terminal_phase: done
+max_agents: 8
+
+phases:
+  # FABLE touchpoint 1: read codebase, write the tiered task manifest.
+  # `model` is advisory metadata read by the skill, not enforced by the
+  # daemon (the loader ignores unknown keys).
+  - name: decompose
+    model: fable
+    allowed_tool_categories:
+      - FILE_READ
+      - FILE_SEARCH
+      - CODE_QUERY
+      - FILE_WRITE
+      - SHELL_SAFE
+    blocked_tools: []
+    eligible_agents:
+      - architect
+    checkpoint: false
+
+  # Spawn pending tasks at their manifest tier (Agent tool, model override).
+  - name: dispatch
+    allowed_tool_categories:
+      - SUBAGENT
+      - SHELL_SAFE
+      - FILE_READ
+    blocked_tools:
+      - native__write_file
+      - native__edit_file
+    eligible_agents: []
+    checkpoint: false
+
+  # Poll orchestrator state; record completions/failures/escalations.
+  - name: monitor
+    allowed_tool_categories:
+      - SHELL_SAFE
+      - FILE_READ
+      - SUBAGENT
+    blocked_tools:
+      - native__write_file
+      - native__edit_file
+    eligible_agents: []
+    checkpoint: false
+
+  # FABLE touchpoint 2: tasks that failed at their top tier.
+  # Fable re-specs, splits, or absorbs them.
+  - name: escalate
+    model: fable
+    allowed_tool_categories:
+      - FILE_READ
+      - FILE_SEARCH
+      - CODE_QUERY
+      - FILE_WRITE
+      - SHELL_SAFE
+    blocked_tools: []
+    eligible_agents: []
+    checkpoint: true
+
+  # FABLE touchpoint 3: merge, full suite, one coherence review.
+  - name: integrate
+    model: fable
+    allowed_tool_categories:
+      - FILE_READ
+      - CODE_QUERY
+      - SHELL_SAFE
+      - CODE_EDIT
+    blocked_tools:
+      - native__write_file
+    eligible_agents: []
+    checkpoint: true
+
+transitions:
+  decompose:
+    - dispatch
+  dispatch:
+    - monitor
+  monitor:
+    - dispatch
+    - escalate
+    - integrate
+  escalate:
+    - dispatch
+    - integrate
+  integrate:
+    - done
