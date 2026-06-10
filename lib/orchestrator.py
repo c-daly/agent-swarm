@@ -199,7 +199,7 @@ class ParallelOrchestrator:
                 retries = ts.get("retries", 0)
                 last_error = ts.get("last_error", "")
                 worktree_dir = ts.get("worktree_dir", "")
-                model = ts.get("model", task.model)
+                model = ts.get("model") or task.model
                 if retries > 0 and last_error:
                     prompt = build_retry_prompt(
                         task,
@@ -253,9 +253,11 @@ class ParallelOrchestrator:
 
         if retries >= self._manifest.max_retries:
             task = next(
-                t for t in self._manifest.tasks if t.name == task_name
+                (t for t in self._manifest.tasks if t.name == task_name), None
             )
-            current_model = task_state.get("model", task.model)
+            if task is None:
+                raise ValueError(f"Task '{task_name}' not found in manifest")
+            current_model = task_state.get("model") or task.model
             if task.escalation != "fable" and current_model != task.escalation:
                 self._state.update_task(
                     task_name,
