@@ -26,6 +26,7 @@ class SpawnRequest:
     branch_name: str
     prompt: str
     worktree_dir: str = ""
+    model: str = "sonnet"
 
 
 @dataclass
@@ -198,6 +199,7 @@ class ParallelOrchestrator:
                 retries = ts.get("retries", 0)
                 last_error = ts.get("last_error", "")
                 worktree_dir = ts.get("worktree_dir", "")
+                model = ts.get("model", task.model)
                 if retries > 0 and last_error:
                     prompt = build_retry_prompt(
                         task,
@@ -220,6 +222,7 @@ class ParallelOrchestrator:
                     branch_name=task.branch_name,
                     prompt=prompt,
                     worktree_dir=worktree_dir,
+                    model=model,
                 ))
         return pending
 
@@ -509,6 +512,7 @@ def main():
                     "branch_name": req.branch_name,
                     "worktree_dir": req.worktree_dir,
                     "prompt": req.prompt,
+                    "model": req.model,
                 }
                 for req in pending
             ], indent=2))

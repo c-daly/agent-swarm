@@ -599,3 +599,52 @@ class TestWorktreeLifecycle:
         status = worktree_orchestrator.get_status()
         for task_state in status["tasks"].values():
             assert task_state["worktree_dir"] == ""
+
+
+@pytest.fixture
+def tiered_manifest_path(tmp_path):
+    """Manifest with explicit per-task tiers. max_retries=1 keeps
+    escalation tests short: one 'retrying', then the escalation decision."""
+    content = """\
+project: tiered-project
+base_branch: main
+max_retries: 1
+tasks:
+  - name: leaf
+    description: "Mechanical leaf task"
+    target_dir: src/leaf
+    test_dir: tests/test_leaf
+    model: haiku
+    escalation: sonnet
+  - name: core
+    description: "Locally-reasoned task"
+    target_dir: src/core
+    test_dir: tests/test_core
+    model: sonnet
+"""
+    path = tmp_path / "tiered.yaml"
+    path.write_text(content)
+    return str(path)
+
+
+@pytest.fixture
+def tiered_orchestrator(tmp_state_dir, tiered_manifest_path):
+    orch = ParallelOrchestrator()
+    orch.load_manifest(tiered_manifest_path)
+    return orch
+
+
+class TestTierPassthrough:
+    def test_spawn_requests_carry_manifest_model(self, tiered_orchestrator):
+        tiered_orchestrator.start()
+        pending = {r.task_name: r for r in tiered_orchestrator.get_pending_tasks()}
+        assert pending["leaf"].model == "haiku"
+        assert pending["core"].model == "sonnet"
+
+    def test_state_model_overrides_manifest_model(self, tiered_orchestrator):
+        """After a tier bump, state['model'] is the current tier."""
+        tiered_orchestrator.start()
+        tiered_orchestrator._state.update_task("leaf", model="sonnet")
+        tiered_orchestrator._state.save()
+        pending = {r.task_name: r for r in tiered_orchestrator.get_pending_tasks()}
+        assert pending["leaf"].model == "sonnet"
