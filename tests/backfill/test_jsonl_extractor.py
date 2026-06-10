@@ -6,20 +6,11 @@ Tests pin current behavior of token extraction and JSONL parsing.
 
 import json
 import os
-import sys
-from datetime import datetime, timezone
-from pathlib import Path
-from tempfile import TemporaryDirectory
 import pytest
 import time
 
-# Add lib to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
-
-from jsonl_extractor import (
+from lib.jsonl_extractor import (
     get_file_hash,
-    load_progress,
-    save_progress,
     is_file_processed,
     mark_file_processed,
     extract_session_info,
@@ -30,7 +21,7 @@ from jsonl_extractor import (
     merge_session_into_telemetry,
 )
 
-from telemetry_schema_v2 import default_telemetry_v2
+from lib.telemetry_schema_v2 import default_telemetry_v2
 
 
 class TestParseJsonlLine:

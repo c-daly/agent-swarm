@@ -7,17 +7,8 @@ behavior looks surprising, a "# NOTE: possible bug" comment is left but
 the test still pins what the code actually does today.
 """
 
-import json
-import sys
 from pathlib import Path
 
-import pytest
-
-# Ensure the project root is on sys.path so 'from lib.mcp_native import ...'
-# works regardless of how pytest is invoked.
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 from lib.mcp_native import (
     read_file,

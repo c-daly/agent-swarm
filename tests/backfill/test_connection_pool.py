@@ -12,7 +12,6 @@ no pytest-asyncio dependency.
 import asyncio
 import sys
 import types
-from pathlib import Path
 from types import SimpleNamespace
 
 # ---------------------------------------------------------------------------
@@ -24,10 +23,6 @@ from types import SimpleNamespace
 # sys.modules['config'] with a stub that exposes BackendConfig so the import
 # works without touching lib/ at all.
 # ---------------------------------------------------------------------------
-_ROOT = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(_ROOT))
-sys.path.insert(0, str(_ROOT / "lib"))
-
 if "config" not in sys.modules or not hasattr(sys.modules["config"], "BackendConfig"):
     _stub_config = types.ModuleType("config")
 
@@ -39,7 +34,10 @@ if "config" not in sys.modules or not hasattr(sys.modules["config"], "BackendCon
     sys.modules["config"] = _stub_config
 
 # Now safe to import from lib
-from connection_pool import AsyncConnection, ConnectionPool, ConnectionContextManager  # noqa: E402
+from lib.connection_pool import AsyncConnection, ConnectionPool  # noqa: E402
+# Import from bare 'errors' (not lib.errors): connection_pool's internal
+# `from errors import ConnectionError` binds that module object, and the
+# exception class identity must match for pytest.raises.
 from errors import ConnectionError as RouterConnectionError  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -244,7 +242,7 @@ def test_pool_acquire_blocks_when_semaphore_exhausted():
         await asyncio.wait_for(pool.start(), timeout=10.0)
 
         async def hold_conn(ready_ev, release_ev):
-            async with pool.acquire() as conn:
+            async with pool.acquire():
                 ready_ev.set()
                 await release_ev.wait()
 
