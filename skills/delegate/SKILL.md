@@ -185,7 +185,7 @@ workflow__workflow_stop(workflow_id="delegate")
 ## Cost discipline
 
 - Your tokens are the expensive ones. If you notice yourself reading
-  worker diffs during monitor, stop — that is integrate’s job, once.
+  worker diffs during monitor, stop — that is integrate's job, once.
 - Prefer more, smaller haiku tasks over fewer, bigger sonnet tasks
   **only when** the spec-writing overhead stays small; a task whose
   description takes longer to write than the work itself should be
