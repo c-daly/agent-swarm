@@ -237,7 +237,7 @@ class ParallelOrchestrator:
 
     def record_completion(
         self, task_name: str, success: bool, error: str = ""
-    ) -> Literal["completed", "retrying", "failed"]:
+    ) -> Literal["completed", "retrying", "failed", "escalated"]:
         """Record task completion. Returns outcome."""
         self._require_manifest()
         self._require_state()
@@ -252,6 +252,22 @@ class ParallelOrchestrator:
             return "completed"
 
         if retries >= self._manifest.max_retries:
+            task = next(
+                t for t in self._manifest.tasks if t.name == task_name
+            )
+            current_model = task_state.get("model", task.model)
+            if task.escalation != "fable" and current_model != task.escalation:
+                self._state.update_task(
+                    task_name,
+                    status="pending",
+                    retries=0,
+                    model=task.escalation,
+                    last_error=error,
+                    escalated_from=current_model,
+                )
+                self._update_phase()
+                self._state.save()
+                return "escalated"
             self._state.update_task(
                 task_name, status="failed", last_error=error
             )

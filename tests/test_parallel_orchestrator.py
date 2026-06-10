@@ -648,3 +648,56 @@ class TestTierPassthrough:
         tiered_orchestrator._state.save()
         pending = {r.task_name: r for r in tiered_orchestrator.get_pending_tasks()}
         assert pending["leaf"].model == "sonnet"
+
+
+class TestEscalation:
+    def test_escalates_after_max_retries(self, tiered_orchestrator):
+        tiered_orchestrator.start()
+        assert tiered_orchestrator.record_completion(
+            "leaf", success=False, error="red"
+        ) == "retrying"
+        result = tiered_orchestrator.record_completion(
+            "leaf", success=False, error="still red"
+        )
+        assert result == "escalated"
+        task_state = tiered_orchestrator.get_status()["tasks"]["leaf"]
+        assert task_state["status"] == "pending"
+        assert task_state["model"] == "sonnet"
+        assert task_state["retries"] == 0
+        assert task_state["escalated_from"] == "haiku"
+
+    def test_escalated_task_redispatches_at_higher_tier(self, tiered_orchestrator):
+        tiered_orchestrator.start()
+        tiered_orchestrator.record_completion("leaf", success=False, error="e")
+        tiered_orchestrator.record_completion("leaf", success=False, error="e")
+        pending = {r.task_name: r for r in tiered_orchestrator.get_pending_tasks()}
+        assert pending["leaf"].model == "sonnet"
+
+    def test_fails_for_good_at_escalation_tier(self, tiered_orchestrator):
+        tiered_orchestrator.start()
+        tiered_orchestrator.record_completion("leaf", success=False, error="e1")
+        assert tiered_orchestrator.record_completion(
+            "leaf", success=False, error="e2"
+        ) == "escalated"
+        assert tiered_orchestrator.record_completion(
+            "leaf", success=False, error="e3"
+        ) == "retrying"
+        result = tiered_orchestrator.record_completion(
+            "leaf", success=False, error="e4"
+        )
+        assert result == "failed"
+        task_state = tiered_orchestrator.get_status()["tasks"]["leaf"]
+        assert task_state["status"] == "failed"
+
+    def test_fable_escalation_fails_without_redispatch(self, tiered_orchestrator):
+        # core has escalation fable -> no spawnable higher tier, so
+        # exhausted retries mean failed (skill routes to escalate phase,
+        # where Fable handles it personally).
+        tiered_orchestrator.start()
+        assert tiered_orchestrator.record_completion(
+            "core", success=False, error="e1"
+        ) == "retrying"
+        result = tiered_orchestrator.record_completion(
+            "core", success=False, error="e2"
+        )
+        assert result == "failed"
