@@ -8,7 +8,7 @@ Rules enforced:
   1. No spawning skill prescribes a native subagent type (general-purpose,
      Explore, Plan) unless the file carries the exemption marker, is
      skills/spawn/SKILL.md itself, or the matching line is a negative
-     instruction (contains "never", "NOT", or "Don't").
+     instruction (contains "never", "not", or "don't", case-insensitive).
   2. Every spawning skill references the dispatch protocol (register_agent,
      briefing, or skills/spawn); exempt-marked files pass via marker.
   3. The two fixed skills (delegate, parallel-orchestrate) each contain
@@ -41,7 +41,7 @@ EXEMPTION_MARKER = "<!-- spawn-conformance: native-teams-exempt -->"
 # Matches: subagent_type: "X", subagent_type: 'X', subagent_type = "X"
 _NATIVE_TYPES = ["general-purpose", "Explore", "Plan"]
 _PRESCRIPTION_RE = re.compile(
-    r"subagent_type\s*[:=]\s*[\"'](general-purpose|Explore|Plan)[\"']"
+    r"subagent_type\s*[:=]\s*[\"'](" + "|".join(re.escape(t) for t in _NATIVE_TYPES) + r")[\"']"
 )
 
 # Protocol reference: at least one must appear in a spawning skill.
@@ -63,8 +63,9 @@ def _spawning_skills() -> list[Path]:
 
 
 def _is_negative_instruction(line: str) -> bool:
-    """Return True if the line is a prohibition or warning."""
-    return any(kw in line for kw in ("never", "NOT", "Don't"))
+    """Return True if the line is a prohibition or warning (case-insensitive)."""
+    line_lower = line.lower()
+    return any(kw in line_lower for kw in ("never", "not", "don't"))
 
 
 def _offending_prescriptions(text: str, path: Path) -> list[str]:
