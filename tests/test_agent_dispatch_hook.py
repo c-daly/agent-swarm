@@ -247,3 +247,34 @@ def test_none_prompt_does_not_crash():
     hso = decision["hookSpecificOutput"]
     assert hso["permissionDecision"] == "block"
 
+
+def test_briefed_prompt_does_not_reregister():
+    """A briefed prompt must NOT call prepare_dispatch again. prepare_dispatch mints
+    a fresh agent_id every call, so a second call would register a duplicate identity
+    and leave the first as a ghost. The hook reuses the agent_id from the briefing."""
+    calls, decision = _run_with_decision(
+        {
+            "tool_name": "Agent",
+            "tool_input": {"subagent_type": "implementer", "prompt": _BRIEFED_PROMPT, "description": "d"},
+        },
+    )
+    assert [c[0] for c in calls] == []  # prepare_dispatch was never called
+    hso = decision["hookSpecificOutput"]
+    assert hso["permissionDecision"] == "allow"
+    ctx = json.loads(hso["additionalContext"])
+    assert ctx["agent_id"] == "sub-test"  # reused from the briefing, not freshly minted
+
+
+def test_unrecognized_enforce_value_treated_as_block():
+    """An unrecognized AGENT_SWARM_BRIEFING_ENFORCE value must fail safe to block,
+    not silently fall through to some other behavior."""
+    _, decision = _run_with_decision(
+        {
+            "tool_name": "Agent",
+            "tool_input": {"subagent_type": "implementer", "prompt": _UNBRIEFED_PROMPT, "description": "d"},
+        },
+        env={"AGENT_SWARM_BRIEFING_ENFORCE": "enabled"},
+    )
+    hso = decision["hookSpecificOutput"]
+    assert hso["permissionDecision"] == "block"
+

@@ -9,6 +9,7 @@ additionalContext so the subagent starts with its identity and protocol.
 
 import json
 import os
+import re
 import socket
 import sys
 
@@ -92,7 +93,28 @@ def main():
     prompt = tool_input.get("prompt", "")
     description = tool_input.get("description", "")
 
-    # Call prepare_dispatch on the controller
+    briefing_marker = "## Your Agent Identity"
+
+    # A prompt that already carries the briefing marker was prepared by an earlier
+    # register_agent / prepare_dispatch call -- either the register+prepend spawn
+    # protocol, or a prior block the spawner has now satisfied. prepare_dispatch
+    # mints a fresh agent_id on every call, so calling it again would register a
+    # SECOND identity and leave the first as a ghost in the daemon registry. Reuse
+    # the agent_id already embedded in the briefing and allow without re-registering.
+    if prompt and briefing_marker in prompt:
+        m = re.search(r"Agent ID:\s*`?([^\s`]+)", prompt)
+        agent_id = m.group(1) if m else "?"
+        print(json.dumps(allow(
+            reason=f"Agent {agent_id} already briefed; allowed without re-registration",
+            additional_context=json.dumps({
+                "agent_id": agent_id,
+                "briefing": "",
+                "agent_type": agent_type,
+            }),
+        )))
+        return
+
+    # Unbriefed: register the agent and assemble its briefing, then decide.
     result = call_router("prepare_dispatch", {
         "agent_type": agent_type,
         "prompt": prompt,
@@ -104,9 +126,14 @@ def main():
         briefing = result.get("briefing", "")
         agent_type_result = result.get("agent_type", agent_type)
 
-        # Enforce briefing delivery
-        briefing_marker = "## Your Agent Identity"
         enforce = os.environ.get("AGENT_SWARM_BRIEFING_ENFORCE", "block")
+        if enforce not in ("block", "warn", "off"):
+            print(
+                f"WARNING: unrecognized AGENT_SWARM_BRIEFING_ENFORCE={enforce!r}; "
+                f"treating as 'block'",
+                file=sys.stderr,
+            )
+            enforce = "block"
 
         # Single source of truth for the dispatch state, serialized at point of use.
         dispatch_data = {
@@ -115,13 +142,7 @@ def main():
             "agent_type": agent_type_result,
         }
 
-        if prompt and briefing_marker in prompt:
-            # Prompt already contains the briefing -- allow as-is
-            print(json.dumps(allow(
-                reason=f"Agent {agent_id} registered via prepare_dispatch",
-                additional_context=json.dumps(dispatch_data),
-            )))
-        elif enforce == "off":
+        if enforce == "off":
             # Legacy passthrough -- no enforcement
             print(json.dumps(allow(
                 reason=f"Agent {agent_id} registered via prepare_dispatch",
