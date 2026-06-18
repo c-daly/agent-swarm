@@ -28,7 +28,7 @@ The `start` command creates a git worktree per task under `{project_dir}/.worktr
 ```
 LOAD → START → SPAWN → MONITOR → MERGE → VERIFY → COMPLETE → STOP
                  ↑         |                |
-                 └─ RETRY ─┘          (fail: fix/rollback/continue)
+                 └── RETRY ─┘          (fail: fix/rollback/continue)
          (blocked tasks wait for dependencies)
 ```
 
@@ -39,10 +39,18 @@ Get pending tasks:
 python3 lib/orchestrator.py pending <manifest.yaml> --json
 ```
 
-This returns a JSON array. For each entry, spawn a subagent using the **Agent tool**:
+This returns a JSON array. For each entry, register the worker, then
+spawn it using the **Agent tool** (the spawn protocol — see
+`skills/spawn/SKILL.md`):
 
-- Use `subagent_type: "general-purpose"`
-- Pass the `prompt` field verbatim — it already contains worktree paths and "do NOT switch branches" instructions
+- `reg = router__register_agent(agent_id="<task_name>-w<n>", agent_type="implementer", roles=["editor", "shell_full"])`
+- Use `subagent_type: "implementer"` — never a native type
+  (`general-purpose`/`Explore`/`Plan`): native types have no router
+  access and will flail
+- `prompt`: `reg["briefing"] + "\n\n" +` the `prompt` field verbatim —
+  the briefing carries the worker's identity/caller-id; the prompt
+  already contains worktree paths and "do NOT switch branches"
+  instructions
 - The `worktree_dir` field tells you where the subagent will work (for your reference)
 - Run subagents **in parallel** — worktrees give each one an isolated directory
 

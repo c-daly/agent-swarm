@@ -37,3 +37,9 @@ logs/*.log
 .ruff_cache/
 .mypy_cache/
 .DS_Store
+
+# Playwright MCP session artifacts (console/page snapshots)
+.playwright-mcp/
+
+# Delegate skill run manifests (local orchestration state)
+.delegate/

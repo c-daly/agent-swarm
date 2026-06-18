@@ -8,6 +8,8 @@ additionalContext so the subagent starts with its identity and protocol.
 """
 
 import json
+import os
+import re
 import socket
 import sys
 
@@ -91,7 +93,28 @@ def main():
     prompt = tool_input.get("prompt", "")
     description = tool_input.get("description", "")
 
-    # Call prepare_dispatch on the controller
+    briefing_marker = "## Your Agent Identity"
+
+    # A prompt that already carries the briefing marker was prepared by an earlier
+    # register_agent / prepare_dispatch call -- either the register+prepend spawn
+    # protocol, or a prior block the spawner has now satisfied. prepare_dispatch
+    # mints a fresh agent_id on every call, so calling it again would register a
+    # SECOND identity and leave the first as a ghost in the daemon registry. Reuse
+    # the agent_id already embedded in the briefing and allow without re-registering.
+    if prompt and briefing_marker in prompt:
+        m = re.search(r"Agent ID:\s*`?([^\s`]+)", prompt)
+        agent_id = m.group(1) if m else "?"
+        print(json.dumps(allow(
+            reason=f"Agent {agent_id} already briefed; allowed without re-registration",
+            additional_context=json.dumps({
+                "agent_id": agent_id,
+                "briefing": "",
+                "agent_type": agent_type,
+            }),
+        )))
+        return
+
+    # Unbriefed: register the agent and assemble its briefing, then decide.
     result = call_router("prepare_dispatch", {
         "agent_type": agent_type,
         "prompt": prompt,
@@ -99,18 +122,53 @@ def main():
     })
 
     if result and result.get("success"):
-        # Return full dispatch state as JSON in additionalContext
-        dispatch_state = json.dumps({
-            "agent_id": result.get("agent_id"),
-            "briefing": result.get("briefing", ""),
-            "agent_type": result.get("agent_type", agent_type),
-        })
-        print(json.dumps(allow(
-            reason=f"Agent {result.get('agent_id', '?')} registered via prepare_dispatch",
-            additional_context=dispatch_state,
-        )))
+        agent_id = result.get("agent_id", "?")
+        briefing = result.get("briefing", "")
+        agent_type_result = result.get("agent_type", agent_type)
+
+        enforce = os.environ.get("AGENT_SWARM_BRIEFING_ENFORCE", "block")
+        if enforce not in ("block", "warn", "off"):
+            print(
+                f"WARNING: unrecognized AGENT_SWARM_BRIEFING_ENFORCE={enforce!r}; "
+                f"treating as 'block'",
+                file=sys.stderr,
+            )
+            enforce = "block"
+
+        # Single source of truth for the dispatch state, serialized at point of use.
+        dispatch_data = {
+            "agent_id": agent_id,
+            "briefing": briefing,
+            "agent_type": agent_type_result,
+        }
+
+        if enforce == "off":
+            # Legacy passthrough -- no enforcement
+            print(json.dumps(allow(
+                reason=f"Agent {agent_id} registered via prepare_dispatch",
+                additional_context=json.dumps(dispatch_data),
+            )))
+        elif enforce == "warn":
+            warning = (
+                f"WARNING: spawn prompt is unbriefed (missing {briefing_marker!r}). "
+                f"agent_id={agent_id}."
+            )
+            print(json.dumps(allow(
+                reason=f"Agent {agent_id} registered via prepare_dispatch (unbriefed, warned)",
+                additional_context=json.dumps({**dispatch_data, "warning": warning}),
+            )))
+        else:
+            # Default: block and tell the spawner what to prepend
+            reason = (
+                f"Spawn blocked: prompt is missing the briefing marker {briefing_marker!r}. "
+                f"Prepend the following briefing to the prompt and re-spawn:\n"
+                f"agent_id: {agent_id}\n"
+                f"{briefing_marker}\n"
+                f"{briefing}"
+            )
+            print(json.dumps(block(reason)))
     else:
-        # Graceful degradation — don't break spawning if daemon is down
+        # Graceful degradation -- don't break spawning if daemon is down
         print(json.dumps(allow("prepare_dispatch unavailable, allowing through")))
 
 
