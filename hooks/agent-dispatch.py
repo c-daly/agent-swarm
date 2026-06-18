@@ -108,42 +108,33 @@ def main():
         briefing_marker = "## Your Agent Identity"
         enforce = os.environ.get("AGENT_SWARM_BRIEFING_ENFORCE", "block")
 
-        if briefing_marker in prompt:
+        # Single source of truth for the dispatch state, serialized at point of use.
+        dispatch_data = {
+            "agent_id": agent_id,
+            "briefing": briefing,
+            "agent_type": agent_type_result,
+        }
+
+        if prompt and briefing_marker in prompt:
             # Prompt already contains the briefing -- allow as-is
-            dispatch_state = json.dumps({
-                "agent_id": agent_id,
-                "briefing": briefing,
-                "agent_type": agent_type_result,
-            })
             print(json.dumps(allow(
                 reason=f"Agent {agent_id} registered via prepare_dispatch",
-                additional_context=dispatch_state,
+                additional_context=json.dumps(dispatch_data),
             )))
         elif enforce == "off":
             # Legacy passthrough -- no enforcement
-            dispatch_state = json.dumps({
-                "agent_id": agent_id,
-                "briefing": briefing,
-                "agent_type": agent_type_result,
-            })
             print(json.dumps(allow(
                 reason=f"Agent {agent_id} registered via prepare_dispatch",
-                additional_context=dispatch_state,
+                additional_context=json.dumps(dispatch_data),
             )))
         elif enforce == "warn":
             warning = (
                 f"WARNING: spawn prompt is unbriefed (missing {briefing_marker!r}). "
                 f"agent_id={agent_id}."
             )
-            dispatch_state = json.dumps({
-                "agent_id": agent_id,
-                "briefing": briefing,
-                "agent_type": agent_type_result,
-                "warning": warning,
-            })
             print(json.dumps(allow(
                 reason=f"Agent {agent_id} registered via prepare_dispatch (unbriefed, warned)",
-                additional_context=dispatch_state,
+                additional_context=json.dumps({**dispatch_data, "warning": warning}),
             )))
         else:
             # Default: block and tell the spawner what to prepend

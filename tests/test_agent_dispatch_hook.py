@@ -233,3 +233,17 @@ def test_daemon_down_allows():
     hso = decision["hookSpecificOutput"]
     assert hso["permissionDecision"] == "allow"
 
+
+def test_none_prompt_does_not_crash():
+    """A null prompt must not raise TypeError on the briefing-marker check.
+    With no briefing present it falls through to the default block path."""
+    _, decision = _run_with_decision(
+        {
+            "tool_name": "Agent",
+            "tool_input": {"subagent_type": "implementer", "prompt": None, "description": "d"},
+        },
+        env={"AGENT_SWARM_BRIEFING_ENFORCE": "block"},
+    )
+    hso = decision["hookSpecificOutput"]
+    assert hso["permissionDecision"] == "block"
+
