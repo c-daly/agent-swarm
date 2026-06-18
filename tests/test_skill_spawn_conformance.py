@@ -62,10 +62,16 @@ def _spawning_skills() -> list[Path]:
     return [p for p in candidates if "subagent_type" in p.read_text(encoding="utf-8")]
 
 
+_NEGATIVE_RE = re.compile(r"\b(?:never|not|don't)\b", re.IGNORECASE)
+
+
 def _is_negative_instruction(line: str) -> bool:
-    """Return True if the line is a prohibition or warning (case-insensitive)."""
-    line_lower = line.lower()
-    return any(kw in line_lower for kw in ("never", "not", "don't"))
+    """Return True if the line is a prohibition or warning.
+
+    Whole-word, case-insensitive match so 'Never'/'NOT'/'Don't' are caught but
+    substrings like 'cannot'/'annotation' (which contain 'not') are not.
+    """
+    return _NEGATIVE_RE.search(line) is not None
 
 
 def _offending_prescriptions(text: str, path: Path) -> list[str]:
@@ -175,3 +181,18 @@ def test_agent_dispatch_contains_briefing_marker() -> None:
         "The doc-fix that moves the briefing header into the dispatch hook "
         "has not landed or was reverted."
     )
+
+
+def test_negative_instruction_matches_whole_words_only() -> None:
+    """_is_negative_instruction must match whole words case-insensitively, so a
+    real prohibition is exempted but an incidental substring ('cannot',
+    'annotation') does not silently exempt a genuine prescription violation."""
+    # Genuine prohibitions -- exempt (case-insensitive).
+    assert _is_negative_instruction("Never use subagent_type: 'general-purpose'")
+    assert _is_negative_instruction("Do NOT prescribe subagent_type")
+    assert _is_negative_instruction("Don't use general-purpose")
+    # Substrings that merely contain 'not' must NOT be treated as negative.
+    assert not _is_negative_instruction("This annotation sets subagent_type: 'Plan'")
+    assert not _is_negative_instruction("cannot change subagent_type: 'Explore'")
+    # A plain prescription is not a negative instruction.
+    assert not _is_negative_instruction("use subagent_type: 'general-purpose'")
