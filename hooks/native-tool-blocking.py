@@ -13,7 +13,10 @@ permission from the controller (permissions.yaml).
 
 import json
 import os
+import socket
 import sys
+import tempfile
+import time
 
 ALWAYS_ALLOW = False  # Set to True to bypass all tool blocking (debug use only)
 
@@ -45,6 +48,63 @@ def block(reason: str):
     """Block tool via exit code 2 (reliable blocking)."""
     print(reason, file=sys.stderr)
     sys.exit(2)
+
+
+DAEMON_PORT = int(os.environ.get("DAEMON_PORT", "7523"))
+_PROBE_CACHE = os.path.join(tempfile.gettempdir(), "agent-swarm-daemon-probe")
+_PROBE_TTL = 10.0  # seconds
+
+
+def _probe_daemon() -> bool:
+    """Return True if the daemon is actually serving MCP on DAEMON_PORT.
+
+    A TCP connect alone is not sufficient. When the daemon crash-loops on an
+    import error, a supervisor can still hold the port while nothing ever
+    answers — the port looks healthy and every native tool gets redirected to
+    a router tool that never registered. So connect *and* require a response.
+    """
+    try:
+        with socket.create_connection(("127.0.0.1", DAEMON_PORT), timeout=0.3) as s:
+            s.settimeout(0.5)
+            s.sendall(
+                json.dumps({"jsonrpc": "2.0", "id": 0, "method": "tools/list", "params": {}}).encode()
+                + b"\n"
+            )
+            return bool(s.recv(1))
+    except OSError:
+        return False
+
+
+def _daemon_healthy() -> bool:
+    """Cached _probe_daemon(). The hook runs on every tool call; the probe
+    costs a round-trip, and a dead daemon costs the full timeout."""
+    try:
+        cached_at = os.path.getmtime(_PROBE_CACHE)
+        if time.time() - cached_at < _PROBE_TTL:
+            with open(_PROBE_CACHE) as f:
+                return f.read().strip() == "1"
+    except OSError:
+        pass
+
+    healthy = _probe_daemon()
+    try:
+        with open(_PROBE_CACHE, "w") as f:
+            f.write("1" if healthy else "0")
+    except OSError:
+        pass
+    return healthy
+
+
+DAEMON_DOWN_MESSAGE = (
+    "[BLOCKED] '{tool_name}' blocked, but the router daemon is NOT REACHABLE on "
+    "port {port} — mcp__router__{analogue} does not exist right now, so there is "
+    "no replacement tool to use.\n"
+    "This is a daemon failure, not a permission problem. Check:\n"
+    "  tail -20 $AGENT_SWARM_ROOT/logs/daemon-stderr.log\n"
+    "A missing dependency in the daemon's venv is the usual cause; restart with:\n"
+    "  $AGENT_SWARM_ROOT/bin/start-daemon --restart\n"
+    "Until it is back, MCP tools from other servers (e.g. serena) still work."
+)
 
 
 def _is_clean_mcp_call(cmd: str) -> bool:
@@ -133,6 +193,15 @@ def main():
     if tool_name in ROUTER_ANALOGUES:
         analogue = ROUTER_ANALOGUES[tool_name]
         agent_id = input_data.get("agentId") or input_data.get("agent_id")
+
+        # Naming a replacement tool that never registered sends the reader
+        # hunting through permissions instead of the daemon log. Say so.
+        if not _daemon_healthy():
+            block(DAEMON_DOWN_MESSAGE.format(
+                tool_name=tool_name, port=DAEMON_PORT, analogue=analogue
+            ))
+            return
+
         if agent_id:
             block(
                 f"[SUBAGENT BLOCKED] '{tool_name}' not allowed. "
@@ -141,7 +210,12 @@ def main():
                 f"Example: mcp-call --caller-id={agent_id} {analogue} '<json_args>'"
             )
         else:
-            block(f"[BLOCKED] '{tool_name}' blocked. Use mcp__router__{analogue} instead.")
+            block(
+                f"[BLOCKED] '{tool_name}' blocked. Use mcp__router__{analogue} instead.\n"
+                "If mcp__router__* is not available in this session, the daemon is up "
+                "but the session's MCP connection is stale — sessions connect at "
+                "startup and never retry. Reconnect with /mcp, or start a new session."
+            )
         return
 
     # Rule 4: No analogue → allow through (controller decides)

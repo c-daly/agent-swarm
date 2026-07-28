@@ -18,20 +18,43 @@ DAEMON_SCRIPT = ROOT / "lib" / "daemon.py"
 LOG_DIR = ROOT / "logs"
 
 
-def resolve_interpreter() -> str:
-    """Resolve a Python interpreter that has project deps installed.
+REQUIRED_MODULES = ("yaml", "duckdb", "requests")
 
-    Order:
-      1. ROOT/.venv/bin/python (poetry default venv-in-project)
-      2. `poetry env info --executable` (out-of-tree venvs)
-      3. sys.executable (final fallback)
 
-    sys.executable can be a bare system Python without PyYAML etc.,
-    which makes the daemon fail to start. Prefer the project venv.
+def _has_required_modules(python: str) -> bool:
+    """Return True if `python` can import everything daemon.py needs at import time.
+
+    Resolution order alone is not enough: a path can exist and still be the
+    wrong interpreter. Probing here is what turns a silent respawn loop into
+    a startup error the user can act on.
     """
-    venv_python = ROOT / ".venv" / "bin" / "python"
-    if venv_python.is_file():
-        return str(venv_python)
+    check = "import " + ", ".join(REQUIRED_MODULES)
+    try:
+        result = subprocess.run(
+            [python, "-c", check], capture_output=True, text=True, timeout=10
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _candidate_interpreters() -> list[str]:
+    """Candidate interpreters, most-specific first.
+
+    AGENT_SWARM_ROOT points at the dev clone, which is where poetry actually
+    creates .venv. The cache copy never has one — sync-to-cache excludes
+    .venv/ by design — so when the daemon is started from the cache, the dev
+    venv is the only interpreter that has the deps.
+    """
+    candidates = []
+
+    for root in (ROOT, _dev_root()):
+        if root is None:
+            continue
+        venv_python = root / ".venv" / "bin" / "python"
+        if venv_python.is_file():
+            candidates.append(str(venv_python))
+
     try:
         result = subprocess.run(
             ["poetry", "env", "info", "--executable"],
@@ -43,10 +66,55 @@ def resolve_interpreter() -> str:
         if result.returncode == 0:
             path = result.stdout.strip()
             if path and Path(path).is_file():
-                return path
+                candidates.append(path)
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
-    return sys.executable
+
+    candidates.append(sys.executable)
+
+    # Preserve order, drop duplicates.
+    seen = set()
+    return [c for c in candidates if not (c in seen or seen.add(c))]
+
+
+def _dev_root() -> "Path | None":
+    """The dev clone root from AGENT_SWARM_ROOT, if it is set and usable."""
+    raw = os.environ.get("AGENT_SWARM_ROOT")
+    if not raw:
+        return None
+    path = Path(raw).expanduser()
+    return path if path.is_dir() else None
+
+
+def resolve_interpreter() -> str:
+    """Resolve a Python interpreter that actually has the daemon's deps.
+
+    Order:
+      1. ROOT/.venv/bin/python (poetry venv-in-project)
+      2. $AGENT_SWARM_ROOT/.venv/bin/python (dev clone venv)
+      3. `poetry env info --executable` (out-of-tree venvs)
+      4. sys.executable (final fallback)
+
+    Each candidate is probed for the required imports. sys.executable is
+    frequently a bare interpreter without PyYAML — returning it unchecked is
+    what produced the crash-on-import respawn loop this function now avoids.
+    """
+    candidates = _candidate_interpreters()
+
+    for python in candidates:
+        if _has_required_modules(python):
+            return python
+
+    print(
+        "ERROR: no Python interpreter found with the daemon's required modules "
+        f"({', '.join(REQUIRED_MODULES)}).\n"
+        "Tried:\n"
+        + "\n".join(f"  - {c}" for c in candidates)
+        + "\nInstall deps into the dev clone venv "
+        "(cd $AGENT_SWARM_ROOT && poetry install), then restart the daemon.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 
 def _port_in_use(port: int, connect_timeout: float = 1.0) -> bool:
