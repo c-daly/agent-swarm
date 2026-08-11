@@ -8,10 +8,10 @@ deliberate baseline update either way. Complements the live driver
 (test_conformance_live.py), which exercises one workflow end-to-end.
 
 Current known gaps are tracked in #106 (and surfaced by `python3 -m lib.conformance`):
-  - pr_comment: no workflows['pr_comment'] block in permissions.yaml -> L1 skipped.
   - develop:    phase 'complete' declared in YAML but absent at L1.
   - experiment: phase 'done' declared in YAML but absent at L1.
   - debug:      in _KNOWN_WORKFLOWS but has no workflow YAML (phantom).
+  (pr_comment was fixed: its 6 phases are now governed at L1.)
 """
 
 import pytest
@@ -21,7 +21,7 @@ from lib.conformance import analyze
 # Workflows whose declared phases are NOT fully governed at L1 today. Each is a
 # known, tracked gap (#106). A workflow entering or leaving this set should fail
 # the matrix test below, so the baseline is updated deliberately.
-KNOWN_FAIL_OPEN = {"develop", "experiment", "pr_comment"}
+KNOWN_FAIL_OPEN = {"develop", "experiment"}
 
 # _KNOWN_WORKFLOWS entries that have no workflow YAML.
 KNOWN_PHANTOM = {"debug"}

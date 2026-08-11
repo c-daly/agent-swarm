@@ -37,7 +37,7 @@ class TestPermissionsAdditive:
         with open(PERMISSIONS_YAML) as f:
             data = yaml.safe_load(f)
         wfs = data["workflows"]
-        for name in ("iterate", "debug", "pr_review", "develop", "experiment"):
+        for name in ("iterate", "debug", "pr_comment", "develop", "experiment"):
             assert name in wfs, f"pre-existing workflow {name!r} removed"
 
     def test_simple_plan_blocks_writes(self):
