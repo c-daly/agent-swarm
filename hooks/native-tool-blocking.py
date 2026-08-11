@@ -51,8 +51,18 @@ def block(reason: str):
 
 
 DAEMON_PORT = int(os.environ.get("DAEMON_PORT", "7523"))
-_PROBE_CACHE = os.path.join(tempfile.gettempdir(), "agent-swarm-daemon-probe")
+# Per-user AND per-port so one user's (or one daemon's) health can never gate
+# another: a cached "down" for port 7523 must not block a session on a
+# different DAEMON_PORT. The per-uid suffix also keeps the path out of another
+# local user's namespace; combined with O_NOFOLLOW on every open (below), a
+# symlink planted at this name cannot redirect our truncating write onto an
+# unrelated file.
+_PROBE_UID = getattr(os, "getuid", lambda: "u")()
+_PROBE_CACHE = os.path.join(
+    tempfile.gettempdir(), f"agent-swarm-daemon-probe-{_PROBE_UID}-{DAEMON_PORT}"
+)
 _PROBE_TTL = 10.0  # seconds
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)  # 0 on platforms without it
 
 
 def _probe_daemon() -> bool:
@@ -77,21 +87,40 @@ def _probe_daemon() -> bool:
 
 def _daemon_healthy() -> bool:
     """Cached _probe_daemon(). The hook runs on every tool call; the probe
-    costs a round-trip, and a dead daemon costs the full timeout."""
+    costs a round-trip, and a dead daemon costs the full timeout.
+
+    Only a *healthy* result is cached. An unhealthy daemon is re-probed on the
+    next call rather than pinned "down" for the TTL, so a recovery is picked up
+    immediately instead of blocking every native tool for up to _PROBE_TTL
+    after the daemon is already back. The cache file is per-user and per-port
+    (see _PROBE_CACHE) and every open uses O_NOFOLLOW so a symlink planted at
+    its name can neither be read through nor redirect the truncating write.
+    """
     try:
         cached_at = os.path.getmtime(_PROBE_CACHE)
         if time.time() - cached_at < _PROBE_TTL:
-            with open(_PROBE_CACHE) as f:
-                return f.read().strip() == "1"
+            fd = os.open(_PROBE_CACHE, os.O_RDONLY | _O_NOFOLLOW)
+            try:
+                return os.read(fd, 1) == b"1"
+            finally:
+                os.close(fd)
     except OSError:
         pass
 
     healthy = _probe_daemon()
-    try:
-        with open(_PROBE_CACHE, "w") as f:
-            f.write("1" if healthy else "0")
-    except OSError:
-        pass
+    if healthy:
+        try:
+            fd = os.open(
+                _PROBE_CACHE,
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC | _O_NOFOLLOW,
+                0o600,
+            )
+            try:
+                os.write(fd, b"1")
+            finally:
+                os.close(fd)
+        except OSError:
+            pass
     return healthy
 
 
