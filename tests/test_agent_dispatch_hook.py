@@ -170,7 +170,7 @@ def test_unbriefed_default_blocks_with_agent_id_and_marker():
         env={"AGENT_SWARM_BRIEFING_ENFORCE": "block"},
     )
     hso = decision["hookSpecificOutput"]
-    assert hso["permissionDecision"] == "block"
+    assert hso["permissionDecision"] == "deny"
     reason = hso["permissionDecisionReason"]
     assert "## Your Agent Identity" in reason
     assert "sub-test" in reason
@@ -186,7 +186,7 @@ def test_unbriefed_default_env_absent_blocks():
         env={"AGENT_SWARM_BRIEFING_ENFORCE": None},  # ensure absent
     )
     hso = decision["hookSpecificOutput"]
-    assert hso["permissionDecision"] == "block"
+    assert hso["permissionDecision"] == "deny"
 
 
 def test_unbriefed_warn_allows_with_warning():
@@ -245,7 +245,7 @@ def test_none_prompt_does_not_crash():
         env={"AGENT_SWARM_BRIEFING_ENFORCE": "block"},
     )
     hso = decision["hookSpecificOutput"]
-    assert hso["permissionDecision"] == "block"
+    assert hso["permissionDecision"] == "deny"
 
 
 def test_briefed_prompt_does_not_reregister():
@@ -276,5 +276,25 @@ def test_unrecognized_enforce_value_treated_as_block():
         env={"AGENT_SWARM_BRIEFING_ENFORCE": "enabled"},
     )
     hso = decision["hookSpecificOutput"]
-    assert hso["permissionDecision"] == "block"
+    assert hso["permissionDecision"] == "deny"
+
+
+def test_block_decision_value_is_deny_not_block():
+    """Regression: the enforce decision must be the API-valid 'deny'.
+
+    PreToolUse honors only allow|deny|ask. The hook previously emitted 'block',
+    which Claude Code ignored, so unbriefed spawns were never actually stopped.
+    Pin the emitted value to 'deny' explicitly so this can't regress to a value
+    the harness silently drops.
+    """
+    _, decision = _run_with_decision(
+        {
+            "tool_name": "Agent",
+            "tool_input": {"subagent_type": "implementer", "prompt": _UNBRIEFED_PROMPT, "description": "d"},
+        },
+        env={"AGENT_SWARM_BRIEFING_ENFORCE": "block"},
+    )
+    hso = decision["hookSpecificOutput"]
+    assert hso["permissionDecision"] in ("allow", "deny", "ask")
+    assert hso["permissionDecision"] == "deny"
 

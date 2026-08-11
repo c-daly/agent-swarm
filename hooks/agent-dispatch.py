@@ -71,8 +71,14 @@ def allow(reason: str = "", additional_context: str = "") -> dict:
 
 
 def block(reason: str) -> dict:
-    """Return block decision."""
-    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "block", "permissionDecisionReason": reason}}
+    """Return a deny decision.
+
+    PreToolUse honors only "allow" | "deny" | "ask" for permissionDecision;
+    the earlier "block" value was silently ignored, so an unbriefed spawn was
+    never actually stopped. "deny" blocks the Task call and surfaces the
+    reason (the briefing to prepend) back to the caller.
+    """
+    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}
 
 
 def main():
