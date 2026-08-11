@@ -18,13 +18,15 @@ from pathlib import Path
 
 import yaml
 
+from paths import agent_swarm_data_dir
+
 DEFAULT_PORT = 7523
 _BASE_DIR = Path(__file__).parent.parent
 LOG_DIR = _BASE_DIR / "logs"
 LOG_FILE = LOG_DIR / "daemon.log"
 LOCK_FILE = _BASE_DIR / ".daemon.lock"
 CONFIG_DIR = _BASE_DIR / "config"
-DATA_DIR = _BASE_DIR / "data"
+DATA_DIR = agent_swarm_data_dir()
 
 
 @dataclass(frozen=True)

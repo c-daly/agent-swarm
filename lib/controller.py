@@ -31,6 +31,7 @@ from lib.errors import (
     WorkflowError,
 )
 from lib.llm import LLMService
+from lib.paths import agent_swarm_data_dir
 from lib.permissions import AgentInfo, PermissionChecker
 
 log = logging.getLogger(__name__)
@@ -146,7 +147,7 @@ class Controller:
         """
         try:
             base_dir = Path(__file__).parent.parent
-            db_path = base_dir / "dashboard" / "data" / "dashboard.db"
+            db_path = agent_swarm_data_dir() / "dashboard.db"
             projects_dir = Path("~/.claude/projects").expanduser()
 
             if not projects_dir.exists():
