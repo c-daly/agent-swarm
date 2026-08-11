@@ -20,3 +20,6 @@
 - `bin/sync-to-cache` — dev → cache copy with optional selective-files mode (`bin/sync-to-cache <file> [<file>...]`).
 - `bin/mcp-call` — CLI for subagents to call router tools. Always pass `--caller-id=<agent-id>`.
 - `bin/audit-tests`, `bin/todo` — utility scripts.
+
+## 2026-08-11 — mutable state moved to ~/.claude/agent-swarm/data/
+`datastore.db` and `dashboard.db` now live at `~/.claude/agent-swarm/data/` (override: `AGENT_SWARM_DATA_DIR`), resolved by `lib/paths.py:agent_swarm_data_dir()`. The in-tree `data/` and `dashboard/data/` dirs are dead — dev-tree copies archived at `~/.claude/agent-swarm/archive/`. Rationale: the src/cache dichotomy is structural (runtime executes from the versioned plugin cache), so state inside either tree goes stale or gets orphaned on version bumps. Note: with state external, WHICH tree the daemon runs from no longer affects data; two latent issues found during migration — the `.daemon.lock` flock is per-tree (cannot prevent a dev daemon and a cache daemon racing for port 7523) and `bin/mcp-router` auto-respawns its own tree's daemon on connection loss.
