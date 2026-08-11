@@ -209,3 +209,14 @@ class TestMain:
 class TestConstants:
     def test_default_port(self):
         assert DEFAULT_PORT == 7523
+
+
+# --- DATA_DIR ---
+
+
+def test_data_dir_is_external_state_dir(monkeypatch):
+    monkeypatch.delenv("AGENT_SWARM_DATA_DIR", raising=False)
+    import importlib, daemon as daemon_mod
+    importlib.reload(daemon_mod)
+    assert daemon_mod.DATA_DIR == Path.home() / ".claude" / "agent-swarm" / "data"
+    assert "plugins" not in str(daemon_mod.DATA_DIR)

@@ -313,3 +313,24 @@ class TestPythonFilesNoHardcodedPluginPaths:
             + "\n".join(violations)
             + "\n\nUse PLUGIN_ROOT from lib.paths or Path(__file__).parent instead."
         )
+
+
+class TestAgentSwarmDataDir:
+    """agent_swarm_data_dir() resolves the version-independent state directory."""
+
+    def test_default_is_version_independent_home_path(self, monkeypatch):
+        from lib.paths import agent_swarm_data_dir
+        monkeypatch.delenv("AGENT_SWARM_DATA_DIR", raising=False)
+        assert agent_swarm_data_dir() == Path.home() / ".claude" / "agent-swarm" / "data"
+
+    def test_env_override_wins_and_expands_user(self, monkeypatch):
+        from lib.paths import agent_swarm_data_dir
+        monkeypatch.setenv("AGENT_SWARM_DATA_DIR", "~/custom-state")
+        assert agent_swarm_data_dir() == Path.home() / "custom-state"
+
+    def test_does_not_create_directory(self, monkeypatch, tmp_path):
+        from lib.paths import agent_swarm_data_dir
+        target = tmp_path / "never-created"
+        monkeypatch.setenv("AGENT_SWARM_DATA_DIR", str(target))
+        agent_swarm_data_dir()
+        assert not target.exists()

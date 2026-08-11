@@ -31,6 +31,7 @@ from lib.errors import (
     WorkflowError,
 )
 from lib.llm import LLMService
+from lib.paths import agent_swarm_data_dir
 from lib.permissions import AgentInfo, PermissionChecker
 
 log = logging.getLogger(__name__)
@@ -87,7 +88,12 @@ class Controller:
         self._agent_state: dict[str, dict] = {}
 
         self._state_lock = threading.RLock()
-        self._summarization_threshold = 2000
+        # Summarize only genuinely large outputs. At the old 2000-char trigger,
+        # 47% of summarizations were 2-4KB outputs the model re-fetched 62% of
+        # the time — paying a round-trip to save <1KB. Trigger on real whales
+        # only; keep the generated summary compact so per-whale savings hold.
+        self._summarization_threshold = 8000  # trigger: summarize when output exceeds this
+        self._summary_max_length = 2000  # target size of the generated summary
 
         # Import previous session data into dashboard DB periodically
         self._import_interval = 300  # seconds between import runs
@@ -141,7 +147,7 @@ class Controller:
         """
         try:
             base_dir = Path(__file__).parent.parent
-            db_path = base_dir / "dashboard" / "data" / "dashboard.db"
+            db_path = agent_swarm_data_dir() / "dashboard.db"
             projects_dir = Path("~/.claude/projects").expanduser()
 
             if not projects_dir.exists():
@@ -1072,7 +1078,7 @@ class Controller:
         if original_size <= self._summarization_threshold:
             return result, False
 
-        summary = self.llm.summarize(str(result), self._summarization_threshold)
+        summary = self.llm.summarize(str(result), self._summary_max_length)
         return {
             "summary": summary,
             "content_id": content_id,

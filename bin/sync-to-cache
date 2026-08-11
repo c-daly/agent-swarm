@@ -29,7 +29,8 @@
 set -euo pipefail
 
 SOURCE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-CACHE_DIR="$HOME/.claude/plugins/cache/fearsidhe-plugins/agent-swarm/1.0.0"
+PLUGIN_VERSION=$(python3 -c "import json,sys; print(json.load(open('$HOME/.claude/plugins/agent-swarm/.claude-plugin/plugin.json'))['version'])")
+CACHE_DIR="$HOME/.claude/plugins/cache/fearsidhe-plugins/agent-swarm/$PLUGIN_VERSION"
 
 # --- helpers ---
 
