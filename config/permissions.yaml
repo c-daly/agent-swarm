@@ -137,30 +137,66 @@ workflows:
   # Debug workflow
   debug:
     triage:
-      allowed: [native__read_file, native__glob, native__grep, native__bash(pytest*), serena__*]
-      blocked: [native__write_file, native__edit_file]
+      allowed: [native__read_file, native__glob, native__grep, native__web_fetch, native__web_search, serena__read_file, serena__find_file, serena__search_for_pattern, serena__list_dir, serena__get_symbols_overview, serena__find_symbol, workflow__*]
+      blocked: [native__write_file, native__edit_file, native__bash, serena__create_text_file, serena__replace_content, serena__replace_symbol_body]
 
-    investigate:
-      allowed: [native__read_file, native__glob, native__grep, native__bash(pytest*), native__bash(python*), serena__*]
-      blocked: [native__write_file, native__edit_file]
+    reproduce:
+      allowed: [native__write_file, native__edit_file, native__read_file, native__glob, native__grep, native__bash, serena__*, workflow__*]
+      blocked: []
+
+    hypothesize:
+      allowed: [native__read_file, native__glob, native__grep, serena__read_file, serena__find_file, serena__search_for_pattern, serena__list_dir, serena__get_symbols_overview, serena__find_symbol, workflow__*]
+      blocked: [native__write_file, native__edit_file, native__bash, serena__create_text_file, serena__replace_content, serena__replace_symbol_body]
+
+    prove:
+      allowed: [native__read_file, native__glob, native__grep, native__bash(pytest*), native__bash(python*), native__bash(ruff*), native__bash(mypy*), serena__read_file, serena__find_file, serena__search_for_pattern, workflow__*]
+      blocked: [native__write_file, native__edit_file, serena__create_text_file, serena__replace_content, serena__replace_symbol_body]
 
     fix:
-      allowed: [native__write_file, native__edit_file, native__read_file, native__glob, native__grep, native__bash(pytest*), serena__*]
+      allowed: [native__write_file, native__edit_file, native__read_file, native__glob, native__grep, native__bash, serena__*, workflow__*]
       blocked: []
 
     verify:
-      allowed: [native__read_file, native__bash(pytest*)]
-      blocked: [native__write_file, native__edit_file]
+      allowed: [native__read_file, native__glob, native__grep, native__bash(pytest*), native__bash(python*), native__bash(ruff*), native__bash(mypy*), serena__read_file, serena__find_file, serena__search_for_pattern, workflow__*]
+      blocked: [native__write_file, native__edit_file, serena__create_text_file, serena__replace_content, serena__replace_symbol_body]
 
-  # PR review workflow
-  pr_review:
-    analyze:
-      allowed: [native__read_file, native__glob, native__grep, native__bash(gh pr*), serena__*]
-      blocked: [native__write_file, native__edit_file, native__bash]
+    push:
+      allowed: [native__read_file, native__bash(git*), native__bash(gh*), workflow__*]
+      blocked: [native__write_file, native__edit_file, serena__create_text_file, serena__replace_content, serena__replace_symbol_body]
 
-    comment:
-      allowed: [native__read_file, native__bash(gh pr comment*), native__bash(gh pr review*)]
-      blocked: [native__write_file, native__edit_file]
+    check_status:
+      allowed: [native__read_file, native__bash(git*), native__bash(gh*), workflow__*]
+      blocked: [native__write_file, native__edit_file, serena__create_text_file, serena__replace_content, serena__replace_symbol_body]
+
+    done:
+      allowed: []
+      blocked: []
+
+  # PR-comment workflow (understand before fixing)
+  pr_comment:
+    understand:
+      allowed: [native__read_file, native__glob, native__grep, serena__read_file, serena__find_file, serena__search_for_pattern, serena__list_dir, serena__get_symbols_overview, serena__find_symbol, workflow__*]
+      blocked: [native__write_file, native__edit_file, native__bash, serena__create_text_file, serena__replace_content, serena__replace_symbol_body]
+
+    fix:
+      allowed: [native__write_file, native__edit_file, native__read_file, native__glob, native__grep, native__bash, serena__*, workflow__*]
+      blocked: []
+
+    verify:
+      allowed: [native__read_file, native__glob, native__grep, native__bash(pytest*), native__bash(python*), native__bash(ruff*), native__bash(mypy*), serena__read_file, serena__find_file, serena__search_for_pattern, workflow__*]
+      blocked: [native__write_file, native__edit_file, serena__create_text_file, serena__replace_content, serena__replace_symbol_body]
+
+    push:
+      allowed: [native__read_file, native__bash(git*), native__bash(gh*), workflow__*]
+      blocked: [native__write_file, native__edit_file, serena__create_text_file, serena__replace_content, serena__replace_symbol_body]
+
+    check_reviews:
+      allowed: [native__read_file, native__glob, native__grep, native__bash(gh*), native__bash(git*), workflow__*]
+      blocked: [native__write_file, native__edit_file, serena__create_text_file, serena__replace_content, serena__replace_symbol_body]
+
+    done:
+      allowed: []
+      blocked: []
 
   # Develop workflow (PR-based SE team)
   develop:
