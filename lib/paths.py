@@ -65,3 +65,16 @@ def resolve_config_paths(data: Any) -> Any:
     if isinstance(data, dict):
         return {k: resolve_config_paths(v) for k, v in data.items()}
     return data
+
+
+def agent_swarm_data_dir() -> Path:
+    """Version-independent home for mutable state (datastore.db, dashboard.db).
+
+    Lives OUTSIDE both the dev tree and the versioned plugin-cache install:
+    cache paths are per-version, so in-tree state is orphaned on every
+    plugin version bump, and the dev tree is not the runtime.
+    """
+    env = os.environ.get("AGENT_SWARM_DATA_DIR")
+    if env:
+        return Path(env).expanduser()
+    return Path.home() / ".claude" / "agent-swarm" / "data"
