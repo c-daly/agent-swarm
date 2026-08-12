@@ -158,6 +158,22 @@ class TestMutationTarget:
         assert events, "edit call should have recorded an event"
         assert events[0].target == str(f)
 
+    def test_error_event_records_mutation_target(self, ctrl, tmp_path):
+        # A mutation that raises after being attempted (e.g. the remote edit
+        # completed but the response timed out) must still record which file it
+        # targeted -- the error path was dropping the target.
+        f = tmp_path / "m.txt"
+        with patch.object(ctrl, "_handle_native", side_effect=RuntimeError("boom")):
+            with pytest.raises(RuntimeError):
+                ctrl.handle_call(
+                    "native__edit_file",
+                    {"file_path": str(f), "old_string": "a", "new_string": "b"},
+                )
+        events = ctrl.data.query_events(tool="native__edit_file")
+        assert events
+        assert events[-1].status == "error"
+        assert events[-1].target == str(f)
+
 
 class TestNativeReadFile:
     def test_read_existing_file(self, ctrl, tmp_path):
@@ -332,6 +348,22 @@ class TestRouterOps:
         assert events
         assert events[0].agent_id == "sub-c3lock"
         assert events[0].session_id == "sub-c3lock"
+
+    def test_handshake_applies_explicit_session_id_to_existing(self, ctrl):
+        # prepare_dispatch pre-registers a dispatched subagent with a session_id
+        # derived from its sub-id; the later mcp-call handshake carries the parent
+        # session_id (AGENT_SESSION_ID) and must apply it to the existing entry,
+        # so the subagent's events group under the PARENT session, not its own id.
+        ctrl.handle_call(
+            "router__register_agent",
+            {"agent_id": "sub-p", "agent_type": "implementer"},
+        )
+        assert ctrl.permissions.get_agent("sub-p").session_id == "sub-p"  # derived
+        ctrl.handle_call(
+            "router__register_agent",
+            {"agent_id": "sub-p", "agent_type": "implementer", "session_id": "parent-sess"},
+        )
+        assert ctrl.permissions.get_agent("sub-p").session_id == "parent-sess"
 
     def test_register_agent_creates_state(self, ctrl):
         """register_agent should create agent state entry."""

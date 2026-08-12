@@ -227,6 +227,7 @@ class Controller:
             self._record_error_event(
                 tool, prefix, agent_info, start_time,
                 "PermissionDeniedError", blocked.reason if blocked else "blocked",
+                target=_mutation_target(tool, clean_args),
             )
             raise PermissionDeniedError(blocked)
 
@@ -246,6 +247,7 @@ class Controller:
             self._record_error_event(
                 tool, prefix, agent_info, start_time,
                 type(e).__name__, str(e),
+                target=_mutation_target(tool, clean_args),
             )
             raise
 
@@ -300,6 +302,7 @@ class Controller:
         start_time: float,
         error_type: str,
         error_msg: str,
+        target: str = "",
     ) -> None:
         """Record a failed tool call in the event store."""
         duration_ms = int((time.monotonic() - start_time) * 1000)
@@ -310,6 +313,7 @@ class Controller:
                 "status": "error",
                 "duration_ms": duration_ms,
                 "error_type": error_type,
+                "target": target,
                 "session_id": agent_info.session_id if agent_info else "",
                 "agent_id": agent_info.agent_id if agent_info else "",
                 "agent_type": agent_info.agent_type if agent_info else "",
@@ -768,6 +772,14 @@ class Controller:
                 agent_type = existing.agent_type
                 workflow_id = existing.workflow
                 phase = existing.phase
+                # Apply an explicit session_id from the handshake (mcp-call's
+                # AGENT_SESSION_ID, typically the parent session). prepare_dispatch
+                # pre-registered dispatched subagents with a session_id derived
+                # from their sub-id; the explicit parent value wins so their events
+                # group under the parent session, not the derived sub-id.
+                explicit_sid = args.get("session_id")
+                if explicit_sid:
+                    existing.session_id = explicit_sid
             else:
                 # 1. Register in permissions system
                 info = self.permissions.register_agent(
