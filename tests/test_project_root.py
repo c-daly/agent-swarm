@@ -85,9 +85,15 @@ class TestFindProjectRoot:
             
             assert result == root
 
-    def test_fallback_to_cwd_if_no_markers(self):
+    def test_fallback_to_cwd_if_no_markers(self, monkeypatch):
         """Should return cwd if no project markers found."""
         from project_root import find_project_root
+
+        # Force the "no marker matches" branch deterministically. The real
+        # walk climbs to the filesystem root, so a stray marker in a shared
+        # ancestor (e.g. a leftover /tmp/.git) would otherwise be returned
+        # instead of the starting path, making this test environment-dependent.
+        monkeypatch.setattr("project_root.PROJECT_MARKERS", [])
         
         with tempfile.TemporaryDirectory() as tmpdir:
             # No markers, should return the directory itself
