@@ -233,3 +233,31 @@ class TestRegisterMainAgentRetriesOnColdDaemon:
         assert "router__register_agent" in called_tools, (
             f"register_main_agent never registered after retry; calls={called_tools!r}"
         )
+
+    def test_registers_main_agent_with_main_type(self):
+        """The main agent registers as agent_type 'main' (not 'implementer') so
+        telemetry distinguishes main-session traffic from implementer subagents.
+        Governance is preserved by the agents.main config mirroring implementer.
+        """
+        mod = _load_session_start("session_start_main_type")
+
+        good_dc = MagicMock()
+        good_dc.__enter__ = MagicMock(return_value=good_dc)
+        good_dc.__exit__ = MagicMock(return_value=False)
+        good_dc.call_tool = MagicMock(return_value={})
+        good_dc.workflow_get_state = MagicMock(return_value={"phase": "plan"})
+        dc_factory = MagicMock(return_value=good_dc)
+
+        with patch.dict(
+            "sys.modules",
+            {"daemon_client": MagicMock(DaemonClient=dc_factory)},
+        ), patch.object(mod, "get_active_workflow_id", lambda: "simple"), \
+                patch.object(mod.time, "sleep", lambda _s: None):
+            mod.register_main_agent()
+
+        reg_calls = [
+            c for c in good_dc.call_tool.call_args_list
+            if c.args and c.args[0] == "router__register_agent"
+        ]
+        assert reg_calls, "main agent was never registered"
+        assert reg_calls[0].args[1]["agent_type"] == "main"

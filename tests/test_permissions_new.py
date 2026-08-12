@@ -314,6 +314,28 @@ class TestAgentRegistry:
 # --- get_allowed_tools ---
 
 
+class TestMainAgentGovernance:
+    """The main agent is labeled agent_type 'main' for telemetry; governance
+    is preserved by an agents.main block identical to implementer."""
+
+    def _real_agents(self):
+        from pathlib import Path
+
+        cfg = yaml.safe_load(
+            (Path(__file__).parent.parent / "config" / "permissions.yaml").read_text()
+        )
+        return cfg["agents"]
+
+    def test_main_agent_config_present(self):
+        assert "main" in self._real_agents(), "agents.main missing from permissions.yaml"
+
+    def test_main_agent_config_mirrors_implementer(self):
+        agents = self._real_agents()
+        # Exact mirror so relabeling main from 'implementer' to 'main' does not
+        # change what the main agent is permitted to do.
+        assert agents["main"] == agents["implementer"]
+
+
 class TestGetAllowedTools:
     def test_global_allowed(self, checker):
         tools = checker.get_allowed_tools()
