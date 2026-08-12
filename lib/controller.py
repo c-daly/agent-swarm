@@ -63,6 +63,35 @@ def _is_protected_key(key: str) -> bool:
     )
 
 
+# Tools whose calls change durable state; their events record a target so the
+# telemetry says not just "an edit happened" but "an edit to <path>".
+_MUTATING_TOOLS = frozenset({
+    "edit_file", "write_file",  # native
+    "create_text_file", "replace_symbol_body", "insert_after_symbol",
+    "insert_before_symbol", "replace_content", "replace_in_files",
+    "replace_regex",  # serena
+})
+# Argument keys that name a mutation's target, in priority order.
+_TARGET_ARG_KEYS = ("file_path", "relative_path", "path")
+
+
+def _mutation_target(tool: str, args: dict) -> str:
+    """Return what a mutating tool acted on (e.g. the edited file), else "".
+
+    Only mutating tools yield a target; reads and queries return "" so the
+    telemetry column marks genuine mutations. The target is pulled from
+    whichever common path-like argument the tool carries.
+    """
+    basename = tool.split("__")[-1]
+    if basename not in _MUTATING_TOOLS:
+        return ""
+    for key in _TARGET_ARG_KEYS:
+        val = args.get(key)
+        if val:
+            return str(val)
+    return ""
+
+
 # --- Bash file-I/O lockdown ---------------------------------------------------
 
 
@@ -258,6 +287,7 @@ class Controller:
             "agent_type": agent_info.agent_type if agent_info else "",
             "workflow_id": (agent_info.workflow or "") if agent_info else "",
             "phase": (agent_info.phase or "") if agent_info else "",
+            "target": _mutation_target(tool, clean_args),
         })
 
         return result
@@ -744,6 +774,7 @@ class Controller:
                     agent_id=agent_id,
                     agent_type=agent_type,
                     roles=args.get("roles"),
+                    session_id=args.get("session_id", ""),
                 )
 
                 # 2. Determine phase from workflow config (if applicable)

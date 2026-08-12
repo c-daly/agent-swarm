@@ -45,6 +45,18 @@ class TestRecordAndQuery:
         assert events[0].workflow_id == "develop"
         assert events[0].phase == "implement"
 
+    def test_mutation_target_captured(self, store):
+        # Mutating tools record what they acted on (e.g. the edited file), so a
+        # row says not just "an edit happened" but "an edit to lib/foo.py".
+        store.record_event(_make_event(tool="native__edit_file", target="lib/foo.py"))
+        events = store.get_session_events("sess-1")
+        assert events[0].target == "lib/foo.py"
+
+    def test_target_defaults_to_empty(self, store):
+        store.record_event(_make_event())
+        events = store.get_session_events("sess-1")
+        assert events[0].target == ""
+
     def test_defaults(self, store):
         store.record_event({"tool": "x", "backend": "y", "status": "success"})
         events = store.query_events(tool="x")

@@ -264,6 +264,30 @@ class TestAgentRegistry:
         retrieved = checker.get_agent("a1")
         assert retrieved is info
 
+    def test_register_derives_session_id_from_main_agent_id(self, checker):
+        # The main agent's id embeds the Claude session uuid ("main:<uuid>");
+        # session_id is derived from it so every event row can be grouped by
+        # session instead of being left empty.
+        info = checker.register_agent("main:d1c9ae99-817d", "implementer")
+        assert info.session_id == "d1c9ae99-817d"
+
+    def test_register_derives_session_id_from_subagent_id(self, checker):
+        # A subagent has no separate session source daemon-side; its caller-id
+        # (== agent_id) is the stable grouping key, so session_id falls back to
+        # the agent_id rather than staying empty.
+        info = checker.register_agent("sub-deadbeef", "explorer")
+        assert info.session_id == "sub-deadbeef"
+
+    def test_register_explicit_session_id_wins(self, checker):
+        # An explicit session_id (e.g. AGENT_SESSION_ID threaded by mcp-call,
+        # which may be the parent session) takes precedence over derivation.
+        info = checker.register_agent("sub-x", "explorer", session_id="sess-123")
+        assert info.session_id == "sess-123"
+
+    def test_register_empty_agent_id_has_empty_session_id(self, checker):
+        info = checker.register_agent("", "")
+        assert info.session_id == ""
+
     def test_get_missing(self, checker):
         assert checker.get_agent("nonexistent") is None
 
