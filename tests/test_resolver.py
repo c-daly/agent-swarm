@@ -526,6 +526,18 @@ class TestScopeInference:
 class TestSaveAtScope:
     """Test save_at_scope function for persisting context content."""
 
+    @pytest.fixture(autouse=True)
+    def _anchor_repo_root(self, tmp_path):
+        """Make tmp_path the repo root so scope inference is deterministic.
+
+        save_at_scope() infers "repo" scope by walking upward for a `.git`
+        directory. With no `.git` inside tmp_path the walk escapes into
+        shared ancestors (e.g. /tmp); a stray marker left there by an
+        unrelated process then redirects the save out of tmp_path. Anchoring
+        tmp_path as the repo root isolates these tests from that state.
+        """
+        (tmp_path / ".git").mkdir()
+
     def test_save_creates_context_directory(self, tmp_path):
         """save_at_scope creates .context directory if needed."""
         from context.resolver import save_at_scope
