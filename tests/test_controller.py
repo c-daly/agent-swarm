@@ -111,6 +111,54 @@ def ctrl_with_config(tmp_path):
 # --- Native operations ---
 
 
+class TestCallStatus:
+    """_call_status classifies a tool call's outcome for telemetry."""
+
+    def test_success_dict(self):
+        from lib.controller import _call_status
+        assert _call_status({"exit_code": 0, "stdout": "ok"}) == ("success", "")
+
+    def test_timed_out_is_error(self):
+        from lib.controller import _call_status
+        assert _call_status({"timed_out": True, "exit_code": -1}) == ("error", "Timeout")
+
+    def test_tool_iserror_is_error(self):
+        from lib.controller import _call_status
+        status, etype = _call_status({"isError": True, "error": "not found"})
+        assert status == "error"
+        assert etype
+
+    def test_nonzero_exit_is_not_an_error(self):
+        # A command exiting non-zero (grep no-match, pytest failures) is a
+        # successful tool call; only timeouts / tool errors flip status.
+        from lib.controller import _call_status
+        assert _call_status({"exit_code": 1, "stdout": ""}) == ("success", "")
+
+    def test_non_dict_result_is_success(self):
+        from lib.controller import _call_status
+        assert _call_status("some string result") == ("success", "")
+
+
+class TestTelemetryIntegrity:
+    """Collection-correctness of recorded events (C5)."""
+
+    def test_get_full_records_single_event(self, ctrl):
+        # Regression: get_full was recorded twice -- once by handle_call's outer
+        # path and once inside get_full_content (unattributed) -- inflating
+        # counts. Exactly one row per call.
+        ctrl.cache.store("cabc123def456", {"some": "data"})
+        ctrl.handle_call("router__get_full", {"content_id": "cabc123def456"})
+        events = ctrl.data.query_events(tool="router__get_full")
+        assert len(events) == 1
+
+    def test_tool_error_recorded_as_error_status(self, ctrl):
+        # A tool-level failure (missing file returns isError, does not raise)
+        # must be recorded as status='error', not inflate the success count.
+        ctrl.handle_call("native__read_file", {"file_path": "/nonexistent/xyz"})
+        events = ctrl.data.query_events(tool="native__read_file")
+        assert events[-1].status == "error"
+
+
 class TestNativeReadFile:
     def test_read_existing_file(self, ctrl, tmp_path):
         f = tmp_path / "test.txt"

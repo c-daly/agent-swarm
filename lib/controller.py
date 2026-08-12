@@ -63,6 +63,22 @@ def _is_protected_key(key: str) -> bool:
     )
 
 
+def _call_status(raw_result: Any) -> tuple[str, str]:
+    """Classify a completed tool call for telemetry: ``(status, error_type)``.
+
+    A call is an error when it timed out or the tool reported failure
+    (``isError``). A non-zero shell ``exit_code`` alone is NOT an error -- many
+    commands (grep with no match, a failing test run) exit non-zero as normal
+    output -- so it does not flip the status.
+    """
+    if isinstance(raw_result, dict):
+        if raw_result.get("timed_out"):
+            return "error", "Timeout"
+        if raw_result.get("isError"):
+            return "error", str(raw_result.get("error_type") or "ToolError")
+    return "success", ""
+
+
 # --- Bash file-I/O lockdown ---------------------------------------------------
 
 
@@ -243,12 +259,16 @@ class Controller:
                 raw_result, content_id, original_size
             )
 
-        # Record success telemetry
+        # Record telemetry. A returned result can still represent a failed call
+        # (a bash timeout, a tool-level isError), so classify the outcome rather
+        # than assume success just because no exception propagated.
         duration_ms = int((time.monotonic() - start_time) * 1000)
+        status, error_type = _call_status(raw_result)
         self.data.record_event({
             "tool": tool,
             "backend": prefix,
-            "status": "success",
+            "status": status,
+            "error_type": error_type,
             "duration_ms": duration_ms,
             "original_size": original_size,
             "summary_size": len(str(result)) if was_summarized else None,
@@ -295,11 +315,9 @@ class Controller:
         if content is None:
             return {"error": "Content not found or expired", "isError": True}
 
-        self.data.record_event({
-            "tool": "router__get_full",
-            "backend": "router",
-            "status": "success",
-        })
+        # No telemetry here: handle_call already records one attributed row for
+        # the router__get_full call. Recording again produced a duplicate,
+        # unattributed row (C5 double-recording).
         return content
 
     def list_backend_tools(self) -> list[dict]:
