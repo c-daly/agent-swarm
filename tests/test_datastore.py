@@ -57,6 +57,12 @@ class TestRecordAndQuery:
         events = store.get_session_events("sess-1")
         assert events[0].target == ""
 
+    def test_fractional_duration_preserved(self, store):
+        # Durations are fractional milliseconds so sub-ms calls aren't lost.
+        store.record_event(_make_event(duration_ms=0.4))
+        events = store.get_session_events("sess-1")
+        assert events[0].duration_ms == 0.4
+
     def test_defaults(self, store):
         store.record_event({"tool": "x", "backend": "y", "status": "success"})
         events = store.query_events(tool="x")

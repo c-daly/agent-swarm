@@ -237,6 +237,29 @@ class TestMutationTarget:
         assert events[-1].target == str(f)
 
 
+class TestDurationPrecision:
+    """Sub-millisecond calls record their real duration, not floor to 0 (C5 #5)."""
+
+    def test_sub_millisecond_call_records_fractional_duration(self, ctrl, tmp_path, monkeypatch):
+        import lib.controller as controller_mod
+
+        f = tmp_path / "r.txt"
+        f.write_text("hi")
+        # First monotonic() reading is the start; every later reading returns the
+        # end, so elapsed is a fixed 0.4 ms regardless of how many times
+        # handle_call reads the clock. int(0.4) == 0 was the bug.
+        clock = [1000.0, 1000.0004]
+
+        def fake_monotonic():
+            return clock.pop(0) if len(clock) > 1 else clock[0]
+
+        monkeypatch.setattr(controller_mod.time, "monotonic", fake_monotonic)
+        ctrl.handle_call("native__read_file", {"file_path": str(f)})
+        events = ctrl.data.query_events(tool="native__read_file")
+        assert events
+        assert events[-1].duration_ms == pytest.approx(0.4)
+
+
 class TestNativeReadFile:
     def test_read_existing_file(self, ctrl, tmp_path):
         f = tmp_path / "test.txt"
