@@ -22,7 +22,7 @@ class EventRecord:
     tool: str
     backend: str
     status: str  # "success" | "error"
-    duration_ms: int = 0
+    duration_ms: float = 0.0
     session_id: str = ""
     agent_id: str = ""
     agent_type: str = ""
@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS events (
     tool TEXT NOT NULL,
     backend TEXT NOT NULL,
     status TEXT NOT NULL,
-    duration_ms INTEGER DEFAULT 0,
+    duration_ms REAL DEFAULT 0,
     session_id TEXT DEFAULT '',
     agent_id TEXT DEFAULT '',
     agent_type TEXT DEFAULT '',

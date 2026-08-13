@@ -293,7 +293,7 @@ class Controller:
         # Record telemetry. A returned result can still represent a failed call
         # (a bash timeout, a tool-level isError), so classify the outcome rather
         # than assume success just because no exception propagated.
-        duration_ms = int((time.monotonic() - start_time) * 1000)
+        duration_ms = round((time.monotonic() - start_time) * 1000, 3)
         status, error_type = _call_status(raw_result)
         self.data.record_event({
             "tool": tool,
@@ -325,7 +325,7 @@ class Controller:
         target: str = "",
     ) -> None:
         """Record a failed tool call in the event store."""
-        duration_ms = int((time.monotonic() - start_time) * 1000)
+        duration_ms = round((time.monotonic() - start_time) * 1000, 3)
         try:
             self.data.record_event({
                 "tool": tool,
