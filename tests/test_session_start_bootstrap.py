@@ -261,3 +261,54 @@ class TestRegisterMainAgentRetriesOnColdDaemon:
         ]
         assert reg_calls, "main agent was never registered"
         assert reg_calls[0].args[1]["agent_type"] == "main"
+
+
+class TestEnsureOtelStackHonestReporting:
+    """ensure_otel_stack must not claim success it can't confirm, and must not
+    discard the background start's output (C5 #8 supervision)."""
+
+    def _mod(self):
+        return _load_session_start("session_start_otel_stack")
+
+    def test_reports_unconfirmed_and_captures_output_when_not_running(self, tmp_path, monkeypatch):
+        import subprocess
+
+        mod = self._mod()
+        otel_dir = tmp_path / "otel"
+        otel_dir.mkdir()
+        (otel_dir / "docker-compose.yml").write_text("services: {}\n")
+
+        class _NotRunning:
+            stdout = "false"
+
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: _NotRunning())
+        captured = {}
+
+        def _fake_popen(*a, **k):
+            captured.update(k)
+            return object()
+
+        monkeypatch.setattr(subprocess, "Popen", _fake_popen)
+
+        msg = mod.ensure_otel_stack(otel_dir=otel_dir)
+
+        # Honest: does not claim it "started"; flags startup as unconfirmed.
+        assert msg is not None
+        assert "unconfirmed" in msg.lower()
+        # Output captured to a log, not discarded to DEVNULL.
+        assert captured.get("stdout") is not subprocess.DEVNULL
+        assert (otel_dir / ".last-start.log").exists()
+
+    def test_returns_none_when_already_running(self, tmp_path, monkeypatch):
+        import subprocess
+
+        mod = self._mod()
+        otel_dir = tmp_path / "otel"
+        otel_dir.mkdir()
+        (otel_dir / "docker-compose.yml").write_text("services: {}\n")
+
+        class _Running:
+            stdout = "true"
+
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Running())
+        assert mod.ensure_otel_stack(otel_dir=otel_dir) is None

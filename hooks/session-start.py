@@ -443,10 +443,11 @@ def get_agent_briefing() -> str:
         return ""
 
 
-def ensure_otel_stack() -> str | None:
+def ensure_otel_stack(otel_dir: Path | None = None) -> str | None:
     """Start OTEL stack if not running."""
     import subprocess
-    otel_dir = Path.home() / ".claude" / "infra" / "otel"
+    if otel_dir is None:
+        otel_dir = Path.home() / ".claude" / "infra" / "otel"
     compose_file = next(
         (otel_dir / name for name in ("docker-compose.yml", "docker-compose.yaml", "compose.yaml", "compose.yml")
          if (otel_dir / name).exists()),
@@ -461,12 +462,21 @@ def ensure_otel_stack() -> str | None:
         )
         if result.stdout.strip() == "true":
             return None
-        # Not running — fire-and-forget start (hook timeout is 10s, can't wait)
-        subprocess.Popen(
-            ["docker", "compose", "-f", str(compose_file), "up", "-d"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        # Not running — best-effort background start (the hook budget is ~10s,
+        # too short to wait for `compose up -d`). Capture output to a log so a
+        # failed start leaves a trace instead of being silently discarded, and
+        # report honestly that startup is unconfirmed rather than claiming it
+        # started (a failed compose up would otherwise still print "starting").
+        start_log = otel_dir / ".last-start.log"
+        with open(start_log, "w") as log:
+            subprocess.Popen(
+                ["docker", "compose", "-f", str(compose_file), "up", "-d"],
+                stdout=log, stderr=subprocess.STDOUT,
+            )
+        return (
+            "OTEL stack was not running — attempted a background start "
+            f"(unconfirmed; see {start_log} or Grafana at http://localhost:3000)"
         )
-        return "OTEL stack starting from ~/.claude/infra/otel/"
     except Exception:
         return None
 
