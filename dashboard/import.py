@@ -74,7 +74,9 @@ CREATE TABLE IF NOT EXISTS import_log (
     source_path TEXT NOT NULL,
     imported_at TEXT NOT NULL,
     events_inserted INTEGER DEFAULT 0,
-    events_skipped INTEGER DEFAULT 0
+    events_skipped INTEGER DEFAULT 0,
+    source_mtime REAL DEFAULT 0,
+    source_size INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS session_files (
@@ -120,7 +122,18 @@ def init_db(db_path: str) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA_SQL)
+    _migrate_import_log(conn)
     return conn
+
+
+def _migrate_import_log(conn: sqlite3.Connection) -> None:
+    """Add import_log change-detection columns to DBs created before them."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(import_log)")}
+    if "source_mtime" not in cols:
+        conn.execute("ALTER TABLE import_log ADD COLUMN source_mtime REAL DEFAULT 0")
+    if "source_size" not in cols:
+        conn.execute("ALTER TABLE import_log ADD COLUMN source_size INTEGER DEFAULT 0")
+    conn.commit()
 
 
 def derive_backend(tool_name: str) -> str:
@@ -161,11 +174,31 @@ def detect_error(content) -> tuple[bool, str]:
     return False, ""
 
 
-def is_already_imported(conn: sqlite3.Connection, source: str, source_path: str) -> bool:
-    """Check if a source file was already imported."""
+def is_already_imported(
+    conn: sqlite3.Connection,
+    source: str,
+    source_path: str,
+    source_mtime: float | None = None,
+    source_size: int | None = None,
+) -> bool:
+    """Check whether this version of a source file was already imported.
+
+    When mtime and size are given, the match requires them too, so a transcript
+    that has grown since its last import counts as not-yet-imported and gets
+    re-processed (per-event dedup then inserts only the new events). Without them
+    the check is path-only (backward-compatible for callers that don't stat the
+    source, e.g. the duckdb path).
+    """
+    if source_mtime is None or source_size is None:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM import_log WHERE source = ? AND source_path = ?",
+            (source, source_path),
+        ).fetchone()
+        return row[0] > 0
     row = conn.execute(
-        "SELECT COUNT(*) FROM import_log WHERE source = ? AND source_path = ?",
-        (source, source_path),
+        "SELECT COUNT(*) FROM import_log "
+        "WHERE source = ? AND source_path = ? AND source_mtime = ? AND source_size = ?",
+        (source, source_path, source_mtime, source_size),
     ).fetchone()
     return row[0] > 0
 
@@ -508,7 +541,11 @@ def import_claude_transcripts(
 
     def _import_file(filepath: Path) -> tuple[int, int]:
         source_path = str(filepath.resolve())
-        if not force and is_already_imported(conn, "claude_transcript", source_path):
+        st = filepath.stat()
+        source_mtime, source_size = st.st_mtime, st.st_size
+        if not force and is_already_imported(
+            conn, "claude_transcript", source_path, source_mtime, source_size
+        ):
             return 0, 0
 
         events = parse_jsonl_file(filepath, agent_type_map=agent_type_map)
@@ -553,8 +590,10 @@ def import_claude_transcripts(
 
         if not dry_run and (inserted > 0 or skipped > 0):
             conn.execute(
-                "INSERT INTO import_log (source, source_path, imported_at, events_inserted, events_skipped) VALUES (?, ?, ?, ?, ?)",
-                ("claude_transcript", source_path, datetime.now(timezone.utc).isoformat(), inserted, skipped),
+                "INSERT INTO import_log (source, source_path, imported_at, events_inserted, "
+                "events_skipped, source_mtime, source_size) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ("claude_transcript", source_path, datetime.now(timezone.utc).isoformat(),
+                 inserted, skipped, source_mtime, source_size),
             )
             conn.commit()
 
