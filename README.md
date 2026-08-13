@@ -10,7 +10,26 @@ claude plugin install agent-swarm
 
 Registers a `mcp-router` MCP server and installs `PreToolUse`, `SessionStart`, `SessionEnd`, and `PreCompact` hooks.
 
-**Requirements:** Python 3.11+, `git`, `gh` CLI (for PR workflows)
+**Requirements:**
+
+- **Python 3.11+** with the daemon's dependencies installed. `bin/start-daemon` resolves the interpreter — preferring a Poetry-managed `.venv` (via `poetry env info --executable`) and falling back to the current `sys.executable` — so **[Poetry](https://python-poetry.org/)** is the recommended way to install those deps, not strictly required. (A bare `sys.executable` that lacks `PyYAML` is the classic startup crash.)
+- **`git`** and the **`gh` CLI** — for the PR-based workflows (`/develop`, orchestrate).
+- **[`uv`](https://docs.astral.sh/uv/)** (provides `uvx`) — runs the `serena` MCP backend.
+- **Node.js** (provides `npx`) — runs the `context7` and `playwright` MCP backends.
+
+---
+
+## Environment variables
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `AGENT_SWARM_ROOT` | Absolute path to the plugin root. Hook commands in `hooks/hooks.json` resolve their scripts as `${AGENT_SWARM_ROOT}/hooks/*.py`, so the loader must set it for hooks to run. | plugin loader sets it for hooks; `lib/paths.py` falls back to a code-derived path (`Path(__file__)…`) when unset |
+| `CLAUDE_HOME` | The user's Claude configuration directory. | `~/.claude` |
+| `AGENT_SWARM_DATA_DIR` | Overrides where mutable telemetry state lives (`datastore.db`, `dashboard.db`). Kept outside the versioned plugin cache so a version bump doesn't orphan it. | `~/.claude/agent-swarm/data/` |
+| `AGENT_SWARM_LOG_LEVEL` | Hook log verbosity (`DEBUG` / `INFO` / `WARNING` / `ERROR`). | `INFO` |
+| `AGENT_SWARM_BRIEFING_ENFORCE` | Whether the dispatch briefing gate denies unbriefed spawns (`block`) or only warns. | `block` |
+
+Per-agent identity variables — **read** by `mcp-call` and the router from a subagent's environment (the SDK/dispatch populates them; you rarely set them by hand): `AGENT_SWARM_CALLER_ID`, `AGENT_TYPE`, `WORKFLOW_ID`, `AGENT_SESSION_ID`.
 
 ---
 
@@ -204,6 +223,9 @@ mcp-call native__bash '{"command": "pytest tests/"}'
 | `[BLOCKED]` on native tool | Hook blocking | Use `mcp__router__native__*` equivalent |
 | Permission denied from router | Wrong phase for that tool | Check `config/permissions.yaml` |
 | Subagent can't write files | Phase restriction | Check workflow YAML for current phase |
+| `mcp__router__*` tools missing | Daemon is up but the session's MCP connection is stale (sessions connect at startup and never retry) | Reconnect with `/mcp`, or start a new session |
+| Daemon won't start / crashes on `import yaml` | Launched outside the Poetry venv, so `sys.executable` picked a Python without `PyYAML` | Start via `bin/start-daemon` (it resolves the Poetry venv interpreter), or `cd $AGENT_SWARM_ROOT && poetry install` |
+| Can't reach the daemon | Not running — it listens on `127.0.0.1:7523` | Restart it; in-memory state (phase, agent registry) resets on restart, so re-register/re-enter the workflow |
 
 ---
 
