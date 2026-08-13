@@ -12,7 +12,7 @@ Registers a `mcp-router` MCP server and installs `PreToolUse`, `SessionStart`, `
 
 **Requirements:**
 
-- **Python 3.11+** and **[Poetry](https://python-poetry.org/)** — the daemon launches from the Poetry-managed virtualenv (`bin/start-daemon` resolves the venv interpreter via `poetry env info --executable`; a plain-shell `sys.executable` can select a Python that lacks `PyYAML` and crash the daemon at startup).
+- **Python 3.11+** with the daemon's dependencies installed. `bin/start-daemon` resolves the interpreter — preferring a Poetry-managed `.venv` (via `poetry env info --executable`) and falling back to the current `sys.executable` — so **[Poetry](https://python-poetry.org/)** is the recommended way to install those deps, not strictly required. (A bare `sys.executable` that lacks `PyYAML` is the classic startup crash.)
 - **`git`** and the **`gh` CLI** — for the PR-based workflows (`/develop`, orchestrate).
 - **[`uv`](https://docs.astral.sh/uv/)** (provides `uvx`) — runs the `serena` MCP backend.
 - **Node.js** (provides `npx`) — runs the `context7` and `playwright` MCP backends.
@@ -23,13 +23,13 @@ Registers a `mcp-router` MCP server and installs `PreToolUse`, `SessionStart`, `
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `AGENT_SWARM_ROOT` | Absolute path to the plugin root. Hook commands in `hooks/hooks.json` resolve their scripts as `${AGENT_SWARM_ROOT}/hooks/*.py`, so hooks won't run without it. | set by the plugin loader |
+| `AGENT_SWARM_ROOT` | Absolute path to the plugin root. Hook commands in `hooks/hooks.json` resolve their scripts as `${AGENT_SWARM_ROOT}/hooks/*.py`, so the loader must set it for hooks to run. | plugin loader sets it for hooks; `lib/paths.py` falls back to a code-derived path (`Path(__file__)…`) when unset |
 | `CLAUDE_HOME` | The user's Claude configuration directory. | `~/.claude` |
 | `AGENT_SWARM_DATA_DIR` | Overrides where mutable telemetry state lives (`datastore.db`, `dashboard.db`). Kept outside the versioned plugin cache so a version bump doesn't orphan it. | `~/.claude/agent-swarm/data/` |
 | `AGENT_SWARM_LOG_LEVEL` | Hook log verbosity (`DEBUG` / `INFO` / `WARNING` / `ERROR`). | `INFO` |
 | `AGENT_SWARM_BRIEFING_ENFORCE` | Whether the dispatch briefing gate denies unbriefed spawns (`block`) or only warns. | `block` |
 
-Per-agent identity variables — set by `mcp-call` / the dispatch hook for subagents, rarely set by hand: `AGENT_SWARM_CALLER_ID`, `AGENT_TYPE`, `WORKFLOW_ID`, `AGENT_SESSION_ID`.
+Per-agent identity variables — **read** by `mcp-call` and the router from a subagent's environment (the SDK/dispatch populates them; you rarely set them by hand): `AGENT_SWARM_CALLER_ID`, `AGENT_TYPE`, `WORKFLOW_ID`, `AGENT_SESSION_ID`.
 
 ---
 
