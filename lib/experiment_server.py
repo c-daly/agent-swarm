@@ -6,8 +6,10 @@ it as the ``experiment`` backend (tool_prefix ``experiment`` in
 config/backends.json), alongside ``workflow`` and ``native``. Mirrors
 workflow_server.py's plain JSON-RPC stdio loop.
 
-Storage backend is resolved from the environment (vault canonical default;
-local filesystem alternative). A registered memory plugin is used additively
+A single server multiplexes projects: the optional ``project`` argument on each
+call selects the vault subtree (``<vault>/10-projects/<project>/experiments/``);
+omitted, it falls back to ``EXPERIMENT_PROJECT``. The local backend is
+single-root and ignores project. A registered memory plugin is used additively
 via presence-gated mirroring — memory stays optional.
 """
 
@@ -28,21 +30,19 @@ from experiment_store import (  # noqa: E402
 )
 
 _OBS_FIELDS = ("title", "hypothesis", "changes", "result", "diagnosis", "next_direction")
+_DEFAULT_PROJECT = "agent-swarm"
 
 
 # ---------------------------------------------------------------------------
-# Backend resolution
+# Backend resolution + per-project routing
 # ---------------------------------------------------------------------------
 
-def store_from_env(env=None):
+def store_from_env(env=None, project=None):
     """Build the base store from environment configuration.
 
     ``EXPERIMENT_STORE_BACKEND`` selects vault (default) or local. Vault dir
     resolves from EXPERIMENT_VAULT_DIR / VAULT_DIR / MEMORY_VAULT_DIR; the
-    project from EXPERIMENT_PROJECT (default ``agent-swarm``).
-
-    NOTE (open, per design doc): a single server instance currently serves one
-    project subtree. Multi-project routing is a "change with practice" follow-up.
+    project from the ``project`` argument, else EXPERIMENT_PROJECT.
     """
     env = env if env is not None else os.environ
     backend = env.get("EXPERIMENT_STORE_BACKEND", "vault")
@@ -52,8 +52,29 @@ def store_from_env(env=None):
         "vault",
         vault_dir=(env.get("EXPERIMENT_VAULT_DIR") or env.get("VAULT_DIR")
                    or env.get("MEMORY_VAULT_DIR")),
-        project=env.get("EXPERIMENT_PROJECT", "agent-swarm"),
+        project=project or env.get("EXPERIMENT_PROJECT", _DEFAULT_PROJECT),
     )
+
+
+class ExperimentServer:
+    """Routes experiment tool calls to per-project (reader, writer) stores.
+
+    ``stores_for(project)`` returns a cached ``(reader, writer)`` pair for the
+    project's subtree; the writer wraps the base store with presence-gated
+    memory mirroring. The local backend is single-root, so all projects share
+    one store there.
+    """
+
+    def __init__(self, env=None):
+        self.env = env if env is not None else os.environ
+        self._cache: dict[str, tuple] = {}
+
+    def stores_for(self, project=None):
+        key = project or self.env.get("EXPERIMENT_PROJECT", _DEFAULT_PROJECT)
+        if key not in self._cache:
+            base = store_from_env(self.env, project=key)
+            self._cache[key] = (base, open_experiment_writer(base))
+        return self._cache[key]
 
 
 # ---------------------------------------------------------------------------
@@ -88,10 +109,11 @@ def _observation_from_args(payload: dict) -> Observation:
 # Dispatch (transport-independent, unit-testable)
 # ---------------------------------------------------------------------------
 
-def handle_call(reader, writer, name: str, args: dict) -> tuple[str, bool]:
-    """Execute one tool call. Returns (text, is_error)."""
+def handle_call(server: ExperimentServer, name: str, args: dict) -> tuple[str, bool]:
+    """Execute one tool call, routing by args['project']. Returns (text, is_error)."""
     args = args or {}
     try:
+        reader, writer = server.stores_for(args.get("project"))
         if name == "experiment_start_run":
             run_id = writer.start_run(args["experiment"], args.get("goal", ""))
             return json.dumps({"run_id": run_id}), False
@@ -119,77 +141,50 @@ def handle_call(reader, writer, name: str, args: dict) -> tuple[str, bool]:
 # MCP tool definitions
 # ---------------------------------------------------------------------------
 
+_PROJECT_PROP = {
+    "project": {
+        "type": "string",
+        "description": "Vault project subtree (optional; defaults to EXPERIMENT_PROJECT).",
+    }
+}
 _OBSERVATION_SCHEMA = {
     "type": "object",
     "properties": {f: {"type": "string"} for f in _OBS_FIELDS},
     "description": "Observation fields (title required; rest optional prose).",
 }
 
+
+def _tool(name, description, properties, required):
+    return {
+        "name": name,
+        "description": description,
+        "inputSchema": {
+            "type": "object",
+            "properties": {**properties, **_PROJECT_PROP},
+            "required": required,
+        },
+    }
+
+
 TOOLS = [
-    {
-        "name": "experiment_start_run",
-        "description": "Begin an experiment run; returns its run_id.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "experiment": {"type": "string", "description": "Experiment name"},
-                "goal": {"type": "string", "description": "Run objective"},
-            },
-            "required": ["experiment"],
-        },
-    },
-    {
-        "name": "experiment_record_observation",
-        "description": "Append an observation (journal attempt) to a run.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "run_id": {"type": "string"},
-                "observation": _OBSERVATION_SCHEMA,
-            },
-            "required": ["run_id", "observation"],
-        },
-    },
-    {
-        "name": "experiment_end_run",
-        "description": "Finalize a run with an outcome and metrics.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "run_id": {"type": "string"},
-                "outcome": {"type": "string"},
-                "metrics": {"type": "object"},
-            },
-            "required": ["run_id", "outcome"],
-        },
-    },
-    {
-        "name": "experiment_list_runs",
-        "description": "List all runs for an experiment.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"experiment": {"type": "string"}},
-            "required": ["experiment"],
-        },
-    },
-    {
-        "name": "experiment_get_run",
-        "description": "Get one run by run_id.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"run_id": {"type": "string"}},
-            "required": ["run_id"],
-        },
-    },
-    {
-        "name": "experiment_observations",
-        "description": "List a run's observations in order.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"run_id": {"type": "string"}},
-            "required": ["run_id"],
-        },
-    },
+    _tool("experiment_start_run", "Begin an experiment run; returns its run_id.",
+          {"experiment": {"type": "string", "description": "Experiment name"},
+           "goal": {"type": "string", "description": "Run objective"}},
+          ["experiment"]),
+    _tool("experiment_record_observation",
+          "Append an observation (journal attempt) to a run.",
+          {"run_id": {"type": "string"}, "observation": _OBSERVATION_SCHEMA},
+          ["run_id", "observation"]),
+    _tool("experiment_end_run", "Finalize a run with an outcome and metrics.",
+          {"run_id": {"type": "string"}, "outcome": {"type": "string"},
+           "metrics": {"type": "object"}},
+          ["run_id", "outcome"]),
+    _tool("experiment_list_runs", "List all runs for an experiment.",
+          {"experiment": {"type": "string"}}, ["experiment"]),
+    _tool("experiment_get_run", "Get one run by run_id.",
+          {"run_id": {"type": "string"}}, ["run_id"]),
+    _tool("experiment_observations", "List a run's observations in order.",
+          {"run_id": {"type": "string"}}, ["run_id"]),
 ]
 
 
@@ -199,8 +194,7 @@ TOOLS = [
 
 def run_server():
     """Run the MCP server loop on stdio."""
-    store = store_from_env()
-    writer = open_experiment_writer(store)
+    server = ExperimentServer()
 
     def send(msg: dict) -> None:
         print(json.dumps(msg), flush=True)
@@ -225,7 +219,7 @@ def run_server():
                 result = {"tools": TOOLS}
             elif method == "tools/call":
                 text, is_error = handle_call(
-                    store, writer, params.get("name", ""), params.get("arguments", {}))
+                    server, params.get("name", ""), params.get("arguments", {}))
                 result = {"content": [{"type": "text", "text": text}]}
                 if is_error:
                     result["isError"] = True
