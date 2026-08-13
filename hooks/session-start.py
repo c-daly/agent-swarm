@@ -443,10 +443,11 @@ def get_agent_briefing() -> str:
         return ""
 
 
-def ensure_otel_stack() -> str | None:
+def ensure_otel_stack(otel_dir: Path | None = None) -> str | None:
     """Start OTEL stack if not running."""
     import subprocess
-    otel_dir = Path.home() / ".claude" / "infra" / "otel"
+    if otel_dir is None:
+        otel_dir = Path.home() / ".claude" / "infra" / "otel"
     compose_file = next(
         (otel_dir / name for name in ("docker-compose.yml", "docker-compose.yaml", "compose.yaml", "compose.yml")
          if (otel_dir / name).exists()),
@@ -461,12 +462,34 @@ def ensure_otel_stack() -> str | None:
         )
         if result.stdout.strip() == "true":
             return None
-        # Not running — fire-and-forget start (hook timeout is 10s, can't wait)
-        subprocess.Popen(
-            ["docker", "compose", "-f", str(compose_file), "up", "-d"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        # Not running — best-effort background start (the hook budget is ~10s,
+        # too short to wait for `compose up -d`). Capture output to a log so a
+        # failed start leaves a trace instead of being silently discarded, and
+        # report honestly that startup is unconfirmed rather than claiming it
+        # started (a failed compose up would otherwise still print "starting").
+        start_log = otel_dir / ".last-start.log"
+        # Best-effort log capture: if the (externally managed) otel dir is not
+        # writable, fall back to DEVNULL rather than SKIPPING the start (opening
+        # the log inside the outer try would otherwise abort compose entirely).
+        # Append mode ('a') so concurrent session starts don't truncate each
+        # other's log.
+        try:
+            log_out = open(start_log, "a")
+        except OSError:
+            log_out, start_log = subprocess.DEVNULL, None
+        try:
+            subprocess.Popen(
+                ["docker", "compose", "-f", str(compose_file), "up", "-d"],
+                stdout=log_out, stderr=subprocess.STDOUT,
+            )
+        finally:
+            if log_out is not subprocess.DEVNULL:
+                log_out.close()
+        trace = f"see {start_log} or " if start_log else ""
+        return (
+            "OTEL stack was not running — attempted a background start "
+            f"(unconfirmed; {trace}check Grafana at http://localhost:3000)"
         )
-        return "OTEL stack starting from ~/.claude/infra/otel/"
     except Exception:
         return None
 
