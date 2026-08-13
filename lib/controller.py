@@ -69,7 +69,7 @@ _MUTATING_TOOLS = frozenset({
     "edit_file", "write_file",  # native
     "create_text_file", "replace_symbol_body", "insert_after_symbol",
     "insert_before_symbol", "replace_content", "replace_in_files",
-    "replace_regex",  # serena
+    "replace_regex", "rename_symbol", "safe_delete_symbol",  # serena
 })
 # Argument keys that name a mutation's target, in priority order.
 _TARGET_ARG_KEYS = ("file_path", "relative_path", "path")

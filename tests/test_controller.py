@@ -132,6 +132,20 @@ class TestMutationTarget:
             "serena__create_text_file", {"relative_path": "pkg/mod.py"}
         ) == "pkg/mod.py"
 
+    def test_serena_rename_symbol_target_is_relative_path(self):
+        from lib.controller import _mutation_target
+        assert _mutation_target(
+            "serena__rename_symbol",
+            {"name_path": "Foo/bar", "relative_path": "lib/foo.py", "new_name": "baz"},
+        ) == "lib/foo.py"
+
+    def test_serena_safe_delete_symbol_target_is_relative_path(self):
+        from lib.controller import _mutation_target
+        assert _mutation_target(
+            "serena__safe_delete_symbol",
+            {"name_path_pattern": "Foo/bar", "relative_path": "lib/foo.py"},
+        ) == "lib/foo.py"
+
     def test_read_file_is_not_a_mutation(self):
         from lib.controller import _mutation_target
         # Reads are not mutations, so no target is recorded even though the
