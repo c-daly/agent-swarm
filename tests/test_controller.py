@@ -159,6 +159,84 @@ class TestTelemetryIntegrity:
         assert events[-1].status == "error"
 
 
+class TestMutationTarget:
+    """_mutation_target extracts what a mutating tool acted on."""
+
+    def test_edit_file_target_is_file_path(self):
+        from lib.controller import _mutation_target
+        assert _mutation_target(
+            "native__edit_file", {"file_path": "lib/foo.py"}
+        ) == "lib/foo.py"
+
+    def test_write_file_target_is_file_path(self):
+        from lib.controller import _mutation_target
+        assert _mutation_target(
+            "native__write_file", {"file_path": "a.txt", "content": "x"}
+        ) == "a.txt"
+
+    def test_serena_mutator_target_is_relative_path(self):
+        from lib.controller import _mutation_target
+        assert _mutation_target(
+            "serena__create_text_file", {"relative_path": "pkg/mod.py"}
+        ) == "pkg/mod.py"
+
+    def test_serena_rename_symbol_target_is_relative_path(self):
+        from lib.controller import _mutation_target
+        assert _mutation_target(
+            "serena__rename_symbol",
+            {"name_path": "Foo/bar", "relative_path": "lib/foo.py", "new_name": "baz"},
+        ) == "lib/foo.py"
+
+    def test_serena_safe_delete_symbol_target_is_relative_path(self):
+        from lib.controller import _mutation_target
+        assert _mutation_target(
+            "serena__safe_delete_symbol",
+            {"name_path_pattern": "Foo/bar", "relative_path": "lib/foo.py"},
+        ) == "lib/foo.py"
+
+    def test_read_file_is_not_a_mutation(self):
+        from lib.controller import _mutation_target
+        # Reads are not mutations, so no target is recorded even though the
+        # call carries a file_path.
+        assert _mutation_target("native__read_file", {"file_path": "x"}) == ""
+
+    def test_bash_has_no_target(self):
+        from lib.controller import _mutation_target
+        assert _mutation_target("native__bash", {"command": "ls"}) == ""
+
+    def test_mutating_tool_without_target_arg_is_empty(self):
+        from lib.controller import _mutation_target
+        assert _mutation_target("native__edit_file", {}) == ""
+
+    def test_edit_through_controller_records_target(self, ctrl, tmp_path):
+        # End-to-end: a successful mutation records which file it touched.
+        f = tmp_path / "edit.txt"
+        f.write_text("hello world")
+        ctrl.handle_call(
+            "native__edit_file",
+            {"file_path": str(f), "old_string": "hello", "new_string": "bye"},
+        )
+        events = ctrl.data.query_events(tool="native__edit_file")
+        assert events, "edit call should have recorded an event"
+        assert events[0].target == str(f)
+
+    def test_error_event_records_mutation_target(self, ctrl, tmp_path):
+        # A mutation that raises after being attempted (e.g. the remote edit
+        # completed but the response timed out) must still record which file it
+        # targeted -- the error path was dropping the target.
+        f = tmp_path / "m.txt"
+        with patch.object(ctrl, "_handle_native", side_effect=RuntimeError("boom")):
+            with pytest.raises(RuntimeError):
+                ctrl.handle_call(
+                    "native__edit_file",
+                    {"file_path": str(f), "old_string": "a", "new_string": "b"},
+                )
+        events = ctrl.data.query_events(tool="native__edit_file")
+        assert events
+        assert events[-1].status == "error"
+        assert events[-1].target == str(f)
+
+
 class TestNativeReadFile:
     def test_read_existing_file(self, ctrl, tmp_path):
         f = tmp_path / "test.txt"
@@ -292,6 +370,62 @@ class TestRouterOps:
         )
         assert result["agent_id"] == "a1"
         assert result["agent_type"] == "explorer"
+
+    def test_register_agent_handler_derives_session_id(self, ctrl):
+        # No explicit session_id -> derived from the main:<uuid> identity, so
+        # the main agent's events are grouped by its real session id.
+        ctrl.handle_call(
+            "router__register_agent",
+            {"agent_id": "main:sess-abc", "agent_type": "implementer"},
+        )
+        assert ctrl.permissions.get_agent("main:sess-abc").session_id == "sess-abc"
+
+    def test_register_agent_handler_explicit_session_id_wins(self, ctrl):
+        # mcp-call threads AGENT_SESSION_ID as session_id (may be the parent
+        # session); the handler must honor it over derivation.
+        ctrl.handle_call(
+            "router__register_agent",
+            {
+                "agent_id": "sub-xyz",
+                "agent_type": "implementer",
+                "session_id": "parent-sess",
+            },
+        )
+        assert ctrl.permissions.get_agent("sub-xyz").session_id == "parent-sess"
+
+    def test_subagent_caller_id_attributes_events_to_subagent(self, ctrl, tmp_path):
+        # Regression-lock: a subagent's --caller-id (arriving as _caller) resolves
+        # its registry entry, so its traffic is booked to the subagent -- not the
+        # main agent and not left empty. Guards the attribution path C3 depends on.
+        ctrl.handle_call(
+            "router__register_agent",
+            {"agent_id": "sub-c3lock", "agent_type": "implementer"},
+        )
+        f = tmp_path / "r.txt"
+        f.write_text("hi")
+        ctrl.handle_call(
+            "native__read_file", {"file_path": str(f), "_caller": "sub-c3lock"}
+        )
+        events = ctrl.data.query_events(tool="native__read_file")
+        assert events
+        assert events[0].agent_id == "sub-c3lock"
+        assert events[0].session_id == "sub-c3lock"
+
+    def test_handshake_applies_explicit_session_id_to_existing(self, ctrl):
+        # prepare_dispatch pre-registers a dispatched subagent with a session_id
+        # derived from its sub-id; the later mcp-call handshake carries the parent
+        # session_id (AGENT_SESSION_ID) and must apply it to the existing entry,
+        # so the subagent's events group under the PARENT session, not its own id.
+        ctrl.handle_call(
+            "router__register_agent",
+            {"agent_id": "sub-p", "agent_type": "implementer"},
+        )
+        assert ctrl.permissions.get_agent("sub-p").session_id == "sub-p"  # derived
+        ctrl.handle_call(
+            "router__register_agent",
+            {"agent_id": "sub-p", "agent_type": "implementer", "session_id": "parent-sess"},
+        )
+        assert ctrl.permissions.get_agent("sub-p").session_id == "parent-sess"
 
     def test_register_agent_creates_state(self, ctrl):
         """register_agent should create agent state entry."""

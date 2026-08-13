@@ -188,6 +188,21 @@ def _has_write_redirect(command: str) -> bool:
     return any(tok in (">", ">>") for tok in tokens)
 
 
+def _derive_session_id(agent_id: str) -> str:
+    """Derive a session grouping id from an agent's registration identity.
+
+    The main agent registers as ``main:<claude-session-uuid>`` — the suffix is
+    the Claude session id. Subagents have no separate daemon-visible session
+    source, so their own id (which equals their mcp-call ``--caller-id``) is the
+    grouping key. An empty agent_id yields an empty session_id.
+    """
+    if not agent_id:
+        return ""
+    if agent_id.startswith("main:"):
+        return agent_id[len("main:"):]
+    return agent_id
+
+
 class PermissionChecker:
     """Evaluates tool access rules from permissions.yaml.
 
@@ -447,12 +462,21 @@ class PermissionChecker:
         agent_id: str,
         agent_type: str,
         roles: list[str] | None = None,
+        session_id: str = "",
     ) -> AgentInfo:
-        """Register an agent for permission tracking. Thread-safe."""
+        """Register an agent for permission tracking. Thread-safe.
+
+        ``session_id`` is stamped on every telemetry event recorded for this
+        agent. An explicit value (e.g. ``AGENT_SESSION_ID`` threaded by
+        ``mcp-call``, which may carry the parent session) wins; otherwise it is
+        derived from the registration identity so event rows can be grouped by
+        session instead of being left empty.
+        """
         info = AgentInfo(
             agent_id=agent_id,
             agent_type=agent_type,
             roles=roles or [],
+            session_id=session_id or _derive_session_id(agent_id),
         )
         with self._lock:
             self._agents[agent_id] = info

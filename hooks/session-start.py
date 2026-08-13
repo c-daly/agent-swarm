@@ -269,7 +269,11 @@ def register_main_agent():
         try:
             dc.call_tool("router__register_agent", {
                 "agent_id": main_agent_id,
-                "agent_type": "implementer",
+                # Labeled "main" (not "implementer") so telemetry separates the
+                # top-level session's traffic from implementer subagents. The
+                # agents.main permission block mirrors implementer, so governance
+                # is unchanged.
+                "agent_type": "main",
                 "roles": ["editor", "shell_full"],
             })
         except Exception as e:
