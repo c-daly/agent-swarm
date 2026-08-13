@@ -312,3 +312,35 @@ class TestEnsureOtelStackHonestReporting:
 
         monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Running())
         assert mod.ensure_otel_stack(otel_dir=otel_dir) is None
+
+    def test_start_attempted_even_if_log_unwritable(self, tmp_path, monkeypatch):
+        # A read-only otel dir must NOT skip the start -- the log capture falls
+        # back to DEVNULL and compose is still attempted (review PR #165).
+        import builtins
+        import subprocess
+
+        mod = self._mod()
+        otel_dir = tmp_path / "otel"
+        otel_dir.mkdir()
+        (otel_dir / "docker-compose.yml").write_text("services: {}\n")
+
+        class _NotRunning:
+            stdout = "false"
+
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: _NotRunning())
+
+        real_open = builtins.open
+
+        def _no_log_open(f, *a, **k):
+            if str(f).endswith(".last-start.log"):
+                raise PermissionError("read-only")
+            return real_open(f, *a, **k)
+
+        monkeypatch.setattr(builtins, "open", _no_log_open)
+
+        captured = {}
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: captured.update(k) or object())
+
+        msg = mod.ensure_otel_stack(otel_dir=otel_dir)
+        assert msg is not None                                # start still attempted
+        assert captured.get("stdout") is subprocess.DEVNULL   # fell back to DEVNULL

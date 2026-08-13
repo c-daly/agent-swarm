@@ -468,14 +468,27 @@ def ensure_otel_stack(otel_dir: Path | None = None) -> str | None:
         # report honestly that startup is unconfirmed rather than claiming it
         # started (a failed compose up would otherwise still print "starting").
         start_log = otel_dir / ".last-start.log"
-        with open(start_log, "w") as log:
+        # Best-effort log capture: if the (externally managed) otel dir is not
+        # writable, fall back to DEVNULL rather than SKIPPING the start (opening
+        # the log inside the outer try would otherwise abort compose entirely).
+        # Append mode ('a') so concurrent session starts don't truncate each
+        # other's log.
+        try:
+            log_out = open(start_log, "a")
+        except OSError:
+            log_out, start_log = subprocess.DEVNULL, None
+        try:
             subprocess.Popen(
                 ["docker", "compose", "-f", str(compose_file), "up", "-d"],
-                stdout=log, stderr=subprocess.STDOUT,
+                stdout=log_out, stderr=subprocess.STDOUT,
             )
+        finally:
+            if log_out is not subprocess.DEVNULL:
+                log_out.close()
+        trace = f"see {start_log} or " if start_log else ""
         return (
             "OTEL stack was not running — attempted a background start "
-            f"(unconfirmed; see {start_log} or Grafana at http://localhost:3000)"
+            f"(unconfirmed; {trace}check Grafana at http://localhost:3000)"
         )
     except Exception:
         return None
