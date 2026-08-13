@@ -208,95 +208,6 @@ class TestContextCaching:
 
 
 # =============================================================================
-# 3. LOG ROTATION TESTS
-# =============================================================================
-
-
-class TestLogRotation:
-    """Tests for log file rotation."""
-
-    def test_log_rotation_triggers_at_size(self, temp_state_dir):
-        """Log should rotate when size threshold reached."""
-        from lib.log_rotation import RotatingLog
-
-        # Create log with small threshold
-        log = RotatingLog(
-            temp_state_dir / "test.log", max_size_kb=1, max_files=3  # 1KB threshold
-        )
-
-        # Write enough to trigger rotation
-        for i in range(100):
-            log.write(f"Line {i}: " + "x" * 100 + "\n")
-
-        log.close()
-
-        # Should have rotated files
-        files = list(temp_state_dir.glob("test.log*"))
-        assert len(files) >= 2  # Original + at least one rotated
-
-    def test_log_rotation_keeps_max_files(self, temp_state_dir):
-        """Should delete old files beyond max_files limit."""
-        from lib.log_rotation import RotatingLog
-
-        log = RotatingLog(
-            temp_state_dir / "test.log", max_size_kb=1, max_files=2  # Keep only 2
-        )
-
-        # Write enough to trigger multiple rotations
-        for i in range(500):
-            log.write(f"Line {i}: " + "x" * 100 + "\n")
-
-        log.close()
-
-        # Should have at most max_files
-        files = list(temp_state_dir.glob("test.log*"))
-        assert len(files) <= 2
-
-    def test_log_rotation_preserves_recent_content(self, temp_state_dir):
-        """Recent log entries should be preserved after rotation."""
-        from lib.log_rotation import RotatingLog
-
-        log = RotatingLog(temp_state_dir / "test.log", max_size_kb=1, max_files=3)
-
-        # Write with identifiable marker at end
-        for i in range(100):
-            log.write(f"Line {i}\n")
-        log.write("FINAL_MARKER\n")
-
-        log.close()
-
-        # Recent content should be in current log file
-        current_log = temp_state_dir / "test.log"
-        content = current_log.read_text()
-        assert "FINAL_MARKER" in content
-
-    def test_log_rotation_with_date_suffix(self, temp_state_dir):
-        """Rotated files should have date suffix."""
-        from lib.log_rotation import RotatingLog
-
-        log = RotatingLog(
-            temp_state_dir / "activity.log",
-            max_size_kb=1,
-            max_files=5,
-            date_suffix=True,
-        )
-
-        # Trigger rotation
-        for i in range(100):
-            log.write("x" * 100 + "\n")
-
-        log.close()
-
-        # Check for date-suffixed files
-        files = list(temp_state_dir.glob("activity.log.*"))
-        # At least one should have date pattern
-        date_pattern_found = any(
-            f.suffix and len(f.suffix) > 8 for f in files  # .YYYYMMDD format
-        )
-        assert date_pattern_found or len(files) == 0  # Either dated or no rotation yet
-
-
-# =============================================================================
 # 4. PROMPT COMPRESSION TESTS
 # =============================================================================
 
@@ -427,13 +338,6 @@ class TestTokenOptimizationIntegration:
 
         briefing = generate_agent_briefing("implementer", phase="implement", max_tokens=1000)
         assert len(briefing) < 4000  # Under 1000 tokens
-
-        # 4. Log with rotation
-        from lib.log_rotation import RotatingLog  # noqa: E402
-
-        log = RotatingLog(temp_state_dir / "workflow.log", max_size_kb=100, max_files=3)
-        log.write(f"Integration test completed at {datetime.now()}\n")
-        log.close()
 
     @pytest.mark.skip(reason="Test re-imports DaemonClient inside mock.patch, bypassing conftest mock")
     def test_optimization_reduces_state_io(self, temp_state_dir):

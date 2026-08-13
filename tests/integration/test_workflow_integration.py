@@ -1,8 +1,7 @@
 """Integration tests for workflow system components.
 
-Tests interactions between WorkflowStateServer and WorkflowStateService,
-including full workflow lifecycles, agent state management, and concurrent
-multi-workflow scenarios.
+Tests the WorkflowStateServer: full workflow lifecycles, agent state
+management, and concurrent multi-workflow scenarios.
 """
 import threading
 import time
@@ -19,7 +18,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "lib"))
 
 from workflow_server import WorkflowStateServer
-from workflow_state_service import WorkflowStateService
 
 
 # -----------------------------------------------------------------------------
@@ -30,12 +28,6 @@ from workflow_state_service import WorkflowStateService
 def server():
     """Provide a fresh WorkflowStateServer instance."""
     return WorkflowStateServer()
-
-
-@pytest.fixture
-def content_service():
-    """Provide a fresh WorkflowStateService instance."""
-    return WorkflowStateService()
 
 
 @pytest.fixture
@@ -405,96 +397,6 @@ class TestConcurrentOperations:
 # Content Service Integration Tests
 # -----------------------------------------------------------------------------
 
-class TestContentServiceIntegration:
-    """Test WorkflowStateService integration with workflow patterns."""
-
-    def test_content_stored_and_retrieved_once(self, content_service):
-        """Content should be retrievable exactly once."""
-        content_id = f"content-{uuid.uuid4().hex[:8]}"
-        content = {"large": "data" * 1000}
-
-        content_service.store_content(content_id, content)
-        assert content_service.has_content(content_id)
-
-        retrieved = content_service.get_content(content_id)
-        assert retrieved == content
-        assert content_service.has_content(content_id) is False
-
-        # Second retrieval returns None
-        assert content_service.get_content(content_id) is None
-
-    def test_workflow_with_content_storage(self, server, content_service, workflow_id):
-        """Test workflow storing content IDs for later retrieval."""
-        # Start workflow
-        server.workflow_start(workflow_id, {
-            "phase": "implement",
-            "content_ids": [],
-        })
-
-        # Simulate storing large tool results
-        content_ids = []
-        for i in range(3):
-            content_id = f"result-{uuid.uuid4().hex[:8]}"
-            content_ids.append(content_id)
-            content_service.store_content(content_id, {
-                "tool_output": f"Large output {i}" * 100,
-                "timestamp": time.time(),
-            })
-
-        # Track content IDs in workflow
-        server.workflow_set_value(workflow_id, "content_ids", content_ids)
-
-        # Retrieve stored content IDs from workflow
-        stored_ids = server.workflow_get_value(workflow_id, "content_ids")
-        assert stored_ids == content_ids
-
-        # Retrieve actual content
-        for cid in stored_ids:
-            content = content_service.get_content(cid)
-            assert content is not None
-            assert "tool_output" in content
-
-        # Content should now be gone
-        for cid in stored_ids:
-            assert content_service.has_content(cid) is False
-
-        server.workflow_stop(workflow_id)
-
-    def test_concurrent_content_operations(self, content_service):
-        """Test thread-safe content operations."""
-        num_items = 100
-        stored_ids = []
-
-        def store_content(index):
-            cid = f"concurrent-{index}"
-            content_service.store_content(cid, {"index": index})
-            stored_ids.append(cid)
-
-        with ThreadPoolExecutor(max_workers=20) as executor:
-            list(executor.map(store_content, range(num_items)))
-
-        # All should be stored
-        assert len(stored_ids) == num_items
-
-        # Retrieve all (each only once)
-        retrieved = []
-
-        def retrieve_content(cid):
-            result = content_service.get_content(cid)
-            if result is not None:
-                retrieved.append(cid)
-
-        with ThreadPoolExecutor(max_workers=20) as executor:
-            list(executor.map(retrieve_content, stored_ids))
-
-        # Each content retrieved exactly once
-        assert len(retrieved) == num_items
-
-
-# -----------------------------------------------------------------------------
-# State Isolation Tests
-# -----------------------------------------------------------------------------
-
 class TestStateIsolation:
     """Test that state changes are properly isolated with deepcopy."""
 
@@ -627,58 +529,6 @@ class TestErrorPropagation:
 
 class TestComplexScenarios:
     """Test realistic complex workflow scenarios."""
-
-    def test_orchestrator_with_subagents_scenario(self, server, content_service):
-        """Simulate orchestrator managing multiple subagent workflows."""
-        # Start orchestrator
-        server.workflow_start("orchestrate", {
-            "phase": "intake",
-            "task": "Implement feature X",
-            "subagents": [],
-        })
-
-        # Orchestrator spawns implementer
-        implementer_id = f"sub-{uuid.uuid4().hex[:8]}"
-        server.agent_set_state(implementer_id, {
-            "type": "implementer",
-            "task": "Write code for feature X",
-            "status": "running",
-        })
-
-        # Track in orchestrator
-        subagents = server.workflow_get_value("orchestrate", "subagents")
-        subagents.append(implementer_id)
-        server.workflow_set_value("orchestrate", "subagents", subagents)
-        server.workflow_update("orchestrate", {"phase": "implement"})
-
-        # Implementer produces output
-        output_id = f"output-{uuid.uuid4().hex[:8]}"
-        content_service.store_content(output_id, {
-            "files_modified": ["src/feature.py", "tests/test_feature.py"],
-            "diff": "... large diff ...",
-        })
-
-        # Update agent with output reference
-        server.agent_set_state(implementer_id, {
-            "type": "implementer",
-            "task": "Write code for feature X",
-            "status": "completed",
-            "output_id": output_id,
-        })
-
-        # Orchestrator retrieves output
-        agent_state = server.agent_get_state(implementer_id)
-        assert agent_state["status"] == "completed"
-
-        output = content_service.get_content(agent_state["output_id"])
-        assert output["files_modified"] == ["src/feature.py", "tests/test_feature.py"]
-
-        # Orchestrator moves to verify phase
-        server.workflow_update("orchestrate", {"phase": "verify"})
-
-        # Clean up
-        server.agent_delete(implementer_id)
-        server.workflow_stop("orchestrate")
 
     def test_workflow_phase_transitions(self, server, workflow_id):
         """Test realistic phase transitions with state changes."""
