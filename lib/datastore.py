@@ -36,6 +36,7 @@ class EventRecord:
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
     phase: str = ""
+    target: str = ""
 
 
 @dataclass
@@ -78,7 +79,8 @@ CREATE TABLE IF NOT EXISTS events (
     output_tokens INTEGER DEFAULT 0,
     cache_read_tokens INTEGER DEFAULT 0,
     cache_creation_tokens INTEGER DEFAULT 0,
-    phase TEXT DEFAULT ''
+    phase TEXT DEFAULT '',
+    target TEXT DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
@@ -92,8 +94,8 @@ INSERT INTO events (
     session_id, agent_id, agent_type, workflow_id,
     error_type, was_summarized, original_size, summary_size,
     input_tokens, output_tokens, cache_read_tokens,
-    cache_creation_tokens, phase
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    cache_creation_tokens, phase, target
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 _SELECT_COLUMNS = """\
@@ -101,7 +103,7 @@ timestamp, tool, backend, status, duration_ms,
     session_id, agent_id, agent_type, workflow_id,
     error_type, was_summarized, original_size, summary_size,
     input_tokens, output_tokens, cache_read_tokens,
-    cache_creation_tokens, phase"""
+    cache_creation_tokens, phase, target"""
 
 
 class DataStore:
@@ -131,6 +133,10 @@ class DataStore:
             if "phase" not in cols:
                 self._conn.execute(
                     "ALTER TABLE events ADD COLUMN phase TEXT DEFAULT ''"
+                )
+            if "target" not in cols:
+                self._conn.execute(
+                    "ALTER TABLE events ADD COLUMN target TEXT DEFAULT ''"
                 )
 
     def record_event(self, event: dict) -> None:
@@ -166,6 +172,7 @@ class DataStore:
                     event.get("cache_read_tokens", 0),
                     event.get("cache_creation_tokens", 0),
                     event.get("phase", ""),
+                    event.get("target", ""),
                 ),
             )
             self._conn.commit()
@@ -310,4 +317,5 @@ class DataStore:
             cache_read_tokens=row[15],
             cache_creation_tokens=row[16],
             phase=row[17],
+            target=row[18],
         )

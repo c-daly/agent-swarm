@@ -63,6 +63,35 @@ def _is_protected_key(key: str) -> bool:
     )
 
 
+# Tools whose calls change durable state; their events record a target so the
+# telemetry says not just "an edit happened" but "an edit to <path>".
+_MUTATING_TOOLS = frozenset({
+    "edit_file", "write_file",  # native
+    "create_text_file", "replace_symbol_body", "insert_after_symbol",
+    "insert_before_symbol", "replace_content", "replace_in_files",
+    "replace_regex", "rename_symbol", "safe_delete_symbol",  # serena
+})
+# Argument keys that name a mutation's target, in priority order.
+_TARGET_ARG_KEYS = ("file_path", "relative_path", "path")
+
+
+def _mutation_target(tool: str, args: dict) -> str:
+    """Return what a mutating tool acted on (e.g. the edited file), else "".
+
+    Only mutating tools yield a target; reads and queries return "" so the
+    telemetry column marks genuine mutations. The target is pulled from
+    whichever common path-like argument the tool carries.
+    """
+    basename = tool.split("__")[-1]
+    if basename not in _MUTATING_TOOLS:
+        return ""
+    for key in _TARGET_ARG_KEYS:
+        val = args.get(key)
+        if val:
+            return str(val)
+    return ""
+
+
 # --- Bash file-I/O lockdown ---------------------------------------------------
 
 
@@ -198,6 +227,7 @@ class Controller:
             self._record_error_event(
                 tool, prefix, agent_info, start_time,
                 "PermissionDeniedError", blocked.reason if blocked else "blocked",
+                target=_mutation_target(tool, clean_args),
             )
             raise PermissionDeniedError(blocked)
 
@@ -217,6 +247,7 @@ class Controller:
             self._record_error_event(
                 tool, prefix, agent_info, start_time,
                 type(e).__name__, str(e),
+                target=_mutation_target(tool, clean_args),
             )
             raise
 
@@ -258,6 +289,7 @@ class Controller:
             "agent_type": agent_info.agent_type if agent_info else "",
             "workflow_id": (agent_info.workflow or "") if agent_info else "",
             "phase": (agent_info.phase or "") if agent_info else "",
+            "target": _mutation_target(tool, clean_args),
         })
 
         return result
@@ -270,6 +302,7 @@ class Controller:
         start_time: float,
         error_type: str,
         error_msg: str,
+        target: str = "",
     ) -> None:
         """Record a failed tool call in the event store."""
         duration_ms = int((time.monotonic() - start_time) * 1000)
@@ -280,6 +313,7 @@ class Controller:
                 "status": "error",
                 "duration_ms": duration_ms,
                 "error_type": error_type,
+                "target": target,
                 "session_id": agent_info.session_id if agent_info else "",
                 "agent_id": agent_info.agent_id if agent_info else "",
                 "agent_type": agent_info.agent_type if agent_info else "",
@@ -738,12 +772,21 @@ class Controller:
                 agent_type = existing.agent_type
                 workflow_id = existing.workflow
                 phase = existing.phase
+                # Apply an explicit session_id from the handshake (mcp-call's
+                # AGENT_SESSION_ID, typically the parent session). prepare_dispatch
+                # pre-registered dispatched subagents with a session_id derived
+                # from their sub-id; the explicit parent value wins so their events
+                # group under the parent session, not the derived sub-id.
+                explicit_sid = args.get("session_id")
+                if explicit_sid:
+                    existing.session_id = explicit_sid
             else:
                 # 1. Register in permissions system
                 info = self.permissions.register_agent(
                     agent_id=agent_id,
                     agent_type=agent_type,
                     roles=args.get("roles"),
+                    session_id=args.get("session_id", ""),
                 )
 
                 # 2. Determine phase from workflow config (if applicable)
