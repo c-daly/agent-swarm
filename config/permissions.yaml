@@ -9,7 +9,7 @@
 
 global:
   # Default allowed tools for all callers (router tool names)
-  allowed: [Task, serena__*, native__read_file, native__glob, native__grep, native__bash, native__web_fetch, native__web_search, workflow__*, context7__*, router__*, playwright__*]
+  allowed: [Task, serena__*, native__read_file, native__glob, native__grep, native__bash, native__web_fetch, native__web_search, workflow__*, experiment__*, context7__*, router__*, playwright__*]
   # Default blocked tools (can be overridden by more specific layers)
   blocked: [native__write_file, native__edit_file]
   # Never overridable - always blocked

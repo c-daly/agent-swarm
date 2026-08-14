@@ -18,5 +18,9 @@
   "workflow": {
     "command": ["python3", "{{PLUGIN_ROOT}}/lib/workflow_server.py"],
     "tool_prefix": "workflow"
+  },
+  "experiment": {
+    "command": ["python3", "{{PLUGIN_ROOT}}/lib/experiment_server.py"],
+    "tool_prefix": "experiment"
   }
 }
