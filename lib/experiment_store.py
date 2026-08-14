@@ -19,7 +19,7 @@ import os
 import re
 import subprocess
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -295,6 +295,19 @@ class LocalFsExperimentStore(ExperimentWriter, ExperimentReader):
 # Presence-gated memory mirroring (the "use memory if registered" coupling)
 # ---------------------------------------------------------------------------
 
+def _mirror_identity(observation: Observation, run_id: str, obs_id: str) -> Observation:
+    """Return a copy of ``observation`` carrying the identity the base writer
+    assigned: the run_id, and the sequence number parsed from ``obs_id``
+    (format ``<run_id>#<NNN>``). Mirror sinks serialize identity off the object,
+    so without this the mirrored doc records run_id='' and number 0 instead of
+    the authoritative values. A copy (not in-place) keeps the caller's object
+    untouched.
+    """
+    trailing = obs_id.rpartition("#")[2]
+    number = int(trailing) if trailing.isdigit() else observation.number
+    return replace(observation, run_id=run_id, number=number)
+
+
 class MemoryMirrorWriter(ExperimentWriter):
     """Wrap a base writer and, when a memory sink is present and available,
     additively mirror each recorded observation into memory's own store.
@@ -319,7 +332,8 @@ class MemoryMirrorWriter(ExperimentWriter):
             try:
                 if self.sink.available():
                     experiment = run_id.rpartition("/")[0]
-                    self.sink.record(experiment, obs_id, observation)
+                    self.sink.record(experiment, obs_id,
+                                     _mirror_identity(observation, run_id, obs_id))
             except Exception:  # best-effort: never break the authoritative write
                 logger.warning("experiment: memory mirror failed for %s", obs_id,
                                exc_info=True)

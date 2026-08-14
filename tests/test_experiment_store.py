@@ -153,6 +153,23 @@ def test_none_sink_is_pure_passthrough(tmp_path):
     assert len(base.observations(rid)) == 1
 
 
+def test_mirror_receives_authoritative_identity(tmp_path):
+    # Regression (greptile P1 "Mirror loses observation identity"): the sink must
+    # receive each observation carrying the run_id + sequence number the base
+    # writer assigned, not the unset (None) input values — otherwise the mirrored
+    # memory doc records run_id='' and number 0 instead of the real identity.
+    base = LocalFsExperimentStore(tmp_path / "e")
+    sink = _FakeSink(available=True)
+    w = MemoryMirrorWriter(base, sink)
+    rid = w.start_run("exp", "g")
+    w.record_observation(rid, Observation(title="first"))
+    w.record_observation(rid, Observation(title="second"))
+    (_, oid1, obs1), (_, oid2, obs2) = sink.records
+    assert (obs1.run_id, obs1.number) == (rid, 1)
+    assert (obs2.run_id, obs2.number) == (rid, 2)
+    assert (oid1, oid2) == (f"{rid}#001", f"{rid}#002")
+
+
 def test_mirror_writer_delegates_run_lifecycle(tmp_path):
     base = LocalFsExperimentStore(tmp_path / "e")
     w = MemoryMirrorWriter(base, _FakeSink())
@@ -235,3 +252,100 @@ def test_open_writer_wraps_with_memory_mirror(tmp_path):
 def test_open_writer_without_memory(tmp_path):
     store = make_experiment_backend("local", root=tmp_path / "e")
     assert open_experiment_writer(store, memory=False).sink is None
+
+
+# ---------------------------------------------------------------------------
+# Hardening: tenancy guard (validate_experiment_name) + real subprocess sink
+# ---------------------------------------------------------------------------
+
+import os  # noqa: E402
+
+from experiment_store import validate_experiment_name  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "bad", ["../escape", "..", ".", ".hidden", "a/b", "a" + chr(92) + "b", "", "  "]
+)
+def test_validate_experiment_name_rejects_unsafe(bad):
+    with pytest.raises(ValueError):
+        validate_experiment_name(bad)
+
+
+def test_validate_experiment_name_accepts_plain():
+    assert validate_experiment_name("exp-a") == "exp-a"
+
+
+def test_start_run_rejects_traversal_experiment(store):
+    with pytest.raises(ValueError):
+        store.start_run("../escape", "g")
+
+
+def test_list_runs_rejects_traversal_experiment(store):
+    with pytest.raises(ValueError):
+        store.list_runs("..")
+
+
+def test_vault_store_rejects_traversal_project(tmp_path):
+    with pytest.raises(ValueError):
+        VaultExperimentStore(tmp_path / "vault", "../evil")
+
+
+def _fake_memory_bin(tmp_path, *, exit_code=0, capture_env=False):
+    """A minimal stand-in for the memory CLI: records its argv + stdin (or its
+    MEMORY_VAULT_DIR) to a log file and exits ``exit_code``."""
+    bin_path = tmp_path / "memory"
+    log = tmp_path / "memory_call.log"
+    if capture_env:
+        script = f'''#!/usr/bin/env python3
+import os
+open({str(log)!r}, "w").write(os.environ.get("MEMORY_VAULT_DIR", ""))
+'''
+    else:
+        script = f'''#!/usr/bin/env python3
+import sys
+open({str(log)!r}, "w").write(repr(sys.argv[1:]) + chr(10) + sys.stdin.read())
+sys.exit({exit_code})
+'''
+    bin_path.write_text(script)
+    bin_path.chmod(0o755)
+    return bin_path, log
+
+
+def _env_with_path(**extra):
+    env = {"PATH": os.environ.get("PATH", "")}
+    env.update(extra)
+    return env
+
+
+def test_memory_sink_available_true_when_bin_exists(tmp_path):
+    bin_path, _ = _fake_memory_bin(tmp_path)
+    assert MemoryPluginSink(memory_bin=bin_path).available() is True
+
+
+def test_memory_sink_record_invokes_bin_with_args_and_body(tmp_path):
+    bin_path, log = _fake_memory_bin(tmp_path)
+    sink = MemoryPluginSink(memory_bin=bin_path,
+                            env=_env_with_path(MEMORY_VAULT_DIR=str(tmp_path)))
+    obs = Observation(title="My Title", run_id="exp-a/run-001", number=2, diagnosis="d")
+    sink.record("exp-a", "exp-a/run-001#002", obs)
+    logged = log.read_text()
+    assert "write" in logged                 # subcommand
+    assert "exp-a" in logged                  # --subject value
+    assert "My Title" in logged               # --description value
+    assert "Source: experiment" in logged     # rendered body arrived on stdin
+
+
+def test_memory_sink_record_raises_on_nonzero_exit(tmp_path):
+    bin_path, _ = _fake_memory_bin(tmp_path, exit_code=3)
+    sink = MemoryPluginSink(memory_bin=bin_path, env=_env_with_path())
+    with pytest.raises(RuntimeError):
+        sink.record("exp-a", "obs-1", Observation(title="t"))
+
+
+def test_memory_sink_bridges_vault_dir_into_subprocess_env(tmp_path):
+    bin_path, log = _fake_memory_bin(tmp_path, capture_env=True)
+    # VAULT_DIR present, MEMORY_VAULT_DIR absent -> bridged for the child.
+    sink = MemoryPluginSink(memory_bin=bin_path,
+                            env=_env_with_path(VAULT_DIR=str(tmp_path / "v")))
+    sink.record("exp", "obs", Observation(title="t"))
+    assert log.read_text() == str(tmp_path / "v")

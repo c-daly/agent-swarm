@@ -125,3 +125,34 @@ def test_stores_cached_per_project(tmp_path):
                                    "VAULT_DIR": str(tmp_path)})
     assert server.stores_for("x") is server.stores_for("x")
     assert server.stores_for("x") is not server.stores_for("y")
+
+
+# -- list_runs dispatch + error-branch coverage ------------------------------
+
+def test_list_runs_dispatches_through_handle_call(local_server):
+    for goal in ("g1", "g2"):
+        handle_call(local_server, "experiment_start_run", {"experiment": "exp", "goal": goal})
+    text, err = handle_call(local_server, "experiment_list_runs", {"experiment": "exp"})
+    assert not err
+    runs = json.loads(text)
+    assert {r["run_id"] for r in runs} == {"exp/run-001", "exp/run-002"}
+
+
+def test_list_runs_empty_for_unknown_experiment(local_server):
+    text, err = handle_call(local_server, "experiment_list_runs", {"experiment": "nope"})
+    assert not err
+    assert json.loads(text) == []
+
+
+def test_invalid_experiment_name_returns_error_not_traceback(local_server):
+    # Traversal name -> ValueError in the store -> caught by the
+    # (ValueError, RuntimeError) branch and returned as an error tuple.
+    text, err = handle_call(local_server, "experiment_start_run", {"experiment": "../evil"})
+    assert err
+    assert text  # carries a message, not empty
+
+
+def test_missing_required_arg_returns_error(local_server):
+    # No 'experiment' -> KeyError branch -> error tuple, never a raw exception.
+    _, err = handle_call(local_server, "experiment_start_run", {})
+    assert err
