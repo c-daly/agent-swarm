@@ -23,7 +23,7 @@
         ]
       },
       {
-        "matcher": "*",
+        "matcher": "Read|Write|Edit|Glob|Grep|Bash|WebFetch|WebSearch",
         "hooks": [
           {
             "type": "command",
