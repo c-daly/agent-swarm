@@ -6,35 +6,23 @@
     "name": "fearsidhe"
   },
   "skills": [
-    "orchestrate",
-    "spawn",
-    "iterate",
-    "parallel-orchestrate",
     "agent-teams-workflow",
+    "ctx",
+    "debug",
+    "develop",
+    "distill",
+    "experiment",
+    "implement",
+    "iterate",
+    "orchestrate",
+    "parallel-orchestrate",
     "pipeline",
     "plan-to-manifest",
-    "teams-develop"
-  ],
-  "hooks": {
-    "preToolUse": {
-      "script": "../hooks/iterate-enforcement.py",
-      "description": "Enforces iterate workflow phase restrictions"
-    },
-    "postToolUse": {
-      "script": "../hooks/post-task-tracking.py",
-      "description": "Track subagent completion, token usage, and auto-detect new plugins"
-    },
-    "SessionStart": {
-      "script": "../hooks/session-start.py",
-      "description": "Auto-search episodic memory for relevant past conversations"
-    },
-    "SessionEnd": {
-      "script": "../hooks/session-end.py",
-      "description": "Auto-generate metrics dashboard at session end"
-    },
-    "preCompacting": {
-      "script": "../hooks/pre-compacting.py",
-      "description": "Auto-write handoff before context compacting to preserve state"
-    }
-  }
+    "poll",
+    "pr-comment",
+    "remember",
+    "spawn",
+    "teams-develop",
+    "verify"
+  ]
 }

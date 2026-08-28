@@ -18,9 +18,11 @@
 #   bin/sync-to-cache <file> [<file> ...]   # sync only the given files (no --delete)
 #   bin/sync-to-cache --undo                # restore cache from symlink state
 #
-# After syncing, rewrites ${AGENT_SWARM_ROOT} references in cached
-# hooks.json and .mcp.json to absolute paths so they work regardless
-# of whether the env var is set.
+# hooks.json and .mcp.json reference ${AGENT_SWARM_ROOT} and are copied
+# verbatim. AGENT_SWARM_ROOT must be set in the environment Claude Code
+# launches with (e.g. the "env" block in ~/.claude/settings.json).
+# Do NOT rewrite it to an absolute path here: that output has been
+# committed before, baking one machine's $HOME into the repo.
 #
 # When changes touch lib/ or config/workflows/, the script prompts
 # whether to restart the daemon (those paths require daemon restart;
@@ -132,18 +134,6 @@ sync_selective() {
     echo "Synced (selective, $# files): $SOURCE_DIR → $CACHE_DIR"
 }
 
-rewrite_paths() {
-    # Replace ${AGENT_SWARM_ROOT} with the actual cache path in config files
-    # so hooks and MCP server commands work without the env var.
-    local files=("$CACHE_DIR/hooks/hooks.json" "$CACHE_DIR/.mcp.json")
-    for f in "${files[@]}"; do
-        if [ -f "$f" ]; then
-            sed -i "s|\${AGENT_SWARM_ROOT}|${CACHE_DIR}|g" "$f"
-            echo "Rewrote paths in: $(basename "$f")"
-        fi
-    done
-}
-
 needs_daemon_restart() {
     # Returns 0 (true) if any of the given paths suggest daemon restart is needed.
     # Daemon-loaded paths: lib/, config/workflows/, config/permissions.yaml, hooks/hooks.json
@@ -184,7 +174,6 @@ prompt_restart() {
 if [ "${1:-}" = "--undo" ]; then
     undo_symlink
     sync_all
-    rewrite_paths
     echo "Cache restored. Restart Claude Code to pick up changes."
     exit 0
 fi
@@ -197,7 +186,6 @@ fi
 if [ $# -gt 0 ]; then
     # Selective-file sync mode
     sync_selective "$@"   # sets SYNCED_RELS
-    rewrite_paths
     # Pass canonical relative paths to the daemon-restart heuristic, NOT raw $@
     # (raw $@ can be cwd-relative and miss path-prefix matches).
     if [ -n "$SYNCED_RELS" ] && needs_daemon_restart $SYNCED_RELS; then
@@ -208,7 +196,6 @@ else
     # Full sync mode (default) — by definition writes every daemon-loaded file,
     # so the restart prompt is always warranted.
     sync_all
-    rewrite_paths
     prompt_restart
     echo "Done."
 fi
